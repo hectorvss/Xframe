@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="130" />
+    </filter>
+  </defs>
+  <rect width="1440" height="900" fill="#f4f4f9" />
+  <g filter="url(#soft)">
+    <!-- light glow, top-center -->
+    <ellipse cx="720" cy="70" rx="720" ry="360" fill="#f6f6fb" />
+    <!-- blue, coming in from both sides (logo #4B73FF) -->
+    <ellipse cx="70" cy="430" rx="540" ry="560" fill="#4B73FF" />
+    <ellipse cx="1370" cy="430" rx="540" ry="560" fill="#4B73FF" />
+    <!-- magenta / pink core (logo #FF66F4) -->
+    <ellipse cx="720" cy="560" rx="860" ry="360" fill="#FF66F4" />
+    <ellipse cx="720" cy="520" rx="640" ry="300" fill="#FF3DB4" />
+    <!-- red band (logo #FF0105) -->
+    <ellipse cx="720" cy="820" rx="960" ry="360" fill="#FF0838" />
+    <!-- warm orange floor (logo #FE7B02) -->
+    <ellipse cx="720" cy="980" rx="820" ry="340" fill="#FE7B02" />
+  </g>
+</svg>
