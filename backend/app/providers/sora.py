@@ -167,6 +167,18 @@ class SoraAdapter(HttpAdapter):
 
     # -- coste -------------------------------------------------------------- #
 
+    def download_headers(self, url: str) -> dict[str, str]:
+        """
+        Sora entrega el vídeo en su propia API, no en un CDN: `/v1/videos/{id}/content`
+        exige el `Authorization` igual que cualquier otra llamada. Sin esto la generación
+        se completa, se paga, y muere al descargar con un 401.
+        """
+        from urllib.parse import urlsplit
+
+        if (urlsplit(url).hostname or "").lower() == (urlsplit(self.base_url).hostname or "").lower():
+            return self.auth_headers()
+        return {}
+
     def estimate_cost(self, req: GenerationRequest, spec: ModelSpec) -> Decimal:
         seconds = Decimal(self._seconds_for(req))
         multiplier = _PRICE_BY_SIZE.get(self._size_for(req), Decimal("1.0"))

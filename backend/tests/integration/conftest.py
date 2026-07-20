@@ -516,6 +516,17 @@ class FakeAdapter:
     async def cancel(self, ref: Any) -> None:
         self.cancels.append(ref)
 
+    def download_headers(self, url: str) -> dict[str, str]:
+        """
+        Vacío, como el defecto del contrato.
+
+        Está aquí porque el worker lo llama en cada descarga y un doble al que le falta un
+        método del contrato no falla en el sitio donde está el hueco: falla dentro del
+        worker, con un `AttributeError` que parece un bug del worker. Es exactamente la
+        clase de fallo que `test_contracts.py` existe para cazar antes.
+        """
+        return {}
+
     def estimate_cost(self, req: Any, spec: Any) -> Any:
         from decimal import Decimal
 

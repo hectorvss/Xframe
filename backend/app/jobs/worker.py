@@ -522,7 +522,7 @@ class JobWorker:
             return
 
         if status.state == "succeeded" and status.output_urls:
-            await self._land_output(job, status)
+            await self._land_output(job, status, adapter)
         else:
             await self._finalize(
                 job,
@@ -627,7 +627,9 @@ class JobWorker:
 
     # -- aterrizaje del resultado ------------------------------------------ #
 
-    async def _land_output(self, job: ClaimedJob, status: ProviderJobStatus) -> None:
+    async def _land_output(
+        self, job: ClaimedJob, status: ProviderJobStatus, adapter: Any
+    ) -> None:
         """
         Descarga, sube al storage, escribe el asset y cobra. En ese orden.
 
@@ -644,7 +646,7 @@ class JobWorker:
         """
         url = status.output_urls[0]
         try:
-            data, content_type = await self._downloader.fetch(url)
+            data, content_type = await self._downloader.fetch(url, adapter.download_headers(url))
         except Exception as exc:  # noqa: BLE001
             logger.exception("job_download_failed", extra={"job_id": str(job.id)})
             await self._finalize(job, "failed", error=f"no se pudo descargar la salida: {exc}")

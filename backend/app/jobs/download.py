@@ -173,6 +173,16 @@ def allowed_hosts_from_registry(factories: Iterable[Callable[[], object]] | None
     return frozenset(hosts)
 
 
+def _host_of(url: str) -> str:
+    """Host en minúsculas, sin puerto. Vacío si la URL no es parseable."""
+    from urllib.parse import urlsplit
+
+    try:
+        return (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
 class OutputDownloader:
     """
     Descargador con política. Se le inyecta el cliente HTTP para que los tests monten un
@@ -196,11 +206,20 @@ class OutputDownloader:
 
     # -- API ---------------------------------------------------------------- #
 
-    async def fetch(self, url: str) -> tuple[bytes, str]:
-        """`(bytes, content_type)` o excepción. Nunca devuelve una descarga a medias."""
+    async def fetch(self, url: str, headers: dict[str, str] | None = None) -> tuple[bytes, str]:
+        """
+        `(bytes, content_type)` o excepción. Nunca devuelve una descarga a medias.
+
+        `headers` es para los proveedores cuya salida vive **dentro de su propia API** y
+        exige autenticación: Sora entrega `GET /v1/videos/{id}/content`, que sin la clave
+        responde 401. La regla general sigue siendo no mandar credenciales al descargar
+        —la mayoría entrega en un CDN ajeno y mandárselas sería filtrarlas—, así que esto
+        es una excepción que el adaptador declara explícitamente y que **solo vale para el
+        primer salto**: ver el bucle de redirecciones.
+        """
         if url.startswith("data:"):
             return self._from_data_uri(url)
-        return await self._from_http(url)
+        return await self._from_http(url, headers or {})
 
     # -- data: -------------------------------------------------------------- #
 
@@ -247,16 +266,24 @@ class OutputDownloader:
 
     # -- http --------------------------------------------------------------- #
 
-    async def _from_http(self, url: str) -> tuple[bytes, str]:
+    async def _from_http(self, url: str, headers: dict[str, str]) -> tuple[bytes, str]:
         current = url
+        origin = _host_of(url)
         for _ in range(self._max_redirects + 1):
             await self._assert_url_allowed(current)
+
+            # Las credenciales viajan **solo** mientras no se cambie de host. Un proveedor
+            # comprometido —o un simple open redirect en su CDN— podría responder con un
+            # 302 hacia un servidor suyo y quedarse nuestra clave de API si las cabeceras
+            # siguieran al salto. Es el mismo motivo por el que los navegadores sueltan la
+            # cabecera `Authorization` en una redirección cross-origin.
+            send = headers if _host_of(current) == origin else {}
 
             # `follow_redirects=False` explícito y no solo en el constructor del cliente:
             # el cliente lo inyecta quien nos construye, y esta política no puede depender
             # de que se acuerde. El bucle de abajo es quien sigue los saltos, validando.
             async with self._client.stream(
-                "GET", current, follow_redirects=False
+                "GET", current, follow_redirects=False, headers=send or None
             ) as response:
                 self._assert_peer_allowed(response, current)
 

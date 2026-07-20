@@ -198,6 +198,21 @@ class GenerationAdapter(ABC):
     def estimate_cost(self, req: GenerationRequest, spec: ModelSpec) -> Decimal:
         """Coste en USD. Base sobre la que se calculan los créditos que se cobran."""
 
+    def download_headers(self, url: str) -> dict[str, str]:
+        """
+        Cabeceras con las que descargar **la salida de este proveedor**, si las necesita.
+
+        Vacío por defecto, que es lo correcto para casi todos: entregan el binario en un
+        CDN y mandarles nuestra clave sería regalarla. La excepción es el proveedor cuya
+        salida vive dentro de su propia API autenticada —Sora sirve el vídeo en
+        `GET /v1/videos/{id}/content` y sin la clave devuelve 401—, y por eso la decisión
+        vive en el adaptador, que es quien sabe de dónde descarga.
+
+        `OutputDownloader` solo las manda mientras no se cambie de host: una redirección
+        a otro dominio las suelta.
+        """
+        return {}
+
     def normalize_error(self, exc: Exception) -> Exception:
         """
         Traduce el error del proveedor a nuestra jerarquía, que es la que decide si se

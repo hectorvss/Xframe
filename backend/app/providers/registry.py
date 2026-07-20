@@ -158,7 +158,15 @@ class DbAdapterRegistry:
                    supports_i2v, supports_last_frame, supports_char_ref, supports_audio,
                    description_llm
               from public.gen_models
-             where status = 'active'
+             -- `<> 'retired'`, no `= 'active'`, y tiene que coincidir **exactamente** con
+             -- la regla de `taxonomy/repo.py`. Allí un modelo `deprecated` se sigue
+             -- ofreciendo al agente, solo que etiquetado con su fecha de apagado. Aquí se
+             -- excluía, así que el catálogo y el resolutor discrepaban: el agente proponía
+             -- `sora-2`, el usuario lo elegía, se reservaban créditos y el job moría al
+             -- resolver el adaptador con "no existe ese modelo". Un modelo deprecado
+             -- funciona hasta el día de su apagado; ese es justamente el sentido del
+             -- estado intermedio.
+             where status <> 'retired'
              order by sort, id
             """
         )
