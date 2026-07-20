@@ -23,6 +23,7 @@ jobs de minutos importa más que el aislamiento entre adaptadores.
 from __future__ import annotations
 
 import asyncio
+import base64
 import random
 import time
 from collections.abc import Mapping
@@ -87,10 +88,21 @@ class RetryPolicy:
     base_delay_s: float = 0.8
     max_delay_s: float = 20.0
 
+    #: Techo del `Retry-After` **del proveedor**, deliberadamente altísimo y distinto de
+    #: `max_delay_s`. Recortar un `Retry-After: 300` a 20 s no es "ser eficiente": es
+    #: reintentar cuando el proveedor ha dicho explícitamente que no, y así es como un
+    #: rate limit temporal se convierte en un baneo de la cuenta. Este tope existe solo
+    #: como red contra una cabecera absurda (o maliciosa) que colgaría el worker una hora.
+    max_retry_after_s: float = 900.0
+
     def delay_for(self, attempt: int, retry_after_s: float | None = None) -> float:
-        """`attempt` es 0-based. `Retry-After` del proveedor gana siempre que exista."""
+        """
+        `attempt` es 0-based. `Retry-After` del proveedor gana siempre que exista, y se
+        respeta **íntegro**: es un dato del proveedor sobre su propio estado, no una
+        sugerencia que podamos negociar a la baja.
+        """
         if retry_after_s is not None:
-            return min(retry_after_s, self.max_delay_s)
+            return min(max(retry_after_s, 0.0), self.max_retry_after_s)
         raw = min(self.base_delay_s * (2**attempt), self.max_delay_s)
         # Jitter completo (no ±10%): es lo que descorrelaciona de verdad un lote de
         # reintentos simultáneos. Se conserva un suelo para no martillear.
@@ -167,7 +179,10 @@ class HttpAdapter(GenerationAdapter):
         # Inyectable para poder montar `httpx.MockTransport` en los tests sin parchear
         # nada global.
         self._injected = client
-        self._last_poll_at: dict[str, float] = {}
+        #: Un único instante por adaptador, no un dict por job. Ver `throttled_poll_gate`.
+        self._last_poll_at: float | None = None
+        self._poll_lock: asyncio.Lock | None = None
+        self._poll_lock_loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -199,6 +214,8 @@ class HttpAdapter(GenerationAdapter):
         url: str,
         *,
         json: Any | None = None,
+        data: Mapping[str, Any] | None = None,
+        files: Any | None = None,
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
         timeout: httpx.Timeout | None = None,  # noqa: ASYNC109 - se reenvía a httpx, que ya lo implementa
@@ -207,9 +224,21 @@ class HttpAdapter(GenerationAdapter):
         """
         Una petición con reintentos. Devuelve la respuesta cruda; parsearla es del
         adaptador, porque el formato es justamente lo que cambia entre proveedores.
+
+        `data` + `files` son para los endpoints `multipart/form-data` (hoy solo el de
+        edición de imagen de OpenAI, que no acepta URLs de referencia y exige subir los
+        ficheros). Se aceptan aquí en vez de dejar que ese adaptador hable con `httpx`
+        por su cuenta porque lo que se perdería es justamente lo caro: la clasificación de
+        transitorios y el backoff con jitter.
         """
         full_url = url if url.startswith("http") else f"{self.base_url}{url}"
         merged = {**self.auth_headers(), **(headers or {})}
+        if files is not None:
+            # httpx tiene que poner su propio `Content-Type` con el `boundary` del
+            # multipart. Dejar el `application/json` que casi todos los `auth_headers()`
+            # declaran hace que el servidor intente parsear el cuerpo como JSON y
+            # devuelva un 400 que no menciona el content-type por ningún lado.
+            merged = {k: v for k, v in merged.items() if k.lower() != "content-type"}
         last: Exception | None = None
 
         for attempt in range(self.retry_policy.max_attempts):
@@ -218,6 +247,8 @@ class HttpAdapter(GenerationAdapter):
                     method,
                     full_url,
                     json=json,
+                    data=dict(data) if data else None,
+                    files=files,
                     params=dict(params) if params else None,
                     headers=merged,
                     timeout=timeout or DEFAULT_TIMEOUT,
@@ -239,21 +270,70 @@ class HttpAdapter(GenerationAdapter):
 
         raise last or ProviderError(self.provider_id, "request failed with no diagnosis")
 
-    async def throttled_poll_gate(self, key: str) -> None:
+    def _gate_lock(self) -> asyncio.Lock:
         """
-        Espera lo que falte para respetar `min_poll_interval_s`.
+        Cerrojo del gate, creado perezosamente y re-creado si cambia el bucle.
 
-        Se aplica aquí y no en el orquestador porque el límite es del proveedor: si un
-        worker y un reintento manual poletean el mismo job, el contrato se sigue
-        cumpliendo sin que ninguno de los dos lo sepa.
+        Construirlo en `__init__` ataría el adaptador al bucle que lo instanció; el
+        registry reusa instancias durante toda la vida del proceso y los tests abren un
+        bucle por caso, así que esa atadura fallaría en los dos sitios.
         """
-        previous = self._last_poll_at.get(key)
-        now = time.monotonic()
-        if previous is not None:
-            wait = self.min_poll_interval_s - (now - previous)
-            if wait > 0:
-                await asyncio.sleep(wait)
-        self._last_poll_at[key] = time.monotonic()
+        loop = asyncio.get_running_loop()
+        if self._poll_lock is None or self._poll_lock_loop is not loop:
+            self._poll_lock = asyncio.Lock()
+            self._poll_lock_loop = loop
+        return self._poll_lock
+
+    async def throttled_poll_gate(self, key: str | None = None) -> None:
+        """
+        Espera lo que falte para respetar `min_poll_interval_s` **del proveedor**.
+
+        El límite es por proveedor, no por job: llevar la cuenta por `external_id` hacía
+        que doce planos en vuelo poletearan doce veces el ritmo permitido, que es
+        exactamente el escenario que dispara el 429. Por eso el estado es un único
+        instante por adaptador (el registry mantiene una instancia por proveedor) y el
+        cerrojo se sostiene *durante* la espera: así N pollers concurrentes se ordenan en
+        cola de uno por intervalo en vez de pasar todos a la vez tras leer el mismo valor.
+
+        `key` se acepta y se ignora a propósito: los adaptadores ya lo pasan y quitarlo de
+        ocho llamadas no aporta nada. De paso desaparece el dict que nunca se purgaba, que
+        en un proceso de larga vida era una fuga de memoria proporcional a los jobs
+        atendidos.
+        """
+        async with self._gate_lock():
+            if self._last_poll_at is not None:
+                wait = self.min_poll_interval_s - (time.monotonic() - self._last_poll_at)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+            self._last_poll_at = time.monotonic()
+
+    # -- referencias visuales ------------------------------------------------ #
+
+    async def fetch_image_inline(self, url: str) -> tuple[str, str]:
+        """
+        Descarga una referencia y la devuelve como `(mime_type, base64)`.
+
+        Existe porque no todos los proveedores aceptan una URL remota: la Gemini API
+        exige la imagen inline. Se descarga con el cliente compartido pero **sin nuestras
+        cabeceras de auth**, que van dirigidas al proveedor y no al bucket de donde sale
+        la referencia; mandárselas a un tercero sería filtrar la clave.
+        """
+        try:
+            response = await self.client.get(url, timeout=UPLOAD_TIMEOUT, follow_redirects=True)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise ProviderError(
+                self.provider_id, f"could not download reference image {url}: {exc}"
+            ) from exc
+        if response.status_code != 200:
+            raise ProviderRejectedError(
+                self.provider_id,
+                f"reference image {url} is not reachable (HTTP {response.status_code}). "
+                f"The signed URL may have expired; regenerate it and retry.",
+            )
+        mime = (response.headers.get("content-type") or "image/jpeg").split(";")[0].strip()
+        if not mime.startswith("image/"):
+            mime = "image/jpeg"
+        return mime, base64.b64encode(response.content).decode()
 
     # -- coste -------------------------------------------------------------- #
 

@@ -40,6 +40,7 @@ def _register_defaults() -> None:
     from app.providers.hailuo import HailuoAdapter
     from app.providers.higgsfield import HiggsfieldAdapter
     from app.providers.kling import KlingAdapter
+    from app.providers.openai_image import OpenAIImageAdapter
     from app.providers.seedance import SeedanceAdapter
     from app.providers.sora import SoraAdapter
     from app.providers.veo import VeoAdapter
@@ -54,6 +55,10 @@ def _register_defaults() -> None:
         WanAdapter,
         HiggsfieldAdapter,
         FluxAdapter,
+        # `openai_image` es un provider_id distinto de `openai` (Sora) a propósito: este
+        # dict se indexa por provider_id y compartirlo haría que una familia machacara a
+        # la otra. Comparten la clave OPENAI_API_KEY, que es lo único que se comparte.
+        OpenAIImageAdapter,
     ):
         _FACTORIES[adapter_cls.provider_id] = adapter_cls
 

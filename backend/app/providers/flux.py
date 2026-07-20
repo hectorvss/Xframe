@@ -54,6 +54,9 @@ _DIMENSIONS: dict[tuple[str, str], tuple[int, int]] = {
     ("720p", "1:1"): (1024, 1024),
 }
 
+#: `input_image` … `input_image_8` [V]. Ocho campos numerados, no una lista.
+_MAX_REFERENCES = 8
+
 
 class FluxAdapter(HttpAdapter):
     provider_id = "bfl"
@@ -63,6 +66,16 @@ class FluxAdapter(HttpAdapter):
     #: La imagen sale en segundos, no en minutos: poletear a 5 s multiplicaría la
     #: latencia percibida de un storyboard de 10 viñetas.
     min_poll_interval_s = 1.5
+
+    #: BFL entrega en `delivery-<region>.bfl.ai`, un host distinto del de la API y con
+    #: TTL de ~10 min. Se cubre el dominio entero porque la región la elige el proveedor.
+    output_domains = ("bfl.ai", "bfl.ml")
+
+    #: BFL acepta `webhook_url` + `webhook_secret` en el propio submit, y firma con ese
+    #: secreto. Es el único de los ocho que nos deja elegir el secreto por petición, así
+    #: que aquí el webhook sí puede ser fuente de verdad si está configurado.
+    webhook_url_field = "webhook_url"
+    webhook_secret_field = "webhook_secret"
 
     def auth_headers(self) -> dict[str, str]:
         key = self._require(get_settings().bfl_api_key, "BFL_API_KEY")
@@ -80,23 +93,36 @@ class FluxAdapter(HttpAdapter):
             # `strict` frente al default: en un storyboard, una viñeta moderada obliga a
             # regenerar la secuencia entera, así que preferimos enterarnos pronto.
             "safety_tolerance": int(req.extra.get("safety_tolerance", 2)),
+            # Flux reescribe (upsamplea) el prompt por defecto. Para una imagen suelta es
+            # una mejora; para un storyboard es veneno, porque cada viñeta recibe una
+            # reescritura distinta del mismo brief y la serie deja de parecer la misma
+            # película. Aquí la continuidad manda sobre el acabado individual.
+            # NO VERIFICADO: `disable_pup` no aparece en la referencia pública de BFL que
+            # he podido leer (docs.bfl.ml solo documenta el flujo de edición). Si el
+            # proveedor lo ignora, el efecto es el comportamiento actual, no un error.
+            "disable_pup": True,
         }
         if req.seed is not None:
             payload["seed"] = req.seed
-        if req.negative_prompt:
-            # NO VERIFICADO: FLUX.2 no documenta `negative_prompt` como campo de primera
-            # clase. Si lo ignora, la negación hay que expresarla en el prompt.
-            payload["negative_prompt"] = req.negative_prompt
 
-        references = self._ref_urls(req)[:8]
-        if references:
-            # Hasta 8 referencias por llamada, que es lo que permite fijar personaje y
-            # localización a la vez sin entrenar nada.
-            payload["image_prompt"] = references[0]
-            if len(references) > 1:
-                # NO VERIFICADO: el nombre del campo para multi-referencia en FLUX.2
-                # (`reference_images` frente a `input_images`) no está confirmado.
-                payload["reference_images"] = references
+        # Callback: le decimos a BFL dónde avisarnos y con qué secreto firmar. Es opcional
+        # en los dos sentidos —sin `PUBLIC_BASE_URL` alcanzable no se manda nada, y sin
+        # secreto configurado el receptor ignorará el cuerpo y reconsultará con `poll()`—
+        # así que activar esto solo puede acelerar el cierre, nunca cambiar su resultado.
+        # El polling sigue siendo el camino que siempre funciona.
+        if self.webhook_url_field:
+            from app.jobs.webhooks import callback_url
+
+            if url := callback_url(self.provider_id):
+                payload[self.webhook_url_field] = url
+                secret = get_settings().bfl_webhook_secret
+                if secret and self.webhook_secret_field:
+                    payload[self.webhook_secret_field] = secret
+
+        # `negative_prompt` **no existe** en FLUX.2 pro: mandarlo no negaba nada, solo
+        # daba la impresión de que sí. La negación va en el prompt o no va.
+
+        payload.update(self._reference_fields(req))
 
         response = await self.request(
             "POST", _ENDPOINT.get(req.model_id, f"/v1/{req.model_id}"),
@@ -108,7 +134,34 @@ class FluxAdapter(HttpAdapter):
         if not request_id:
             raise ProviderRejectedError(self.provider_id, f"submit returned no id: {body}")
         # Ver docstring: la polling_url es regional y no reconstruible.
-        return job_ref(self.provider_id, request_id, poll_url=polling_url, raw=body)
+        # `cost` y `megapixels` vienen ya calculados por BFL en el propio submit: son la
+        # cifra real facturada, frente a la estimación de `estimate_cost`, que solo puede
+        # adivinar los megapíxeles de las referencias. Se propagan en `raw` para que el
+        # cierre del job cobre el delta contra el importe verdadero en vez del estimado.
+        raw = dict(body)
+        if body.get("cost") is not None:
+            raw["actual_cost_usd"] = body["cost"]
+        if body.get("megapixels") is not None:
+            raw["actual_megapixels"] = body["megapixels"]
+        return job_ref(self.provider_id, request_id, poll_url=polling_url, raw=raw)
+
+    def _reference_fields(self, req: GenerationRequest) -> dict[str, Any]:
+        """
+        Referencias visuales: `input_image`, `input_image_2` … `input_image_8` [V].
+
+        No hay ningún campo de lista. El adaptador mandaba `image_prompt` +
+        `reference_images`, que FLUX.2 ignora sin quejarse: la llamada devolvía 200 y una
+        imagen bonita **sin una sola referencia aplicada**. Es el fallo más engañoso del
+        set porque invita a concluir que la continuidad de personaje no funciona, cuando
+        lo que pasaba es que nunca se pidió.
+
+        El orden importa: el prompt puede referirse a "image 1", "image 2"…, y ese índice
+        es la posición en esta numeración.
+        """
+        fields: dict[str, Any] = {}
+        for index, url in enumerate(self._ref_urls(req)[:_MAX_REFERENCES], start=1):
+            fields["input_image" if index == 1 else f"input_image_{index}"] = url
+        return fields
 
     @staticmethod
     def _dimensions(req: GenerationRequest) -> tuple[int, int]:
@@ -177,9 +230,11 @@ class FluxAdapter(HttpAdapter):
         per_mp = Decimal(spec.cost_per_second)  # se siembra como $/MP en modelos imagen
         cost = per_mp * megapixels
 
-        references = len(self._ref_urls(req)[:8])
+        references = len(self._ref_urls(req)[:_MAX_REFERENCES])
         if references:
             # NO VERIFICADO: se asume 1 MP por referencia de entrada. BFL cobra por los
-            # MP reales, que no conocemos sin descargar la imagen.
+            # MP reales, que no conocemos sin descargar la imagen. Es una estimación
+            # previa a la llamada; el importe exacto llega en `cost` del submit y es el
+            # que debe cerrar el job (ver `submit`).
             cost += Decimal("0.03") * references
         return _money(cost)

@@ -20,7 +20,7 @@
  * obliga a reescribir los llamantes.
  */
 
-import { supabase, hasSupabase } from "./supabase";
+import { supabase, hasSupabase, objectPath, signedUrls } from "./supabase";
 
 const STORAGE_KEY = "xframe.db.v1";
 
@@ -784,12 +784,34 @@ export const db = {
 
   async listProjects(ownerId) {
     const rows = await DRIVER.select("projects", { owner_id: ownerId });
-    return rows.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    const signed = await this.withSignedCovers(rows);
+    return signed.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   },
 
   async getProject(id) {
     const [project] = await DRIVER.select("projects", { id });
-    return project ?? null;
+    if (!project) return null;
+    const [signed] = await this.withSignedCovers([project]);
+    return signed;
+  },
+
+  /**
+   * Firma `cover_url`, que también guarda una ruta desde que el bucket es
+   * privado. Va aquí y no en la vista por el mismo motivo que en `listAssets`:
+   * la portada se pinta en dos sitios distintos del dashboard y uno de los dos
+   * se habría quedado en negro.
+   */
+  async withSignedCovers(rows) {
+    if (!hasSupabase || !rows?.length) return rows;
+    const signed = await signedUrls(rows.map((row) => row.cover_url));
+    return rows.map((row) => {
+      const path = objectPath(row.cover_url);
+      return {
+        ...row,
+        cover_path: path,
+        cover_url: (path && signed.get(path)) || row.cover_url,
+      };
+    });
   },
 
   async createProject({ ownerId, title, prompt = "", settings = {} }) {
@@ -823,8 +845,39 @@ export const db = {
 
   /* --- assets --- */
 
+  /**
+   * Assets del proyecto, con `url` ya firmada y lista para pintar.
+   *
+   * El bucket es privado, así que lo que hay en la columna `url` es una RUTA y
+   * no sirve para un `<img src>`. La firma se hace aquí, en la capa de datos, y
+   * no en cada componente: hay una docena de sitios en `main.jsx` que hacen
+   * `url(${a.url})`, y dejar que cada uno se acuerde de firmar garantiza que
+   * alguno no lo haga. Ese alguno enseñaría un hueco en blanco sin ningún error
+   * en consola.
+   *
+   * La ruta original se conserva en `path`: es lo que hay que volver a firmar
+   * cuando la URL caduque, y lo que se guarda si esta fila se copia a otro sitio
+   * (una portada de proyecto, por ejemplo). Nunca se persiste `url`.
+   */
   async listAssets(projectId) {
-    return DRIVER.select("assets", { project_id: projectId });
+    const rows = await DRIVER.select("assets", { project_id: projectId });
+    return this.withSignedUrls(rows);
+  },
+
+  /**
+   * Añade `url` firmada (y `path`) a filas que traen una ruta en `url`.
+   *
+   * Sirve para cualquier colección con esa forma —assets, y la portada de un
+   * proyecto—, y es un no-op sin Supabase: en el driver local las urls son
+   * `blob:` y ya son utilizables tal cual.
+   */
+  async withSignedUrls(rows) {
+    if (!hasSupabase || !rows?.length) return rows;
+    const signed = await signedUrls(rows.map((row) => row.url));
+    return rows.map((row) => {
+      const path = objectPath(row.url);
+      return { ...row, path, url: (path && signed.get(path)) || row.url };
+    });
   },
 
   /**

@@ -24,11 +24,11 @@ insert into public.gen_models (
   cost_per_second, cost_per_image, credits_per_unit,
   min_plan, status, sunset_at, sort
 ) values (
-  'veo-3.1', 'Google Veo', 'google', 'video',
+  'veo-3.1-generate-preview', 'Google Veo', 'google', 'video',
   'Google Veo 3.1',
   'Elige este cuando el plano tenga que quedar bien a la primera y el presupuesto lo permita: es el más fiable en fisica, manos y texto legible, y el unico que genera dialogo y ambiente sincronizados sin pasar por una capa de audio aparte. Es de los caros, asi que reservalo para los planos que el espectador va a mirar de verdad, no para pruebas de encuadre.',
   4, 8,
-  array['720p', '1080p', '4K']::text[], array['16:9', '9:16', '1:1']::text[],
+  array['720p', '1080p', '4K']::text[], array['16:9', '9:16']::text[],
   true, true, true, true,
   0.40, null, 64,
   'pro', 'active', null, 10
@@ -58,11 +58,11 @@ insert into public.gen_models (
   cost_per_second, cost_per_image, credits_per_unit,
   min_plan, status, sunset_at, sort
 ) values (
-  'veo-3.1-lite', 'Google Veo', 'google', 'video',
+  'veo-3.1-lite-generate-preview', 'Google Veo', 'google', 'video',
   'Google Veo 3.1 Lite',
   'El caballo de batalla: ocho veces mas barato que Veo 3.1 y con el mismo criterio de composicion, a cambio de menos detalle fino y menos aguante en movimiento rapido. Usalo para iterar encuadre y ritmo, y sube a Veo 3.1 solo el plano que ya sabes que se queda.',
   4, 8,
-  array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
+  array['720p', '1080p']::text[], array['16:9', '9:16']::text[],
   true, true, true, true,
   0.05, null, 8,
   'free', 'active', null, 11
@@ -84,7 +84,7 @@ on conflict (id) do update set
   sunset_at = excluded.sunset_at, sort = excluded.sort,
   updated_at = now();
 
--- Google Veo 3 Fast · $0.10/segundo · [V] verificado en fuente primaria
+-- Google Veo 3.1 Fast · $0.10/segundo · [V] verificado en fuente primaria
 insert into public.gen_models (
   id, family, provider, modality, label, description_llm,
   min_duration_s, max_duration_s, resolutions, aspects,
@@ -92,12 +92,12 @@ insert into public.gen_models (
   cost_per_second, cost_per_image, credits_per_unit,
   min_plan, status, sunset_at, sort
 ) values (
-  'veo-3-fast', 'Google Veo', 'google', 'video',
-  'Google Veo 3 Fast',
+  'veo-3.1-fast-generate-preview', 'Google Veo', 'google', 'video',
+  'Google Veo 3.1 Fast',
   'Generacion mas rapida de la familia, pensada para tanteo. Si el usuario esta explorando ideas y va a descartar la mayoria, esto le da respuesta en el menor tiempo posible. No lo uses para el corte final.',
   4, 8,
-  array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
-  true, true, false, true,
+  array['720p', '1080p', '4K']::text[], array['16:9', '9:16']::text[],
+  true, true, true, true,
   0.10, null, 16,
   'free', 'active', null, 12
 )
@@ -202,6 +202,146 @@ insert into public.gen_models (
   true, false, true, true,
   0.30, null, 48,
   'pro', 'deprecated', '2026-09-24'::timestamptz, 21
+)
+on conflict (id) do update set
+  family = excluded.family, provider = excluded.provider,
+  modality = excluded.modality, label = excluded.label,
+  description_llm = excluded.description_llm,
+  min_duration_s = excluded.min_duration_s, max_duration_s = excluded.max_duration_s,
+  resolutions = excluded.resolutions, aspects = excluded.aspects,
+  supports_i2v = excluded.supports_i2v,
+  supports_last_frame = excluded.supports_last_frame,
+  supports_char_ref = excluded.supports_char_ref,
+  supports_audio = excluded.supports_audio,
+  cost_per_second = excluded.cost_per_second,
+  cost_per_image = excluded.cost_per_image,
+  credits_per_unit = excluded.credits_per_unit,
+  min_plan = excluded.min_plan, status = excluded.status,
+  sunset_at = excluded.sunset_at, sort = excluded.sort,
+  updated_at = now();
+
+-- OpenAI GPT Image 2 · $0.053/imagen · [S] fuente secundaria, re-verificar
+-- NOTA: Precio de calidad media a 1024x1024 segun fuentes secundarias (jul 2026): low $0.006 / medium $0.053 / high $0.211. OpenAI factura por tokens de imagen de salida, no por imagen; ver _PRICE_BY_QUALITY en openai_image.py.
+insert into public.gen_models (
+  id, family, provider, modality, label, description_llm,
+  min_duration_s, max_duration_s, resolutions, aspects,
+  supports_i2v, supports_last_frame, supports_char_ref, supports_audio,
+  cost_per_second, cost_per_image, credits_per_unit,
+  min_plan, status, sunset_at, sort
+) values (
+  'gpt-image-2', 'OpenAI GPT Image', 'openai_image', 'image',
+  'OpenAI GPT Image 2',
+  'Empieza por aqui para CREAR un element: la cara de un personaje, una localizacion o un objeto que despues va a repetirse en toda la pieza. Tambien es el que hay que usar para generar el fotograma de referencia que luego se anima con un modelo de video. Entiende instrucciones largas y literales mejor que ningun otro del catalogo, asi que es el indicado cuando el usuario describe con precision lo que quiere ver. Si le pasas elements existentes, los toma como referencia y conserva la identidad en vez de inventar una cara nueva, que es lo que da continuidad entre vinetas.',
+  null, null,
+  array['1024x1024', '1536x1024', '1024x1536']::text[], array['1:1', '16:9', '9:16']::text[],
+  false, false, true, false,
+  0.053, 0.053, 9,
+  'free', 'active', null, 1
+)
+on conflict (id) do update set
+  family = excluded.family, provider = excluded.provider,
+  modality = excluded.modality, label = excluded.label,
+  description_llm = excluded.description_llm,
+  min_duration_s = excluded.min_duration_s, max_duration_s = excluded.max_duration_s,
+  resolutions = excluded.resolutions, aspects = excluded.aspects,
+  supports_i2v = excluded.supports_i2v,
+  supports_last_frame = excluded.supports_last_frame,
+  supports_char_ref = excluded.supports_char_ref,
+  supports_audio = excluded.supports_audio,
+  cost_per_second = excluded.cost_per_second,
+  cost_per_image = excluded.cost_per_image,
+  credits_per_unit = excluded.credits_per_unit,
+  min_plan = excluded.min_plan, status = excluded.status,
+  sunset_at = excluded.sunset_at, sort = excluded.sort,
+  updated_at = now();
+
+-- OpenAI GPT Image 1.5 · $0.042/imagen · [I] INFERIDO, no verificado
+-- NOTA: Precio INFERIDO por analogia con gpt-image-2; no hay tarifa por imagen publicada.
+insert into public.gen_models (
+  id, family, provider, modality, label, description_llm,
+  min_duration_s, max_duration_s, resolutions, aspects,
+  supports_i2v, supports_last_frame, supports_char_ref, supports_audio,
+  cost_per_second, cost_per_image, credits_per_unit,
+  min_plan, status, sunset_at, sort
+) values (
+  'gpt-image-1.5', 'OpenAI GPT Image', 'openai_image', 'image',
+  'OpenAI GPT Image 1.5',
+  'Generacion anterior a GPT Image 2, algo mas barata y con el mismo criterio de composicion. Sirve como plan B si GPT Image 2 esta saturado, y como escalon intermedio cuando el usuario quiere iterar varias veces sobre la misma idea antes de fijar el element definitivo. Para el element que se queda, sube a GPT Image 2.',
+  null, null,
+  array['1024x1024', '1536x1024', '1024x1536']::text[], array['1:1', '16:9', '9:16']::text[],
+  false, false, true, false,
+  0.042, 0.042, 7,
+  'free', 'active', null, 2
+)
+on conflict (id) do update set
+  family = excluded.family, provider = excluded.provider,
+  modality = excluded.modality, label = excluded.label,
+  description_llm = excluded.description_llm,
+  min_duration_s = excluded.min_duration_s, max_duration_s = excluded.max_duration_s,
+  resolutions = excluded.resolutions, aspects = excluded.aspects,
+  supports_i2v = excluded.supports_i2v,
+  supports_last_frame = excluded.supports_last_frame,
+  supports_char_ref = excluded.supports_char_ref,
+  supports_audio = excluded.supports_audio,
+  cost_per_second = excluded.cost_per_second,
+  cost_per_image = excluded.cost_per_image,
+  credits_per_unit = excluded.credits_per_unit,
+  min_plan = excluded.min_plan, status = excluded.status,
+  sunset_at = excluded.sunset_at, sort = excluded.sort,
+  updated_at = now();
+
+-- OpenAI GPT Image 1 Mini · $0.015/imagen · [I] INFERIDO, no verificado
+-- NOTA: Precio INFERIDO. Oficial: $2.50/1M tokens de entrada, frente a $8.00 de los grandes.
+insert into public.gen_models (
+  id, family, provider, modality, label, description_llm,
+  min_duration_s, max_duration_s, resolutions, aspects,
+  supports_i2v, supports_last_frame, supports_char_ref, supports_audio,
+  cost_per_second, cost_per_image, credits_per_unit,
+  min_plan, status, sunset_at, sort
+) values (
+  'gpt-image-1-mini', 'OpenAI GPT Image', 'openai_image', 'image',
+  'OpenAI GPT Image 1 Mini',
+  'El escalon barato de la familia. Es una herramienta de tanteo: sirve para comprobar si una descripcion de personaje o de localizacion produce algo parecido a lo que el usuario tiene en la cabeza, antes de gastar en el modelo bueno. No lo uses para el element definitivo, porque la cara que salga de aqui es la que habra que mantener en todos los planos siguientes.',
+  null, null,
+  array['1024x1024', '1536x1024', '1024x1536']::text[], array['1:1', '16:9', '9:16']::text[],
+  false, false, true, false,
+  0.015, 0.015, 3,
+  'free', 'active', null, 3
+)
+on conflict (id) do update set
+  family = excluded.family, provider = excluded.provider,
+  modality = excluded.modality, label = excluded.label,
+  description_llm = excluded.description_llm,
+  min_duration_s = excluded.min_duration_s, max_duration_s = excluded.max_duration_s,
+  resolutions = excluded.resolutions, aspects = excluded.aspects,
+  supports_i2v = excluded.supports_i2v,
+  supports_last_frame = excluded.supports_last_frame,
+  supports_char_ref = excluded.supports_char_ref,
+  supports_audio = excluded.supports_audio,
+  cost_per_second = excluded.cost_per_second,
+  cost_per_image = excluded.cost_per_image,
+  credits_per_unit = excluded.credits_per_unit,
+  min_plan = excluded.min_plan, status = excluded.status,
+  sunset_at = excluded.sunset_at, sort = excluded.sort,
+  updated_at = now();
+
+-- OpenAI GPT Image 1 · $0.042/imagen · [S] fuente secundaria, re-verificar
+-- NOTA: Marcado deprecated en la doc oficial de OpenAI; fecha de apagado 2026-10-23.
+insert into public.gen_models (
+  id, family, provider, modality, label, description_llm,
+  min_duration_s, max_duration_s, resolutions, aspects,
+  supports_i2v, supports_last_frame, supports_char_ref, supports_audio,
+  cost_per_second, cost_per_image, credits_per_unit,
+  min_plan, status, sunset_at, sort
+) values (
+  'gpt-image-1', 'OpenAI GPT Image', 'openai_image', 'image',
+  'OpenAI GPT Image 1',
+  'RETIRADO POR EL PROVEEDOR el 23 de octubre de 2026. No lo propongas. Si el usuario lo pide por nombre, explicale que OpenAI lo apaga y ofrecele gpt-image-2, que cubre el mismo caso de uso y ademas conserva mejor la identidad de las referencias que se le pasan.',
+  null, null,
+  array['1024x1024', '1536x1024', '1024x1536']::text[], array['1:1', '16:9', '9:16']::text[],
+  false, false, true, false,
+  0.042, 0.042, 7,
+  'free', 'deprecated', '2026-10-23'::timestamptz, 4
 )
 on conflict (id) do update set
   family = excluded.family, provider = excluded.provider,
@@ -392,8 +532,9 @@ on conflict (id) do update set
   sunset_at = excluded.sunset_at, sort = excluded.sort,
   updated_at = now();
 
--- Minimax Hailuo 2.3 · $0.056/segundo · [S] fuente secundaria, re-verificar
--- NOTA: Tarifa por video ($0.19-0.56) dividida entre 10 s. Unidad reconstruida.
+-- Minimax Hailuo 2.3 · $0.0934/segundo · [S] fuente secundaria, re-verificar
+-- TARIFA PLANA POR CLIP: $0.56/clip. El coste por segundo de arriba está derivado dividiendo entre la duración mínima facturable (6 s) para no vender por debajo de coste en el clip corto. Ver resolve_cost_per_second() en seed.py.
+-- NOTA: MiniMax factura POR CLIP ($0.19-0.56 segun resolucion), no por segundo. Se toma el extremo alto porque es el que aplica a 1080p, que es lo que se pide. El cost_per_second declarado (0.056 = 0.56/10s) era el bug: a 6s cobraba 0.96x del coste, es decir por debajo de coste.
 insert into public.gen_models (
   id, family, provider, modality, label, description_llm,
   min_duration_s, max_duration_s, resolutions, aspects,
@@ -407,7 +548,7 @@ insert into public.gen_models (
   6, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, true, false,
-  0.056, null, 9,
+  0.0934, null, 15,
   'pro', 'active', null, 40
 )
 on conflict (id) do update set
@@ -427,8 +568,9 @@ on conflict (id) do update set
   sunset_at = excluded.sunset_at, sort = excluded.sort,
   updated_at = now();
 
--- Minimax Hailuo 2.3 Fast · $0.019/segundo · [S] fuente secundaria, re-verificar
--- NOTA: Tarifa por video dividida entre 10 s. Unidad reconstruida.
+-- Minimax Hailuo 2.3 Fast · $0.0317/segundo · [S] fuente secundaria, re-verificar
+-- TARIFA PLANA POR CLIP: $0.19/clip. El coste por segundo de arriba está derivado dividiendo entre la duración mínima facturable (6 s) para no vender por debajo de coste en el clip corto. Ver resolve_cost_per_second() en seed.py.
+-- NOTA: MiniMax factura POR CLIP ($0.19), no por segundo. El cost_per_second declarado salia de dividir entre 10s y dejaba el clip de 6s bajo coste.
 insert into public.gen_models (
   id, family, provider, modality, label, description_llm,
   min_duration_s, max_duration_s, resolutions, aspects,
@@ -438,11 +580,11 @@ insert into public.gen_models (
 ) values (
   'hailuo-2.3-fast', 'Minimax Hailuo', 'minimax', 'video',
   'Minimax Hailuo 2.3 Fast',
-  'La opcion mas rapida y mas barata de todo el catalogo con movimiento decente. Es el modelo por defecto para el primer pase de un storyboard entero: genera los seis planos aqui, mira cuales funcionan y regenera solo esos con algo mejor.',
+  'La opcion mas rapida y barata del catalogo que todavia mueve bien. Usalo para probar si un plano concreto funciona antes de gastar en un modelo caro: encuadre, accion y ritmo se juzgan igual de bien aqui. No admite personaje de referencia, asi que en cuanto el plano tenga que respetar una cara ya definida hay que subir a 2.3 o a otro modelo. Se factura por clip completo, de modo que pedir menos duracion no lo abarata: si vas a generar, pide la duracion que necesita el plano.',
   6, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
-  0.019, null, 4,
+  0.0317, null, 6,
   'free', 'active', null, 41
 )
 on conflict (id) do update set
@@ -462,7 +604,9 @@ on conflict (id) do update set
   sunset_at = excluded.sunset_at, sort = excluded.sort,
   updated_at = now();
 
--- Minimax Hailuo 02 · $0.045/segundo · [I] INFERIDO, no verificado
+-- Minimax Hailuo 02 · $0.0750/segundo · [I] INFERIDO, no verificado
+-- TARIFA PLANA POR CLIP: $0.45/clip. El coste por segundo de arriba está derivado dividiendo entre la duración mínima facturable (6 s) para no vender por debajo de coste en el clip corto. Ver resolve_cost_per_second() en seed.py.
+-- NOTA: MiniMax factura por clip. Tarifa inferida; re-verificar antes de volumen.
 insert into public.gen_models (
   id, family, provider, modality, label, description_llm,
   min_duration_s, max_duration_s, resolutions, aspects,
@@ -476,7 +620,7 @@ insert into public.gen_models (
   6, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
-  0.045, null, 8,
+  0.0750, null, 12,
   'pro', 'active', null, 42
 )
 on conflict (id) do update set
@@ -496,7 +640,9 @@ on conflict (id) do update set
   sunset_at = excluded.sunset_at, sort = excluded.sort,
   updated_at = now();
 
--- Minimax Hailuo 02 Fast · $0.015/segundo · [I] INFERIDO, no verificado
+-- Minimax Hailuo 02 Fast · $0.0250/segundo · [I] INFERIDO, no verificado
+-- TARIFA PLANA POR CLIP: $0.15/clip. El coste por segundo de arriba está derivado dividiendo entre la duración mínima facturable (6 s) para no vender por debajo de coste en el clip corto. Ver resolve_cost_per_second() en seed.py.
+-- NOTA: MiniMax factura por clip. Tarifa inferida; re-verificar antes de volumen.
 insert into public.gen_models (
   id, family, provider, modality, label, description_llm,
   min_duration_s, max_duration_s, resolutions, aspects,
@@ -510,7 +656,7 @@ insert into public.gen_models (
   6, 10,
   array['512p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
-  0.015, null, 3,
+  0.0250, null, 4,
   'free', 'active', null, 43
 )
 on conflict (id) do update set
@@ -531,7 +677,7 @@ on conflict (id) do update set
   updated_at = now();
 
 -- Seedance 2.0 · $0.36/segundo · [S] fuente secundaria, re-verificar
--- NOTA: Precio via Runway (36-150 creditos/s). No hay tarifa directa de ByteDance.
+-- NOTA: DESACTIVADO: el esquema de peticion no se ha podido verificar contra la doc oficial de BytePlus (docs.byteplus.com sirve el contenido por JS). Es el modelo mas caro del catalogo, asi que una llamada sin verificar se factura igual aunque no haga lo que se pidio. El adaptador falla con un error claro; ver app/providers/seedance.py para reactivarlo.
 insert into public.gen_models (
   id, family, provider, modality, label, description_llm,
   min_duration_s, max_duration_s, resolutions, aspects,
@@ -546,7 +692,7 @@ insert into public.gen_models (
   array['720p', '1080p', '4K']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, true, false,
   0.36, null, 58,
-  'business', 'active', null, 50
+  'business', 'deprecated', null, 50
 )
 on conflict (id) do update set
   family = excluded.family, provider = excluded.provider,
@@ -566,6 +712,7 @@ on conflict (id) do update set
   updated_at = now();
 
 -- Seedance 2.0 Fast · $0.12/segundo · [I] INFERIDO, no verificado
+-- NOTA: DESACTIVADO: el esquema de peticion no se ha podido verificar contra la doc oficial de BytePlus (docs.byteplus.com sirve el contenido por JS). Es el modelo mas caro del catalogo, asi que una llamada sin verificar se factura igual aunque no haga lo que se pidio. El adaptador falla con un error claro; ver app/providers/seedance.py para reactivarlo.
 insert into public.gen_models (
   id, family, provider, modality, label, description_llm,
   min_duration_s, max_duration_s, resolutions, aspects,
@@ -580,7 +727,7 @@ insert into public.gen_models (
   array['720p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, true, false,
   0.12, null, 20,
-  'pro', 'active', null, 51
+  'pro', 'deprecated', null, 51
 )
 on conflict (id) do update set
   family = excluded.family, provider = excluded.provider,
@@ -600,6 +747,7 @@ on conflict (id) do update set
   updated_at = now();
 
 -- Seedance 2.0 Mini · $0.06/segundo · [I] INFERIDO, no verificado
+-- NOTA: DESACTIVADO: el esquema de peticion no se ha podido verificar contra la doc oficial de BytePlus (docs.byteplus.com sirve el contenido por JS). Es el modelo mas caro del catalogo, asi que una llamada sin verificar se factura igual aunque no haga lo que se pidio. El adaptador falla con un error claro; ver app/providers/seedance.py para reactivarlo.
 insert into public.gen_models (
   id, family, provider, modality, label, description_llm,
   min_duration_s, max_duration_s, resolutions, aspects,
@@ -614,7 +762,7 @@ insert into public.gen_models (
   array['720p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
   0.06, null, 10,
-  'free', 'active', null, 52
+  'free', 'deprecated', null, 52
 )
 on conflict (id) do update set
   family = excluded.family, provider = excluded.provider,
@@ -634,6 +782,7 @@ on conflict (id) do update set
   updated_at = now();
 
 -- Seedance 1.0 Pro · $0.10/segundo · [I] INFERIDO, no verificado
+-- NOTA: DESACTIVADO: el esquema de peticion no se ha podido verificar contra la doc oficial de BytePlus (docs.byteplus.com sirve el contenido por JS). Es el modelo mas caro del catalogo, asi que una llamada sin verificar se factura igual aunque no haga lo que se pidio. El adaptador falla con un error claro; ver app/providers/seedance.py para reactivarlo.
 insert into public.gen_models (
   id, family, provider, modality, label, description_llm,
   min_duration_s, max_duration_s, resolutions, aspects,
@@ -648,7 +797,7 @@ insert into public.gen_models (
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
   0.10, null, 16,
-  'free', 'active', null, 53
+  'free', 'deprecated', null, 53
 )
 on conflict (id) do update set
   family = excluded.family, provider = excluded.provider,
@@ -735,7 +884,7 @@ on conflict (id) do update set
   sunset_at = excluded.sunset_at, sort = excluded.sort,
   updated_at = now();
 
--- Wan 2.2 Turbo · $0.10/segundo · [S] fuente secundaria, re-verificar
+-- Wan 2.2 Plus · $0.10/segundo · [S] fuente secundaria, re-verificar
 insert into public.gen_models (
   id, family, provider, modality, label, description_llm,
   min_duration_s, max_duration_s, resolutions, aspects,
@@ -743,8 +892,8 @@ insert into public.gen_models (
   cost_per_second, cost_per_image, credits_per_unit,
   min_plan, status, sunset_at, sort
 ) values (
-  'wan-2.2-turbo', 'Wan', 'wan', 'video',
-  'Wan 2.2 Turbo',
+  'wan-2.2-plus', 'Wan', 'wan', 'video',
+  'Wan 2.2 Plus',
   'Clips cortos, rapidos y sin audio, con duracion fija. Es una herramienta de tanteo: sirve para comprobar si un encuadre funciona antes de gastar en un modelo serio, no para entregar nada al usuario final.',
   5, 5,
   array['720p']::text[], array['16:9', '9:16', '1:1']::text[],
@@ -1059,7 +1208,7 @@ insert into public.gen_models (
 ) values (
   'runway-gen-4', 'Runway', 'runway', 'video',
   'Runway Gen-4',
-  'RETIRADO POR EL PROVEEDOR el 30 de julio de 2026. No lo propongas. Alternativa equivalente en calidad: kling-3.0 o veo-3.1.',
+  'RETIRADO POR EL PROVEEDOR el 30 de julio de 2026. No lo propongas. Alternativa equivalente en calidad: kling-3.0 o veo-3.1-generate-preview.',
   5, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, true, false,
@@ -1395,6 +1544,6 @@ on conflict (id) do update set
 -- Los modelos que ya no estén en la semilla se retiran, no se borran:
 -- generation_jobs.model_id los referencia y el historial debe seguir resolviendo.
 update public.gen_models set status = 'retired', updated_at = now()
- where id <> all (array['veo-3.1', 'veo-3.1-lite', 'veo-3-fast', 'gemini-omni-flash', 'sora-2', 'sora-2-pro', 'kling-3.0', 'kling-3.0-turbo', 'kling-3.0-motion-control', 'kling-2.5-turbo', 'kling-2.1-master', 'hailuo-2.3', 'hailuo-2.3-fast', 'hailuo-02', 'hailuo-02-fast', 'seedance-2.0', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-1.0-pro', 'wan-2.7', 'wan-2.5', 'wan-2.2-turbo', 'higgsfield-dop-turbo', 'higgsfield-dop-lite', 'higgsfield-dop-preview', 'higgsfield-soul', 'flux-2-pro', 'flux-2-max', 'flux-kontext-pro', 'runway-gen-4-turbo', 'runway-gen-4']::text[]) and status <> 'retired';
+ where id <> all (array['veo-3.1-generate-preview', 'veo-3.1-lite-generate-preview', 'veo-3.1-fast-generate-preview', 'gemini-omni-flash', 'sora-2', 'sora-2-pro', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini', 'gpt-image-1', 'kling-3.0', 'kling-3.0-turbo', 'kling-3.0-motion-control', 'kling-2.5-turbo', 'kling-2.1-master', 'hailuo-2.3', 'hailuo-2.3-fast', 'hailuo-02', 'hailuo-02-fast', 'seedance-2.0', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-1.0-pro', 'wan-2.7', 'wan-2.5', 'wan-2.2-plus', 'higgsfield-dop-turbo', 'higgsfield-dop-lite', 'higgsfield-dop-preview', 'higgsfield-soul', 'flux-2-pro', 'flux-2-max', 'flux-kontext-pro', 'runway-gen-4-turbo', 'runway-gen-4']::text[]) and status <> 'retired';
 
 commit;

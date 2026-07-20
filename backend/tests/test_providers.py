@@ -26,6 +26,7 @@ Las propiedades elegidas son las que cuestan dinero o corrompen datos si fallan:
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import json
 import os
@@ -71,6 +72,7 @@ from app.providers.flux import FluxAdapter  # noqa: E402
 from app.providers.hailuo import HailuoAdapter  # noqa: E402
 from app.providers.higgsfield import HiggsfieldAdapter  # noqa: E402
 from app.providers.kling import KlingAdapter  # noqa: E402
+from app.providers.openai_image import OpenAIImageAdapter  # noqa: E402
 from app.providers.registry import DbAdapterRegistry, UnknownProviderError  # noqa: E402
 from app.providers.seed import MODELS, MOTIONS, STYLES, credits_per_unit  # noqa: E402
 from app.providers.seedance import SeedanceAdapter  # noqa: E402
@@ -92,6 +94,7 @@ ALL_ADAPTERS: tuple[type[GenerationAdapter], ...] = (
     WanAdapter,
     HiggsfieldAdapter,
     FluxAdapter,
+    OpenAIImageAdapter,
 )
 
 
@@ -368,7 +371,7 @@ def test_veo_submit_returns_operation_name_as_poll_url() -> None:
 
     parameters = recorder.body()["parameters"]
     assert parameters["generateAudio"] is True
-    assert parameters["durationSeconds"] == 8
+    assert parameters["durationSeconds"] == "8", "durationSeconds es string, no int"
     assert parameters["aspectRatio"] == "16:9"
 
 
@@ -378,7 +381,11 @@ def test_veo_poll_running_then_succeeded() -> None:
         {
             "name": "op",
             "done": True,
-            "response": {"generatedVideos": [{"video": {"uri": "https://files/v.mp4"}}]},
+            "response": {
+                "generateVideoResponse": {
+                    "generatedSamples": [{"video": {"uri": "https://files/v.mp4"}}]
+                }
+            },
         },
     ]
     recorder = Recorder(lambda r: json_response(responses[len(recorder.requests) - 1]))
@@ -477,9 +484,17 @@ def test_flux_moderation_is_nsfw() -> None:
     assert status.should_refund
 
 
-def test_flux_sends_every_element_as_reference() -> None:
-    """FLUX.2 admite hasta 8 referencias en una llamada, y es la vía barata a la
-    continuidad de personaje. Mandar solo la primera desperdiciaría la capacidad."""
+def test_flux_sends_every_element_as_a_numbered_input_image() -> None:
+    """
+    El fallo silencioso más caro del set.
+
+    FLUX.2 no tiene ningún campo de lista para referencias: son ocho campos numerados
+    (`input_image`, `input_image_2` … `input_image_8`). Los nombres que se mandaban antes
+    (`image_prompt` + `reference_images`) no existen, y BFL **ignora lo que no conoce sin
+    quejarse**: la llamada devolvía 200 y una imagen razonable, generada sin una sola
+    referencia. Nada en la respuesta lo delata, así que este test es la única forma de
+    detectarlo sin mirar el resultado a ojo.
+    """
     recorder = Recorder(lambda r: json_response({"id": "x", "polling_url": "https://p/1"}))
     adapter = make_adapter(FluxAdapter, recorder)
 
@@ -497,8 +512,80 @@ def test_flux_sends_every_element_as_reference() -> None:
     )
 
     body = recorder.body()
-    assert body["image_prompt"] == "https://cdn/0.png"
-    assert len(body["reference_images"]) == 3
+    assert body["input_image"] == "https://cdn/0.png"
+    assert body["input_image_2"] == "https://cdn/1.png"
+    assert body["input_image_3"] == "https://cdn/2.png"
+
+    # Los nombres viejos no deben reaparecer: si vuelven, vuelve el 200 sin referencias.
+    assert "image_prompt" not in body
+    assert "reference_images" not in body
+
+
+def test_flux_numbers_references_from_the_init_image_and_caps_at_eight() -> None:
+    """El índice del campo es el que el prompt puede citar ("image 2"), así que el orden
+    es semántico y no cosmético: el frame inicial va primero."""
+    recorder = Recorder(lambda r: json_response({"id": "x", "polling_url": "https://p/1"}))
+    adapter = make_adapter(FluxAdapter, recorder)
+
+    elements = [
+        ElementRef(f"el-{i}", f"p{i}", "character", f"https://cdn/{i}.png") for i in range(12)
+    ]
+    run(
+        adapter.submit(
+            GenerationRequest(
+                modality="image", model_id="flux-2-pro", prompt="multitud",
+                init_image_url="https://cdn/init.png", elements=elements,
+            )
+        )
+    )
+
+    body = recorder.body()
+    assert body["input_image"] == "https://cdn/init.png"
+    assert body["input_image_2"] == "https://cdn/0.png"
+    assert "input_image_8" in body
+    assert "input_image_9" not in body, "el máximo son ocho campos"
+
+
+def test_flux_drops_negative_prompt_and_disables_prompt_rewriting() -> None:
+    """`negative_prompt` no existe en FLUX.2 pro: mandarlo daba la falsa impresión de que
+    la negación se estaba aplicando. Y el upsampling de prompt, activo por defecto,
+    reescribe cada viñeta de forma distinta y rompe la continuidad de la serie."""
+    recorder = Recorder(lambda r: json_response({"id": "x", "polling_url": "https://p/1"}))
+    adapter = make_adapter(FluxAdapter, recorder)
+
+    run(
+        adapter.submit(
+            GenerationRequest(
+                modality="image", model_id="flux-2-pro", prompt="el bar",
+                negative_prompt="sin texto, sin logos",
+            )
+        )
+    )
+
+    body = recorder.body()
+    assert "negative_prompt" not in body
+    assert body["disable_pup"] is True
+
+
+def test_flux_surfaces_the_real_cost_reported_by_the_submit() -> None:
+    """BFL calcula el importe exacto en el propio submit. `estimate_cost` solo puede
+    adivinar los megapíxeles de las referencias, así que la cifra buena es esta y tiene
+    que llegar al cierre del job."""
+    recorder = Recorder(
+        lambda r: json_response(
+            {"id": "x", "polling_url": "https://p/1", "cost": 0.062, "megapixels": 2.09}
+        )
+    )
+    adapter = make_adapter(FluxAdapter, recorder)
+
+    ref = run(
+        adapter.submit(
+            GenerationRequest(modality="image", model_id="flux-2-pro", prompt="el bar")
+        )
+    )
+
+    assert ref.raw["actual_cost_usd"] == 0.062
+    assert ref.raw["actual_megapixels"] == 2.09
 
 
 # --------------------------------------------------------------------------- #
@@ -652,10 +739,10 @@ def test_exhausted_retries_surface_as_transient() -> None:
     """Agotar los reintentos no convierte el fallo en fatal: el ejecutor debe poder
     reencolar el job más tarde."""
     recorder = Recorder(lambda r: httpx.Response(500, text="boom"))
-    adapter = make_adapter(SeedanceAdapter, recorder)
+    adapter = make_adapter(WanAdapter, recorder)
 
     with pytest.raises(ProviderError) as excinfo:
-        run(adapter.submit(video_request(model_id="seedance-2.0")))
+        run(adapter.submit(video_request(model_id="wan-2.5")))
 
     assert len(recorder.requests) == 4
     assert excinfo.value.retry_strategy == "once"
@@ -687,9 +774,15 @@ def test_retry_delay_has_jitter_and_respects_retry_after() -> None:
     assert len(delays) > 1, "sin jitter, un lote de reintentos reconstruye el pico"
     assert all(2.0 <= d <= 4.0 for d in delays), "jitter completo sobre 2^2 * 1.0"
 
-    # `Retry-After` del proveedor manda sobre nuestro cálculo, pero no por encima del techo.
+    # `Retry-After` del proveedor manda sobre nuestro cálculo y se respeta **íntegro**.
+    # Recortarlo a `max_delay_s` era reintentar cuando el proveedor había dicho que no:
+    # así se convierte un rate limit de cinco minutos en un baneo de la cuenta.
     assert policy.delay_for(0, retry_after_s=7.5) == 7.5
-    assert policy.delay_for(0, retry_after_s=900) == 20.0
+    assert policy.delay_for(0, retry_after_s=300) == 300, "un 429 con 5 min se espera entero"
+
+    # El único techo es la red de seguridad contra una cabecera absurda, y es altísimo.
+    assert policy.delay_for(0, retry_after_s=99_999) == policy.max_retry_after_s
+    assert policy.max_retry_after_s >= 300
 
 
 # --------------------------------------------------------------------------- #
@@ -841,3 +934,638 @@ def test_emitted_sql_is_idempotent_and_carries_price_confidence() -> None:
     # de generation_jobs los referencia.
     assert "set status = 'retired'" in sql
     assert "delete from public.gen_models" not in sql
+
+
+# --------------------------------------------------------------------------- #
+# 11. Correcciones contra documentación oficial (auditoría 2026-07-20)          #
+# --------------------------------------------------------------------------- #
+#
+# Todo lo de esta sección es un fallo que la suite anterior no veía porque **el
+# proveedor no protesta**: devuelve 200 y algo plausible. Un test que solo comprueba
+# "el submit funciona" los aprueba todos. Por eso aquí se inspecciona el cuerpo enviado
+# campo a campo, y se afirma también lo que *no* debe ir.
+
+_FAKE_PNG = b"\x89PNG\r\n\x1a\nfake"
+
+
+def image_response() -> httpx.Response:
+    return httpx.Response(200, content=_FAKE_PNG, headers={"content-type": "image/png"})
+
+
+def test_veo_reads_the_output_uri_from_the_real_response_path() -> None:
+    """
+    El fallo más caro del set: `_extract_urls` buscaba `generatedVideos` y `predictions`,
+    que no existen en esta API. Ninguna clave casaba nunca, así que **toda** generación
+    correcta se leía como "completada sin salida" y se marcaba `failed`. Se pagaba el
+    vídeo íntegro y se tiraba el resultado, sin ningún error visible en el camino.
+    """
+    body = {
+        "name": "op",
+        "done": True,
+        "response": {
+            "generateVideoResponse": {
+                "generatedSamples": [
+                    {"video": {"uri": "https://files/a.mp4"}},
+                    {"video": {"uri": "https://files/b.mp4"}},
+                ]
+            }
+        },
+    }
+    recorder = Recorder(lambda r: json_response(body))
+    adapter = make_adapter(VeoAdapter, recorder)
+
+    status = run(adapter.poll(ProviderJobRef("google", "op", "/v1beta/op")))
+
+    assert status.state == "succeeded", "una generación correcta no puede leerse como fallo"
+    assert status.output_urls == ["https://files/a.mp4", "https://files/b.mp4"]
+    assert not status.should_refund
+
+
+def test_veo_sends_reference_images_inline_not_as_gcs_uri() -> None:
+    """
+    `gcsUri` es de Vertex AI. En `generativelanguage` se ignora en silencio: el modelo
+    generaba sin la referencia y devolvía 200, que es exactamente el mismo tipo de fallo
+    invisible que el de Flux. La Gemini API exige la imagen en base64 inline.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return image_response()
+        return json_response({"name": "models/veo/operations/op-1"})
+
+    recorder = Recorder(handler)
+    adapter = make_adapter(VeoAdapter, recorder)
+
+    run(
+        adapter.submit(
+            video_request(
+                model_id="veo-3.1-generate-preview",
+                init_image_url="https://cdn/first.png",
+            )
+        )
+    )
+
+    instance = recorder.body()["instances"][0]
+    inline = instance["image"]["inlineData"]
+    assert inline["mimeType"] == "image/png", "el mime sale del content-type real"
+    assert base64.b64decode(inline["data"]) == _FAKE_PNG
+    assert "gcsUri" not in json.dumps(instance), "gcsUri es de Vertex, aquí no vale"
+
+
+def test_veo_forces_the_three_reference_constraints_together() -> None:
+    """Con `referenceImages` la API impone 16:9, exactamente 8 s y como mucho tres
+    referencias. Se fuerzan antes de enviar: un 400 cuesta un turno del agente, y salir
+    en 9:16 sin avisar sería peor todavía."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return image_response()
+        return json_response({"name": "models/veo/operations/op-2"})
+
+    recorder = Recorder(handler)
+    adapter = make_adapter(VeoAdapter, recorder)
+
+    elements = [
+        ElementRef(f"el-{i}", f"p{i}", "character", f"https://cdn/{i}.png") for i in range(5)
+    ]
+    run(
+        adapter.submit(
+            video_request(
+                model_id="veo-3.1-generate-preview",
+                aspect="9:16",
+                duration_s=4,
+                elements=elements,
+            )
+        )
+    )
+
+    body = recorder.body()
+    assert len(body["instances"][0]["referenceImages"]) == 3, "el máximo son tres"
+    assert body["parameters"]["aspectRatio"] == "16:9"
+    assert body["parameters"]["durationSeconds"] == "8"
+
+
+def test_veo_refuses_to_mix_references_with_frames() -> None:
+    """`referenceImages` es mutuamente excluyente con `image`/`lastFrame`. Se rechaza
+    aquí porque el 400 de Google no dice cuál de los dos caminos abandonar, y el agente
+    necesita saberlo para reintentar con sentido."""
+    recorder = Recorder(lambda r: json_response({"name": "op"}))
+    adapter = make_adapter(VeoAdapter, recorder)
+
+    with pytest.raises(ProviderRejectedError) as excinfo:
+        run(
+            adapter.submit(
+                video_request(
+                    model_id="veo-3.1-generate-preview",
+                    init_image_url="https://cdn/first.png",
+                    elements=[ElementRef("el", "p", "character", "https://cdn/p.png")],
+                )
+            )
+        )
+
+    assert "mutually exclusive" in str(excinfo.value)
+    assert not recorder.requests, "no se gasta una llamada para que la rechacen"
+
+
+def test_veo_duration_is_a_string_from_a_closed_set() -> None:
+    recorder = Recorder(lambda r: json_response({"name": "op"}))
+    adapter = make_adapter(VeoAdapter, recorder)
+
+    for wanted, expected in ((4, "4"), (5, "6"), (8, "8"), (12, "8")):
+        run(
+            adapter.submit(
+                video_request(
+                    model_id="veo-3.1-generate-preview", duration_s=wanted, resolution="720p"
+                )
+            )
+        )
+        value = recorder.body()["parameters"]["durationSeconds"]
+        assert value == expected
+        assert isinstance(value, str)
+
+
+def test_veo_high_resolution_forces_the_eight_second_clip() -> None:
+    """1080p y 4K solo existen en clips de 8 s: pedirlos con 4 es un 400. Se sube la
+    duración y no se baja la resolución, porque la resolución es lo que el usuario pidió
+    y Veo factura el bloque de 8 s igualmente."""
+    recorder = Recorder(lambda r: json_response({"name": "op"}))
+    adapter = make_adapter(VeoAdapter, recorder)
+
+    run(
+        adapter.submit(
+            video_request(model_id="veo-3.1-generate-preview", duration_s=4, resolution="1080p")
+        )
+    )
+    parameters = recorder.body()["parameters"]
+    assert parameters["durationSeconds"] == "8"
+    assert parameters["resolution"] == "1080p"
+
+
+def test_veo_4k_multiplier_depends_on_the_variant() -> None:
+    """Una tabla plana aplicaba el salto de 4K de Standard (1.5x) a Fast, cuyo salto real
+    es el doble, y ofrecía 4K en Lite, que no lo tiene. Los dos errores se pagan."""
+    adapter = VeoAdapter()
+    model = spec("x", cost_per_second=Decimal("0.10"), min_duration_s=4.0)
+
+    def cost(model_id: str, resolution: str) -> Decimal:
+        return adapter.estimate_cost(
+            video_request(model_id=model_id, duration_s=8, resolution=resolution), model
+        )
+
+    base = cost("veo-3.1-generate-preview", "1080p")
+    assert cost("veo-3.1-generate-preview", "4K") == base * 3 / 2
+    assert cost("veo-3.1-fast-generate-preview", "4K") == base * 3
+    # Lite no tiene 4K: se estima con su tramo más caro, nunca por debajo.
+    assert cost("veo-3.1-lite-generate-preview", "4K") >= base
+
+
+def test_higgsfield_sends_custom_reference_id_not_soul_id() -> None:
+    """Una línea, y es el mecanismo de continuidad de mayor valor del catálogo: con el
+    nombre equivocado la API ignoraba la identidad entrenada y devolvía una cara nueva en
+    cada plano. Se pagaba el Soul ID y no se usaba."""
+    recorder = Recorder(lambda r: json_response({"id": "req-1"}))
+    adapter = make_adapter(HiggsfieldAdapter, recorder)
+
+    run(
+        adapter.submit(
+            GenerationRequest(
+                modality="image",
+                model_id="higgsfield-soul",
+                prompt="el detective",
+                elements=[ElementRef("soul-abc", "detective", "character", "https://cdn/d.png")],
+            )
+        )
+    )
+
+    params = recorder.body()["params"]
+    assert params["custom_reference_id"] == "soul-abc"
+    assert "soul_id" not in params
+
+
+def test_sora_sends_input_reference_as_an_object_and_no_seed() -> None:
+    """Como string suelto era un 400, y OpenAI rechaza los parámetros que no conoce en vez
+    de ignorarlos: mandar `seed` convertía en error toda petición reproducible."""
+    recorder = Recorder(lambda r: json_response({"id": "vid-1"}))
+    adapter = make_adapter(SoraAdapter, recorder)
+
+    run(
+        adapter.submit(
+            video_request(
+                model_id="sora-2",
+                init_image_url="https://cdn/ref.png",
+                seed=42,
+                duration_s=8,
+            )
+        )
+    )
+
+    body = recorder.body()
+    assert body["input_reference"] == {"image_url": "https://cdn/ref.png"}
+    assert "seed" not in body
+    assert body["seconds"] == "8"
+    assert body["size"] in ("1280x720", "720x1280", "1024x1792", "1792x1024")
+
+
+def test_sora_pro_uses_the_same_closed_duration_set() -> None:
+    """La tabla anterior daba (10, 15, 25) a Pro: valores que no existen, así que toda
+    petición a sora-2-pro salía con un `seconds` inválido."""
+    recorder = Recorder(lambda r: json_response({"id": "vid-2"}))
+    adapter = make_adapter(SoraAdapter, recorder)
+
+    run(adapter.submit(video_request(model_id="sora-2-pro", duration_s=10)))
+    assert recorder.body()["seconds"] == "12"
+
+
+def test_kling_refuses_elements_instead_of_dropping_them_silently() -> None:
+    """`image_list` es primer/último fotograma, no multi-referencia de personaje. Mandar
+    ahí los elements producía un vídeo válido y facturado **sin ninguna referencia
+    aplicada**, sin forma de detectarlo salvo mirándolo."""
+    recorder = Recorder(lambda r: json_response({"code": 0, "data": {"task_id": "t"}}))
+    adapter = make_adapter(KlingAdapter, recorder)
+
+    with pytest.raises(ProviderRejectedError) as excinfo:
+        run(
+            adapter.submit(
+                video_request(
+                    model_id="kling-3.0",
+                    elements=[ElementRef("el", "p", "character", "https://cdn/p.png")],
+                )
+            )
+        )
+
+    message = str(excinfo.value)
+    assert "kling_elements" in message
+    assert "Veo" in message or "Flux" in message, "el error propone una alternativa"
+    assert not recorder.requests, "no se genera un plano que no sirve"
+
+
+def test_kling_pro_mode_costs_one_third_more_not_double() -> None:
+    """Con 2.0 se reservaba un 50% de más en cada plano en 1080p, que son casi todos.
+    Esa reserva sale del saldo del usuario aunque después se devuelva."""
+    adapter = KlingAdapter()
+    model = spec("kling-3.0", cost_per_second=Decimal("0.10"), min_duration_s=5.0)
+
+    std = adapter.estimate_cost(video_request(resolution="720p", duration_s=5), model)
+    pro = adapter.estimate_cost(video_request(resolution="1080p", duration_s=5), model)
+
+    assert pro == (std * Decimal("1.33")).quantize(Decimal("0.0001"))
+
+
+def test_kling_base_url_is_configurable() -> None:
+    """La doc de Kling responde 446 y las dos bases candidatas no son intercambiables:
+    acertar por defecto y fallar en la cuenta del cliente da un 401, que clasificamos
+    como fatal y mata el job sin reintento."""
+    from app.providers import kling
+
+    assert kling.KlingAdapter.base_url in kling._KLING_BASE_URL_OPTIONS
+    assert len(kling._KLING_BASE_URL_OPTIONS) == 2
+    assert "KLING_BASE_URL" in inspect.getsource(kling)
+
+
+def test_wan_image_to_video_uses_its_own_path_and_ratio() -> None:
+    """i2v y t2v no comparten endpoint, y el de texto rechaza `img_url`: la generación
+    imagen→vídeo nunca llegó a funcionar. Además `parameters["audio"]` no existe."""
+    recorder = Recorder(lambda r: json_response({"output": {"task_id": "task-1"}}))
+    adapter = make_adapter(WanAdapter, recorder)
+
+    run(
+        adapter.submit(
+            video_request(
+                model_id="wan-2.7",
+                init_image_url="https://cdn/first.png",
+                aspect="9:16",
+                resolution="1080p",
+                audio=True,
+            )
+        )
+    )
+
+    assert recorder.last.url.path.endswith("/image2video/video-synthesis")
+    body = recorder.body()
+    assert body["model"] == "wan2.7-i2v"
+    assert body["input"]["img_url"] == "https://cdn/first.png"
+    assert body["parameters"]["ratio"] == "9:16", "wan2.7 usa ratio, no size en píxeles"
+    assert "size" not in body["parameters"]
+    assert "audio" not in body["parameters"], "no existe; el audio es input.audio_url"
+
+
+def test_wan_text_to_video_keeps_the_legacy_size_field() -> None:
+    """Las versiones anteriores a 2.7 siguen con `size` en píxeles. Mandar el par
+    equivocado no da error: se ignora y el vídeo sale con el encuadre por defecto."""
+    recorder = Recorder(lambda r: json_response({"output": {"task_id": "task-2"}}))
+    adapter = make_adapter(WanAdapter, recorder)
+
+    run(adapter.submit(video_request(model_id="wan-2.5", aspect="16:9", resolution="720p")))
+
+    assert recorder.last.url.path.endswith("/video-generation/video-synthesis")
+    body = recorder.body()
+    assert body["model"] == "wan2.5-t2v-preview"
+    assert body["parameters"]["size"] == "1280*720"
+    assert "ratio" not in body["parameters"]
+
+
+def test_seedance_fails_loudly_instead_of_calling_an_unverified_api() -> None:
+    """Es el modelo más caro del catálogo (~$21/job en 4K). Con el esquema sin verificar,
+    el fallo probable no es un 400 limpio: es una llamada aceptada, facturada y distinta
+    de lo que se pidió."""
+    recorder = Recorder(lambda r: json_response({"id": "t"}))
+    adapter = make_adapter(SeedanceAdapter, recorder)
+
+    with pytest.raises(XframeToolFatalError) as excinfo:
+        run(adapter.submit(video_request(model_id="seedance-2.0")))
+
+    assert "Do not retry" in str(excinfo.value)
+    assert not recorder.requests, "no se toca la API"
+
+
+def test_seedance_corrected_payload_is_ready_for_reactivation() -> None:
+    """La traducción corregida se mantiene probada aunque no se envíe: el trabajo caro no
+    es escribirla, es averiguar qué campos son."""
+    adapter = SeedanceAdapter()
+    payload = adapter.build_payload(
+        video_request(model_id="seedance-2.0", duration_s=5, resolution="1080p", audio=True)
+    )
+
+    assert payload["model"] == "dreamina-seedance-2-0-260128"
+    # Campos JSON de primer nivel, no flags `--clave valor` pegados al prompt (eso es 1.x).
+    assert payload["ratio"] == "16:9"
+    assert payload["resolution"] == "1080p"
+    assert payload["duration"] == 5
+    assert payload["generate_audio"] is True
+    assert "--resolution" not in payload["content"][0]["text"]
+
+
+def test_seedance_is_seeded_as_deprecated_so_the_agent_never_offers_it() -> None:
+    seedance = [m for m in MODELS if m.provider == "bytedance"]
+    assert seedance
+    assert all(m.status == "deprecated" for m in seedance)
+
+
+def test_seedance_base_url_is_the_byteplus_international_host() -> None:
+    from app.providers import seedance
+
+    assert seedance._ARK_BASE == "https://ark.ap-southeast.bytepluses.com"
+
+
+# --------------------------------------------------------------------------- #
+# 12. OpenAI Images: API síncrona dentro del contrato submit → poll            #
+# --------------------------------------------------------------------------- #
+#
+# Es el único adaptador de imagen que funciona con la clave que el usuario ya tiene, así
+# que es la puerta de entrada real al producto. Lo que se prueba aquí, por orden de lo que
+# cuesta si falla:
+#
+#   1. El camino de REFERENCIA DE PERSONAJE (endpoint de edits). Es el que da continuidad
+#      y el que justifica el adaptador entero.
+#   2. Que `poll()` no vuelve a llamar a la API. Volver a llamar no es un fallo de
+#      corrección: es facturar una imagen nueva en cada ciclo de polling.
+#   3. Que el precio depende de la calidad. Entre `low` y `high` hay un factor de 35.
+
+_B64_PIXEL = base64.b64encode(_FAKE_PNG).decode()
+
+
+def openai_image_response(**extra: Any) -> httpx.Response:
+    payload: dict[str, Any] = {
+        "created": 1770000000,
+        "data": [{"b64_json": _B64_PIXEL}],
+        "output_format": "png",
+        "size": "1024x1024",
+        "quality": "medium",
+        "usage": {"input_tokens": 20, "output_tokens": 1056, "total_tokens": 1076},
+    }
+    payload.update(extra)
+    return json_response(payload)
+
+
+def image_request(**overrides: Any) -> GenerationRequest:
+    base: dict[str, Any] = {
+        "modality": "image",
+        "model_id": "gpt-image-2",
+        "prompt": "retrato del detective en el bar de neon",
+    }
+    base.update(overrides)
+    return GenerationRequest(**base)
+
+
+def test_openai_image_submit_is_synchronous_and_poll_never_calls_again() -> None:
+    """
+    El contrato es submit → poll, pero la Images API devuelve la imagen en la misma
+    respuesta. `submit()` guarda el resultado y `poll()` lo devuelve terminal **sin tocar
+    la red**: si volviera a llamar, cada ciclo de polling generaría y facturaría una imagen
+    distinta, y nos quedaríamos con la última. Es un fallo que ningún test de "el submit
+    funciona" detecta, y que solo se ve en la factura.
+    """
+    recorder = Recorder(lambda r: openai_image_response())
+    adapter = make_adapter(OpenAIImageAdapter, recorder)
+
+    ref = run(adapter.submit(image_request()))
+    assert len(recorder.requests) == 1
+    assert recorder.last.url.path == "/v1/images/generations"
+
+    status = run(adapter.poll(ref))
+    assert status.state == "succeeded"
+    assert status.is_terminal
+    assert status.progress == 1.0
+    assert len(recorder.requests) == 1, "poll() no puede volver a generar (y facturar)"
+
+    # La salida es base64, no una URL: los GPT Image nunca devuelven `url`.
+    assert status.output_urls[0].startswith("data:image/png;base64,")
+    assert base64.b64decode(status.raw["images_b64"][0]) == _FAKE_PNG
+
+    # Un segundo poll sigue siendo terminal e idéntico: el contrato exige idempotencia.
+    assert run(adapter.poll(ref)).output_urls == status.output_urls
+    assert len(recorder.requests) == 1
+
+
+def test_openai_image_uses_the_edits_endpoint_for_character_reference() -> None:
+    """
+    EL CAMINO QUE IMPORTA. Un element (personaje, localización, objeto) es una imagen de
+    referencia, y la continuidad depende de que llegue al proveedor de verdad.
+
+    `/v1/images/generations` **no acepta imágenes**: mandar ahí una referencia la descarta
+    y devuelve 200 con una cara nueva, que es el fallo silencioso clásico de esta capa. La
+    referencia solo se aplica por `/v1/images/edits`, en multipart y con los bytes subidos,
+    porque ese endpoint tampoco acepta URLs.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return image_response()  # descarga de la referencia desde el bucket
+        return openai_image_response()
+
+    recorder = Recorder(handler)
+    adapter = make_adapter(OpenAIImageAdapter, recorder)
+
+    elements = [
+        ElementRef("el-1", "detective", "character", "https://cdn/detective.png"),
+        ElementRef("el-2", "el bar", "location", "https://cdn/bar.png"),
+    ]
+    run(adapter.submit(image_request(prompt="el detective entra en el bar", elements=elements)))
+
+    # Las dos referencias se descargaron y la generación fue al endpoint de edición.
+    gets = [r for r in recorder.requests if r.method == "GET"]
+    assert len(gets) == 2, "cada element se descarga para poder subirlo"
+    assert recorder.last.url.path == "/v1/images/edits"
+
+    body = recorder.last.content
+    content_type = recorder.last.headers["content-type"]
+    assert content_type.startswith("multipart/form-data"), (
+        "edits es multipart; con application/json el servidor no ve ninguna imagen"
+    )
+    # `image[]` y no `image`: en singular solo viajaría la primera referencia, y la
+    # segunda se perdería sin ningún error.
+    assert body.count(b'name="image[]"') == 2
+    assert _FAKE_PNG in body, "los bytes reales de la referencia tienen que ir en el cuerpo"
+
+    # La clave de OpenAI no puede viajar al bucket de donde sale la referencia.
+    assert "authorization" not in {k.lower() for k in gets[0].headers}
+
+
+def test_openai_image_does_not_send_parameters_the_api_rejects() -> None:
+    """
+    `response_format` solo existe en dall-e-*, y `seed`/`negative_prompt` no existen en
+    esta API. OpenAI **rechaza los parámetros que no conoce** en vez de ignorarlos (la
+    misma lección que dejó `seed` en el adaptador de Sora), así que mandarlos convertiría
+    en 400 justo las peticiones más elaboradas.
+    """
+    recorder = Recorder(lambda r: openai_image_response())
+    adapter = make_adapter(OpenAIImageAdapter, recorder)
+
+    run(adapter.submit(image_request(seed=42, negative_prompt="sin texto, sin logos", aspect="16:9")))
+
+    body = recorder.body()
+    assert "response_format" not in body
+    assert "seed" not in body
+    assert "negative_prompt" not in body
+    # La negación no se pierde: sin campo propio, la única forma honesta es el prompt.
+    assert "sin texto" in body["prompt"]
+    assert body["size"] == "1536x1024", "16:9 es 1536x1024 en esta API"
+    assert body["output_format"] == "png"
+    assert body["n"] == 1
+
+
+def test_openai_image_price_tracks_quality_not_a_flat_rate() -> None:
+    """Entre `low` y `high` hay un factor de ~35. Una tarifa plana se equivocaría en un
+    sentido u otro por ese factor: o se espanta al usuario o se genera bajo coste."""
+    adapter = OpenAIImageAdapter()
+    model = spec("gpt-image-2", modality="image", cost_per_second=Decimal("0.001"))
+
+    low = adapter.estimate_cost(image_request(extra={"quality": "low"}), model)
+    medium = adapter.estimate_cost(image_request(extra={"quality": "medium"}), model)
+    high = adapter.estimate_cost(image_request(extra={"quality": "high"}), model)
+
+    assert low < medium < high
+    assert high > low * 10
+
+    # Un tamaño no cuadrado consume más tokens de salida y cuesta más.
+    wide = adapter.estimate_cost(
+        image_request(aspect="16:9", extra={"quality": "medium"}), model
+    )
+    assert wide > medium
+
+    # Las referencias no son gratis: se facturan como tokens de imagen de entrada.
+    with_refs = adapter.estimate_cost(
+        image_request(
+            extra={"quality": "medium"},
+            elements=[ElementRef("e", "p", "character", "https://cdn/p.png")],
+        ),
+        model,
+    )
+    assert with_refs > medium
+
+
+def test_openai_image_empty_data_is_a_rejection_not_a_live_job() -> None:
+    """Un 200 sin imagen no puede devolver un ref "vivo": el worker poletearía para siempre
+    un trabajo que no existe, consumiendo su ventana de créditos hasta el barrido."""
+    recorder = Recorder(lambda r: json_response({"created": 1, "data": []}))
+    adapter = make_adapter(OpenAIImageAdapter, recorder)
+
+    with pytest.raises(ProviderRejectedError) as excinfo:
+        run(adapter.submit(image_request()))
+
+    assert "b64_json" in str(excinfo.value)
+
+
+def test_openai_image_does_not_collide_with_sora_in_the_registry() -> None:
+    """
+    El registry indexa por `provider_id`. Si el adaptador de imagen se hubiera llamado
+    `openai` como Sora, la última clase registrada machacaría a la otra y **todos** los
+    jobs de vídeo acabarían en el adaptador de imagen, o al revés. Comparten la clave de
+    API, no la identidad.
+    """
+    registry = DbAdapterRegistry()
+
+    assert OpenAIImageAdapter.provider_id != SoraAdapter.provider_id
+    assert registry.get("openai").provider_id == "openai"
+    assert registry.get("openai_image").provider_id == "openai_image"
+    assert "video" in registry.get("openai").supported_modalities
+    assert registry.get("openai_image").supported_modalities == ("image",)
+
+    # Los modelos de imagen de OpenAI están sembrados contra el adaptador correcto.
+    seeded = [m for m in MODELS if m.family == "OpenAI GPT Image"]
+    assert seeded, "el catálogo tiene que ofrecer al menos un modelo de imagen de OpenAI"
+    assert all(m.provider == "openai_image" for m in seeded)
+    assert all(m.modality == "image" for m in seeded)
+    assert all(m.cost_per_image is not None for m in seeded), (
+        "sin cost_per_image el registry facturaría una imagen como si durase un segundo"
+    )
+    assert any(m.status == "active" for m in seeded)
+
+
+def test_openai_image_poll_without_the_result_fails_instead_of_hanging() -> None:
+    """
+    El precio conocido de la decisión síncrona: el resultado vive en `ref.raw`, y
+    `JobWorker._store_ref` no persiste `raw`. Un ref reconstruido desde base de datos no
+    lo tiene. Tiene que fallar de forma terminal y explícita —la imagen ya está pagada—, no
+    quedarse poleteando algo que nadie va a devolver.
+    """
+    adapter = OpenAIImageAdapter()
+
+    status = run(adapter.poll(ProviderJobRef("openai_image", "img-1")))
+
+    assert status.state == "failed"
+    assert status.is_terminal
+    assert status.should_refund, "si no entregamos la imagen, el usuario no la paga"
+    assert "relanzar" in status.error
+
+
+def test_poll_gate_is_per_provider_not_per_job() -> None:
+    """
+    El gate contaba por `external_id`, así que doce planos concurrentes poleteaban doce
+    veces el ritmo permitido — justo el escenario que dispara el 429 que el gate existe
+    para evitar. El límite es del proveedor, no del job.
+    """
+    recorder = Recorder(lambda r: json_response({"name": "op", "done": False}))
+    adapter = make_adapter(VeoAdapter, recorder)
+    adapter.min_poll_interval_s = 0.1
+
+    async def poll_three_different_jobs() -> float:
+        start = time.monotonic()
+        await asyncio.gather(
+            *(
+                adapter.poll(ProviderJobRef("google", f"op-{i}", f"/v1beta/op-{i}"))
+                for i in range(3)
+            )
+        )
+        return time.monotonic() - start
+
+    elapsed = run(poll_three_different_jobs())
+
+    assert len(recorder.requests) == 3
+    assert elapsed >= 0.2, "tres jobs distintos siguen compartiendo el ritmo del proveedor"
+
+
+def test_poll_gate_does_not_grow_with_the_number_of_jobs() -> None:
+    """El dict anterior nunca se purgaba: en un proceso de larga vida era una fuga
+    proporcional a los jobs atendidos."""
+    recorder = Recorder(lambda r: json_response({"name": "op", "done": False}))
+    adapter = make_adapter(VeoAdapter, recorder)
+    adapter.min_poll_interval_s = 0.0
+
+    async def poll_many() -> None:
+        for i in range(50):
+            await adapter.poll(ProviderJobRef("google", f"op-{i}", f"/v1beta/op-{i}"))
+
+    run(poll_many())
+
+    assert isinstance(adapter._last_poll_at, float), "un instante, no un dict por job"

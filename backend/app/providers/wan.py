@@ -33,19 +33,32 @@ from app.tools.errors import ProviderRejectedError
 # usan `dashscope.aliyuncs.com`. La clave no es intercambiable entre ambos.
 _DASHSCOPE_BASE = "https://dashscope-intl.aliyuncs.com"
 
+#: Nombres verificados en el catálogo de Model Studio [V]. `wan2.7-t2v-plus` y
+#: `wan2.2-t2v-turbo` no existen (el `-turbo` solo llega hasta 2.1): con ellos el submit
+#: era un 404, que además clasificamos como fatal y mata el job sin reintento.
 _MODEL_NAME: dict[str, str] = {
-    "wan-2.7": "wan2.7-t2v-plus",
+    "wan-2.7": "wan2.7-t2v",
     "wan-2.5": "wan2.5-t2v-preview",
-    "wan-2.2-turbo": "wan2.2-t2v-turbo",
+    "wan-2.2-plus": "wan2.2-t2v-plus",
 }
 
 #: Variante image-to-video del mismo modelo. DashScope las trata como modelos
 #: distintos, no como un flag, así que el i2v cambia el nombre del modelo.
 _MODEL_NAME_I2V: dict[str, str] = {
-    "wan-2.7": "wan2.7-i2v-plus",
+    "wan-2.7": "wan2.7-i2v",
     "wan-2.5": "wan2.5-i2v-preview",
-    "wan-2.2-turbo": "wan2.2-i2v-turbo",
+    "wan-2.2-plus": "wan2.2-i2v-plus",
 }
+
+#: Rutas distintas para t2v e i2v [V]. Compartían endpoint en la versión anterior, y el
+#: de texto rechaza `img_url`: la generación imagen→vídeo nunca llegó a funcionar.
+_PATH_T2V = "/api/v1/services/aigc/video-generation/video-synthesis"
+_PATH_I2V = "/api/v1/services/aigc/image2video/video-synthesis"
+
+#: wan2.7 estrena protocolo: controla el encuadre con `resolution` + `ratio`. Las
+#: versiones anteriores siguen con `size` en píxeles (`"1280*720"`). Mandar el par
+#: equivocado no da error, se ignora, y el vídeo sale con el encuadre por defecto.
+_NEW_PROTOCOL_PREFIX = "wan2.7"
 
 
 class WanAdapter(HttpAdapter):
@@ -54,6 +67,9 @@ class WanAdapter(HttpAdapter):
     base_url = _DASHSCOPE_BASE
 
     min_poll_interval_s = 5.0
+
+    #: DashScope entrega el vídeo desde OSS de Alibaba, con TTL corto.
+    output_domains = ("aliyuncs.com", "alicdn.com", "aliyun.com")
 
     def auth_headers(self) -> dict[str, str]:
         key = self._require(get_settings().wan_api_key, "WAN_API_KEY")
@@ -83,22 +99,30 @@ class WanAdapter(HttpAdapter):
             payload_input["last_frame_url"] = req.last_frame_url
 
         parameters: dict[str, Any] = {}
-        if req.resolution:
-            parameters["resolution"] = req.resolution.upper()
+        if model.startswith(_NEW_PROTOCOL_PREFIX):
+            if req.resolution:
+                parameters["resolution"] = req.resolution.upper()
+            if req.aspect:
+                parameters["ratio"] = req.aspect
+        else:
+            if req.resolution:
+                parameters["resolution"] = req.resolution.upper()
+            if req.aspect:
+                # Protocolo antiguo: píxeles, no ratio.
+                parameters["size"] = self._size_for(req)
         if req.duration_s:
             parameters["duration"] = round(req.duration_s)
-        if req.aspect:
-            # DashScope quiere píxeles, no ratio; se traduce con la resolución elegida.
-            parameters["size"] = self._size_for(req)
         if req.seed is not None:
             parameters["seed"] = req.seed
-        parameters["audio"] = bool(req.audio)
+        # `parameters["audio"]` no existe en esta API: no encendía nada, y peor aún,
+        # sugería que el audio se controla con un booleano. Lo que DashScope acepta es
+        # `input.audio_url`, una pista de audio de entrada, que es otra cosa.
         # Igual que en Seedance: reescribir el prompt rompe la continuidad de serie.
         parameters["prompt_extend"] = bool(req.extra.get("prompt_extend", False))
 
         response = await self.request(
             "POST",
-            "/api/v1/services/aigc/video-generation/video-synthesis",
+            _PATH_I2V if is_i2v else _PATH_T2V,
             json={"model": model, "input": payload_input, "parameters": parameters},
             timeout=UPLOAD_TIMEOUT,
         )

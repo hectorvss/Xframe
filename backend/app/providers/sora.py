@@ -30,26 +30,27 @@ from app.providers.base import (
 )
 from app.tools.errors import ProviderRejectedError
 
-#: Sora acepta un conjunto cerrado de tamaños; cualquier otro es un 400. Se corrige
-#: antes de enviar en vez de dejar que el proveedor lo rechace, porque un rechazo
-#: cuesta un turno completo del agente.
+#: Tamaños permitidos [V]: `720x1280`, `1280x720`, `1024x1792`, `1792x1024`. Cualquier
+#: otro es un 400. Se corrige antes de enviar en vez de dejar que el proveedor lo
+#: rechace, porque un rechazo cuesta un turno completo del agente.
+#: Ojo: `1920x1080` **no** está en la lista, pese a lo que sugería la tabla de precios.
+_ALLOWED_SIZES = frozenset({"720x1280", "1280x720", "1024x1792", "1792x1024"})
+
 _SIZE_BY_ASPECT: dict[str, str] = {
     "16:9": "1280x720",
     "9:16": "720x1280",
 }
 
-#: Duraciones permitidas por variante (informe 06 §2.1).
-_ALLOWED_SECONDS: dict[str, tuple[int, ...]] = {
-    "sora-2": (4, 8, 12),
-    "sora-2-pro": (10, 15, 25),
-}
+#: Duraciones permitidas [V]: `"4"`, `"8"`, `"12"` para **ambas** variantes, y se mandan
+#: como string. La tabla anterior daba (10, 15, 25) a Pro, valores que no existen: toda
+#: petición a sora-2-pro salía con un `seconds` inválido.
+_ALLOWED_SECONDS: tuple[int, ...] = (4, 8, 12)
 
 _PRICE_BY_SIZE: dict[str, Decimal] = {
     "1280x720": Decimal("1.0"),
     "720x1280": Decimal("1.0"),
     "1024x1792": Decimal("1.667"),  # $0.50/s sobre la base $0.30/s de Pro
     "1792x1024": Decimal("1.667"),
-    "1920x1080": Decimal("2.333"),  # $0.70/s sobre $0.30/s
 }
 
 
@@ -61,6 +62,10 @@ class SoraAdapter(HttpAdapter):
     #: OpenAI publica límites por tier (25-375 req/min). 5 s deja margen incluso en
     #: tier 1 con varios planos en vuelo.
     min_poll_interval_s = 5.0
+
+    #: El contenido se sirve desde el propio `api.openai.com` (`/v1/videos/{id}/content`),
+    #: que puede redirigir a su CDN de descarga.
+    output_domains = ("openai.com", "oaiusercontent.com")
 
     def auth_headers(self) -> dict[str, str]:
         key = self._require(get_settings().openai_api_key, "OPENAI_API_KEY")
@@ -80,15 +85,14 @@ class SoraAdapter(HttpAdapter):
             (e.image_url for e in req.elements if e.image_url), None
         )
         if reference:
-            # NO VERIFICADO: `input_reference` está documentado como upload multipart de
-            # un fichero. Que acepte una URL remota como string es una suposición. Si el
-            # proveedor devuelve 400 aquí, hay que pasar a multipart descargando antes.
-            payload["input_reference"] = reference
+            # En peticiones `application/json` es un **objeto** con `image_url` o
+            # `file_id`, exactamente uno de los dos [V]. Como string suelto era un 400.
+            # La imagen debe coincidir además con el `size` del vídeo destino.
+            payload["input_reference"] = {"image_url": reference}
 
-        if req.seed is not None:
-            # NO VERIFICADO: la Videos API no documenta `seed`. Se manda porque no
-            # estorba si se ignora, y da reproducibilidad si existe.
-            payload["seed"] = req.seed
+        # `seed` no existe en la Videos API [V], y OpenAI rechaza los parámetros que no
+        # conoce en vez de ignorarlos: mandarlo convertía en 400 toda petición con seed,
+        # que es justo la que pide reproducibilidad.
 
         response = await self.request(
             "POST", "/v1/videos", json=payload, timeout=UPLOAD_TIMEOUT
@@ -105,19 +109,18 @@ class SoraAdapter(HttpAdapter):
         )
 
     def _size_for(self, req: GenerationRequest) -> str:
-        if req.resolution and "x" in req.resolution:
+        if req.resolution and req.resolution in _ALLOWED_SIZES:
             return req.resolution
         return _SIZE_BY_ASPECT.get(req.aspect or "16:9", "1280x720")
 
     def _seconds_for(self, req: GenerationRequest) -> int:
         """Se ajusta al valor permitido más cercano por arriba: recortar un plano es
         peor que pagar unos segundos de más."""
-        allowed = _ALLOWED_SECONDS.get(req.model_id, (4, 8, 12))
-        wanted = req.duration_s or allowed[0]
-        for option in allowed:
+        wanted = req.duration_s or _ALLOWED_SECONDS[0]
+        for option in _ALLOWED_SECONDS:
             if option >= wanted:
                 return option
-        return allowed[-1]
+        return _ALLOWED_SECONDS[-1]
 
     # -- poll --------------------------------------------------------------- #
 

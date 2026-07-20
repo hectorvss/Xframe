@@ -48,6 +48,9 @@ EventType = Literal[
     "message_delta",
     "tool_start",
     "tool_progress",
+    # Distinto de tool_progress: progress es "sigo trabajando", result es el valor
+    # devuelto, con su ui_payload. El frontend los pinta de forma distinta.
+    "tool_result",
     "asset_ready",
     "job_status",
     "interrupt_request",

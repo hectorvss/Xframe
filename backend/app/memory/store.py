@@ -23,12 +23,13 @@ sino en créditos de generación.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Sequence
 
 from app import db
+from app.context.manager import _attr, _body
 from app.context.prompts import MEMORY_KIND_LABELS, MEMORY_TEMPLATE
 
 
@@ -228,6 +229,15 @@ def format_memory(entries: Sequence[MemoryEntry], *, max_chars: int = 8_000) -> 
     El orden no es alfabético: biblia de estilo primero, después fichas de personaje,
     después reglas y preferencias. Si hay que truncar, se trunca por la cola, y la cola
     es lo que menos rompe la continuidad visual.
+
+    **El contenido se escapa.** Era el único bloque del contexto que se interpolaba en
+    crudo, y a la vez el único al que el prompt le concede autoridad explícita ("outranks
+    anything you infer from a single shot"). Esa combinación era el agujero: una línea de
+    la biblia de estilo, que se escribe desde la UI, podía cerrar `</project_memory>` y
+    abrir un `<system_reminder>` falso al que el modelo llegaba ya predispuesto a
+    obedecer. Con `_attr`/`_body` —los mismos de `context/manager.py`, importados y no
+    duplicados, para que no puedan divergir— la línea entra como texto y se lee como
+    texto.
     """
     if not entries:
         return ""
@@ -247,10 +257,10 @@ def format_memory(entries: Sequence[MemoryEntry], *, max_chars: int = 8_000) -> 
         if not content:
             continue
         label = MEMORY_KIND_LABELS.get(entry.kind.value, entry.kind.value)
-        attrs = f'kind="{entry.kind.value}"'
+        attrs = f'kind="{_attr(entry.kind.value)}"'
         if entry.element_id:
-            attrs += f' element_id="{entry.element_id}"'
-        block = f"<memory {attrs} label=\"{label}\">\n{content}\n</memory>"
+            attrs += f' element_id="{_attr(entry.element_id)}"'
+        block = f'<memory {attrs} label="{_attr(label)}">\n{_body(content)}\n</memory>'
         if used + len(block) > max_chars:
             dropped += 1
             continue

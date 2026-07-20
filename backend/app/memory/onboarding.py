@@ -257,12 +257,11 @@ class MemoryOnboarding:
     def _get_model(self) -> Any:
         if self._model is not None:
             return self._model
-        from langchain_anthropic import ChatAnthropic
+        from app.llm import chat_model
 
         settings = get_settings()
-        self._model = ChatAnthropic(
-            model=settings.model_fast,
-            api_key=settings.anthropic_api_key,
+        self._model = chat_model(
+            "fast",
             max_tokens=4_096,
             temperature=0.3,
             streaming=False,

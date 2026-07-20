@@ -269,15 +269,12 @@ class MemoryCollectorNode:
         """
         if self._model is not None:
             return self._model
-        from langchain_anthropic import ChatAnthropic
-
+    
         settings = get_settings()
-        self._model = ChatAnthropic(
-            model=settings.model_fast,
-            api_key=settings.anthropic_api_key,
-            max_tokens=1_024,
-            temperature=0.2,
-            streaming=False,
+        from app.llm import chat_model
+
+        self._model = chat_model(
+            "fast", max_tokens=1_024, temperature=0.2, streaming=False
         ).bind_tools(memory_collector_tools)
         return self._model
 

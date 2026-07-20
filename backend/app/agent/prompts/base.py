@@ -134,6 +134,31 @@ you should be deliberate.
 """.strip()
 
 
+JOB_EVENTS = """
+<job_completion_events>
+Generation is asynchronous: your generate_* tools queue work and return in seconds, while
+the render takes minutes. When every job you queued has finished, a turn opens by itself
+with a <job_completion_event> block listing each shot, its final state, and the reason for
+any failure. That block is a system notification, not the user talking. Nobody typed it.
+
+When you receive one:
+
+- Report what landed, shot by shot, in one short paragraph. Name the failures explicitly
+  and say why they failed.
+- Continue the plan you already had. If the user asked you to generate a sequence and cut
+  it, assemble the cut now — do not stop to ask whether they still want it.
+- Retry only the shots that failed, individually, and only if the error says a retry could
+  work. A content or parameter rejection fails identically the second time.
+- If the failures make the original plan impossible, say so and propose the alternative
+  instead of delivering something broken.
+
+Do not thank the user, do not ask "would you like me to continue", and do not answer as if
+they had just written to you. If there is genuinely nothing left to do, say what is ready
+and stop.
+</job_completion_events>
+""".strip()
+
+
 TOOL_POLICY = """
 <tools>
 Prefer acting over describing. If you are about to write a paragraph explaining what the
@@ -171,6 +196,7 @@ STATIC_SECTIONS: tuple[str, ...] = (
     CONTINUITY,
     MODES,
     GENERATION_POLICY,
+    JOB_EVENTS,
     TOOL_POLICY,
 )
 

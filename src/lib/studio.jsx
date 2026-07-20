@@ -165,16 +165,6 @@ export function StudioProvider({ children }) {
     return credits;
   }, [profile]);
 
-  const spendCredits = useCallback(
-    async (amount, options) => {
-      const next = await db.spendCredits(profile, amount, options);
-      if (!next) return false;
-      setProfile(next);
-      return true;
-    },
-    [profile],
-  );
-
   /* --------------------------------------------------------- proyectos */
 
   const refreshProjects = useCallback(async () => {
@@ -230,7 +220,6 @@ export function StudioProvider({ children }) {
       preferences,
       setPreferences,
       updateProfile,
-      spendCredits,
       refreshCredits,
       createProject,
       updateProject,
@@ -252,7 +241,6 @@ export function StudioProvider({ children }) {
       preferences,
       setPreferences,
       updateProfile,
-      spendCredits,
       refreshCredits,
       createProject,
       updateProject,

@@ -93,8 +93,8 @@ class DefineElementTool(SnapshotTool):
             row = await db.fetchrow(
                 """
                 insert into public.assets (project_id, name, type, meta, role, url, status)
-                values ($1::uuid, $2, 'image', $3, $4, $5, case when $5 is null
-                        then 'generating' else 'ready' end)
+                values ($1::uuid, $2, 'image', $3, $4, $5::text,
+                        case when $5::text is null then 'generating' else 'ready' end)
                 returning id, name, role, meta, url, status
                 """,
                 self.ctx.project_id,

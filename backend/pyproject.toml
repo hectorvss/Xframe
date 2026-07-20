@@ -2,23 +2,31 @@
 name = "xframe-backend"
 version = "0.1.0"
 description = "Agente de cinematografía generativa de Xframe"
-requires-python = ">=3.12"
+# 3.11 y no 3.12: el codigo usa asyncio.TaskGroup y asyncio.timeout, ambos de 3.11, y
+# ninguna sintaxis exclusiva de 3.12 (sin genericos PEP 695 ni sentencia `type`). La
+# restriccion anterior era aspiracional e impedia instalar en el entorno de desarrollo.
+requires-python = ">=3.11"
 
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
 
     # Agente. langgraph trae el checkpointer de Postgres, que es el que persiste
-    # XframeState; langchain-anthropic es el único cliente de LLM que usamos.
+    # XframeState. Los dos clientes de LLM: cuál se usa lo decide LLM_PROVIDER en app/llm.py.
     "langgraph>=0.2.60",
     "langgraph-checkpoint-postgres>=2.0.0",
     "langchain-core>=0.3.28",
     "langchain-anthropic>=0.3.0",
+    "langchain-openai>=0.2.0",
 
     # Infraestructura. asyncpg y no un ORM: el esquema ya está escrito en SQL con RLS.
     "asyncpg>=0.30",
     "redis>=5.2",
     "httpx>=0.28",
+
+    # Verificación del JWT de Supabase. El extra `crypto` es obligatorio, no
+    # opcional: sin él PyJWT no sabe ES256 y todo token asimétrico se rechaza.
+    "pyjwt[crypto]>=2.9",
 
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
@@ -33,6 +41,13 @@ dev = [
     "pytest-asyncio>=0.25",
     "respx>=0.22",
     "ruff>=0.8",
+
+    # Suite de integración. `testcontainers` levanta el Postgres desechable sobre el que
+    # se comprueban `SKIP LOCKED`, el cerrojo del perfil y la `unique` de idempotencia:
+    # ninguna de las tres se puede probar contra un doble en memoria. `fakeredis` sí
+    # sustituye a Redis porque implementa Streams, que es todo lo que el bus usa.
+    "testcontainers[postgresql]>=4.8",
+    "fakeredis>=2.26",
 ]
 
 [build-system]
@@ -97,4 +112,5 @@ addopts = "-p no:warnings -ra"
 markers = [
     "evals: suite de evaluación. Llama a modelos reales y cuesta dinero; excluida por defecto en CI rápido con -m 'not evals'.",
     "ffmpeg: requiere el binario de ffmpeg/ffprobe instalado.",
+    "integration: necesita infraestructura (Postgres real vía testcontainers o TEST_DATABASE_URL, y fakeredis). No cuesta dinero, pero tarda; se excluye con -m 'not integration'.",
 ]

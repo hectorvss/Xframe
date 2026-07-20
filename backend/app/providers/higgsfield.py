@@ -61,6 +61,9 @@ class HiggsfieldAdapter(HttpAdapter):
     #: proveedor cuando él marca el ritmo.
     min_poll_interval_s = 2.0
 
+    #: Los `results.raw.url` salen del storage de Higgsfield, servido por CloudFront.
+    output_domains = ("higgsfield.ai", "cloudfront.net")
+
     def __init__(self, client: Any | None = None) -> None:
         super().__init__(client)
         self._motions: dict[str, str] = {}
@@ -158,9 +161,10 @@ class HiggsfieldAdapter(HttpAdapter):
             # continuidad facial entre planos y no tiene equivalente en el resto de
             # proveedores: si existe para este element, tiene prioridad sobre mandar
             # la imagen como referencia suelta.
-            # NO VERIFICADO: nombre del campo (`custom_reference_id` en algunos
-            # revendedores, `soul_id` en otros).
-            params["soul_id"] = soul_id
+            # El campo se llama `custom_reference_id` [V] (confirmado en el SDK oficial).
+            # Con `soul_id` la API ignoraba la identidad entrenada y generaba una cara
+            # nueva en cada plano: se pagaba el Soul ID y no se usaba.
+            params["custom_reference_id"] = soul_id
         elif req.elements:
             params["image_reference"] = [{"image_url": e.image_url} for e in req.elements[:4]]
         return params

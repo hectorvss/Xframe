@@ -53,6 +53,9 @@ class HailuoAdapter(HttpAdapter):
 
     min_poll_interval_s = 5.0
 
+    #: El `download_url` del tercer salto sale del CDN de MiniMax, no de `api.minimax.io`.
+    output_domains = ("minimax.io", "minimaxi.com", "minimaxi.chat", "aliyuncs.com")
+
     def auth_headers(self) -> dict[str, str]:
         key = self._require(get_settings().minimax_api_key, "MINIMAX_API_KEY")
         return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}

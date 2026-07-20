@@ -80,7 +80,11 @@ function toElementContext(asset) {
     role: asset.role ?? "",
     meta: asset.meta ?? "",
     sheet: null,
-    thumb_url: asset.url ?? null,
+    // La RUTA, no la URL firmada. Esto viaja al backend y acaba en el contexto
+    // del LLM: una URL firmada ahí queda escrita en logs y en transcripciones
+    // que sobreviven al TTL, y además el backend ya sabe firmar por su cuenta
+    // desde la ruta. `path` lo añade `db.listAssets()`.
+    thumb_url: asset.path ?? asset.url ?? null,
   };
 }
 

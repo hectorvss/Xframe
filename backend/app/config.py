@@ -17,19 +17,72 @@ class Settings(BaseSettings):
 
     supabase_url: str = Field(default="", alias="SUPABASE_URL")
     supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")
-    storage_bucket: str = Field(default="xframe-assets", alias="STORAGE_BUCKET")
+    # El bucket real del proyecto se llama `assets`. El default anterior
+    # (`xframe-assets`) no existía en Supabase, así que toda subida habría dado 404
+    # y el job habría acabado en `failed` con reembolso, sin pista del motivo.
+    storage_bucket: str = Field(default="assets", alias="STORAGE_BUCKET")
+
+    # --- autenticación ---
+    supabase_jwt_secret: str = Field(default="", alias="SUPABASE_JWT_SECRET")
+    """
+    Secreto HS256 legacy. Vacío es lo correcto en un proyecto con claves asimétricas:
+    si está vacío, un token HS256 se **rechaza** en vez de intentar verificarse sin
+    llave, que es la confusión de algoritmo de manual.
+    """
+
+    supabase_jwt_issuer: str = Field(default="", alias="SUPABASE_JWT_ISSUER")
+    """Vacío = se deriva de `SUPABASE_URL`. Solo hace falta con un gateway por delante."""
+
+    supabase_jwt_audience: str = Field(default="authenticated", alias="SUPABASE_JWT_AUDIENCE")
+
+    jwks_cache_ttl_s: float = Field(default=600.0, alias="JWKS_CACHE_TTL_S")
+    """Diez minutos. Una rotación no espera al TTL: un `kid` desconocido fuerza refresco."""
+
+    jwt_leeway_s: float = Field(default=10.0, alias="JWT_LEEWAY_S")
+    """Tolerancia de reloj entre Supabase y nosotros. Diez segundos, no más."""
+
+    sse_ticket_ttl_s: int = Field(default=60, alias="SSE_TICKET_TTL_S")
+    """Vida del ticket de reenganche SSE. Lo justo para abrir el `EventSource`."""
+
+    signed_url_ttl_s: int = Field(default=3600, alias="SIGNED_URL_TTL_S")
+    """
+    TTL de las URLs firmadas del bucket. Debe cubrir la cola del proveedor además del
+    render: se le pasa la URL al enviar el job y él la descarga cuando le toca.
+    """
+
+    # --- límites de petición ---
+    chat_rate_limit: int = Field(default=20, alias="CHAT_RATE_LIMIT")
+    """Turnos por ventana y usuario en `/chat`. 0 desactiva el limitador."""
+
+    chat_rate_limit_window_s: int = Field(default=60, alias="CHAT_RATE_LIMIT_WINDOW_S")
 
     # --- LLM ---
+    llm_provider: str = Field(default="openai", alias="LLM_PROVIDER")
+    """
+    Quién razona: 'openai' o 'anthropic'. Se construye en `app/llm.py`, un único sitio.
+
+    Aviso que conviene no perder: los prompts de `agent/prompts/base.py` se escribieron y
+    se afinaron contra Claude. Funcionan con GPT, pero el comportamiento de las
+    herramientas y la verbosidad **no están revalidados** en OpenAI.
+    """
+
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+
     # Sin router central de modelos: como en PostHog, cada tarea elige el suyo junto
-    # a su código. Estos son solo los defectos.
-    model_root: str = Field(default="claude-opus-4-8", alias="MODEL_ROOT")
-    model_fast: str = Field(default="claude-haiku-4-5-20251001", alias="MODEL_FAST")
-    model_summarize: str = Field(default="claude-haiku-4-5-20251001", alias="MODEL_SUMMARIZE")
+    # a su código. Estos son solo los defectos, y dependen del proveedor activo.
+    #
+    # Verificados contra developers.openai.com/api/docs/models el 2026-07-20. Sol es
+    # el de frontera; luna, el barato. `gpt-5` a secas nunca existió como id.
+    model_root: str = Field(default="gpt-5.6-sol", alias="MODEL_ROOT")
+    model_fast: str = Field(default="gpt-5.6-luna", alias="MODEL_FAST")
+    model_summarize: str = Field(default="gpt-5.6-luna", alias="MODEL_SUMMARIZE")
 
     # --- proveedores de generación ---
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
-    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    # `openai_api_key` se declara arriba, en la sección de LLM: la misma clave sirve para
+    # el modelo que razona y para los dos proveedores de generación de OpenAI (Sora y
+    # GPT Image). Declararla dos veces hacía que la segunda pisara a la primera.
     kling_access_key: str = Field(default="", alias="KLING_ACCESS_KEY")
     kling_secret_key: str = Field(default="", alias="KLING_SECRET_KEY")
     minimax_api_key: str = Field(default="", alias="MINIMAX_API_KEY")
@@ -41,6 +94,47 @@ class Settings(BaseSettings):
 
     public_base_url: str = Field(default="http://localhost:8000", alias="PUBLIC_BASE_URL")
     """Base para los webhooks de proveedor. Debe ser accesible desde fuera."""
+
+    # --- webhooks de proveedor ---
+    webhook_secrets: str = Field(default="", alias="WEBHOOK_SECRETS")
+    """
+    Secretos de firma por proveedor: `proveedor=secreto,proveedor=secreto`.
+
+    Es un mapa y no un campo por proveedor porque los ocho adaptadores no firman igual ni
+    documentan el mismo nombre de cabecera, y dar de alta uno nuevo no debe obligar a
+    tocar esta clase. Los dos que ya tienen credencial propia —Higgsfield y Kling— se
+    resuelven desde ella y no hace falta repetirlos aquí.
+
+    Un proveedor **sin** secreto configurado no queda "sin verificar": queda sin
+    autoridad. Su cuerpo no decide nada y el estado real se reconsulta con `poll()`.
+    """
+
+    bfl_webhook_secret: str = Field(default="", alias="BFL_WEBHOOK_SECRET")
+    """
+    Secreto que se le manda a BFL en el propio `submit` (`webhook_secret`) y con el que
+    firmará la entrega. Campo propio porque es el único proveedor donde el secreto es
+    nuestro y va por petición, no una credencial suya que ya tengamos.
+    """
+
+    webhook_path_token: str = Field(default="", alias="WEBHOOK_PATH_TOKEN")
+    """
+    Token opaco que viaja en la URL de callback (`?t=...`) y que el endpoint exige si
+    está configurado.
+
+    No sustituye a la firma —una URL se filtra en logs y en cabeceras `Referer`— pero
+    cierra lo que la firma no cubre en los proveedores que no firman: sin él, la ruta
+    `/webhooks/{provider}` es un endpoint público donde cualquiera puede pedir que
+    releamos el estado de un job ajeno a base de probar identificadores.
+    """
+
+    output_host_allowlist: str = Field(default="", alias="OUTPUT_HOST_ALLOWLIST")
+    """
+    Dominios extra desde los que se acepta descargar una salida, separados por comas.
+
+    La lista normal la declara cada adaptador en `output_domains`. Esto es la válvula de
+    escape para el domingo en que un proveedor rota su CDN: sin ella, la única forma de
+    volver a entregar los renders sería un despliegue.
+    """
 
     # --- límites ---
     job_poll_interval_s: float = 5.0
@@ -56,6 +150,39 @@ class Settings(BaseSettings):
     credit_margin: float = Field(default=1.6, alias="CREDIT_MARGIN")
 
     ffmpeg_path: str = Field(default="ffmpeg", alias="FFMPEG_PATH")
+
+    @property
+    def jwt_issuer(self) -> str:
+        """Emisor esperado. Se deriva de `SUPABASE_URL` salvo que se fije a mano."""
+        if self.supabase_jwt_issuer:
+            return self.supabase_jwt_issuer
+        if self.supabase_url:
+            return f"{self.supabase_url.rstrip('/')}/auth/v1"
+        return ""
+
+    @property
+    def provider_signed_url_ttl_s(self) -> int:
+        """
+        TTL con el que se firman las referencias que viajan a un proveedor.
+
+        No es `signed_url_ttl_s` a secas, y la diferencia es el fallo caro que este
+        cálculo existe para impedir. Cuando firmamos, el proveedor todavía **no** ha
+        descargado nada: primero encola. Nuestro reloj de paciencia es `job_timeout_s`
+        (900 s), así que una URL con menos vida que ese timeout puede caducar mientras el
+        trabajo sigue vivo en la cola ajena. El síntoma sería un 400 al descargar la
+        referencia — o peor, un render que sale sin la cara del personaje — de forma
+        intermitente y solo en hora punta, que es la clase de fallo que nadie diagnostica.
+
+        Por eso se toma el máximo entre lo configurado y 4x el timeout: el factor 4 cubre
+        el timeout completo más el margen de cola del proveedor. Con los valores por
+        defecto (3600 y 900) los dos términos coinciden, así que subir `SIGNED_URL_TTL_S`
+        funciona y bajarlo por debajo del suelo seguro, no.
+
+        Lo que este número **no** puede arreglar es un job que espere en NUESTRA cola más
+        que el TTL: por eso la firma no ocurre al encolar sino en el worker, justo antes
+        del `submit`. Ver `JobWorker._process`.
+        """
+        return max(self.signed_url_ttl_s, int(4 * self.job_timeout_s))
 
 
 @lru_cache

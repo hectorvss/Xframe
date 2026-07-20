@@ -49,6 +49,28 @@ class AgentMode(StrEnum):
     EDIT = "edit"
 
 
+JOB_EVENT_FLAG = "xframe_job_event"
+"""
+Marca de un mensaje que **no** escribió el usuario: un evento del sistema que abre turno.
+
+Hoy solo lo pone la reanudación por jobs terminados (`app/jobs/resume.py`), que necesita
+meter en el hilo "han aterrizado estos planos" sin que eso sea una petición nueva del
+director. Va en `additional_kwargs` de un `HumanMessage` por dos razones prácticas:
+
+- El frontend lo pinta distinto. Un aviso del sistema con la burbuja del usuario es una
+  mentira sobre quién dijo qué, y el usuario acaba respondiendo a algo que él no pidió.
+- El rol sigue siendo `human` porque un `SystemMessage` en mitad del historial se comporta
+  de forma distinta en cada proveedor, y algunos lo reordenan o lo ignoran.
+
+Deliberadamente **no** es `CONTEXT_MESSAGE_FLAG`. Los mensajes de contexto no abren turno
+(`messages_since_last_human` los salta), y eso es correcto para ellos: son el estado del
+editor adjunto a la petición del usuario. Un evento de jobs sí abre turno, y tiene que
+hacerlo para que `count_tool_calls` cuente desde aquí. Si se marcara como contexto, el
+turno reanudado heredaría el presupuesto de tool calls ya gastado del turno anterior y se
+quedaría sin herramientas justo cuando le toca montar el corte.
+"""
+
+
 # Centinela: None significa "no cambies", este valor significa "bórralo".
 # Debe ser str para que sobreviva a la serialización msgpack del checkpointer.
 CLEAR_SUPERMODE: str = "__CLEAR_SUPERMODE__"
@@ -152,7 +174,22 @@ def add_and_merge_messages(
     return merged
 
 
-AnyMessage = Union[HumanMessage, AIMessage, ToolMessage, BaseMessage]
+AnyMessage = BaseMessage
+"""
+El tipo de los mensajes del estado.
+
+Era una `Union[HumanMessage, AIMessage, ToolMessage, BaseMessage]` y eso rompía el turno
+en cuanto una tool devolvía resultado. Al validar un `ToolMessage` contra la unión,
+pydantic prueba sus miembros y llega a `AIMessage`, cuyo validador `mode="before"`
+(`_backwards_compat_tool_calls`) hace `values.get(...)` sobre lo que le llegue: con una
+instancia de mensaje en vez de un dict, `AttributeError: 'ToolMessage' object has no
+attribute 'get'`, dentro del nodo `root_tools` y sin traza que apunte a este fichero.
+
+`BaseMessage` a secas es la clase padre de todos, así que la comprobación es un
+`isinstance` que pasa sin tocar la instancia: pydantic conserva el subtipo real —con su
+`tool_call_id` y sus `tool_calls`— porque `revalidate_instances` es `never` por defecto.
+La unión no aportaba nada que esto no dé.
+"""
 
 
 # --------------------------------------------------------------------------- #
@@ -181,11 +218,20 @@ class XframeState(BaseModel):
     # Identidad de la rama dentro de un fan-out (patrón `Send` de PostHog).
     root_tool_call_id: Annotated[str | None, replace] = None
 
-    # Límite por recurso, además del de tool calls y el recursion_limit de LangGraph.
-    generations_this_turn: Annotated[int, replace_if_not_none] = 0
-
     # Se rellena en cada turno desde la BD; no se persiste como fuente de verdad.
     plan_approved: Annotated[bool | None, replace_if_not_none] = None
+
+    # Qué está mirando el usuario. Viene del frontend en cada turno y alimenta al
+    # ContextManager. Sin esto, el contexto que ve el agente es genérico.
+    open_tab: Annotated[str | None, replace_if_not_none] = None
+    selected_asset_ids: Annotated[list[str] | None, replace_if_not_none] = None
+
+    conversation_id: Annotated[str | None, replace_if_not_none] = None
+    """
+    El `thread_id` de LangGraph, copiado al estado. Las tools lo necesitan para que el
+    worker sepa a qué stream publicar; sin él, `_emit` sale por su return temprano y el
+    usuario no ve aparecer ningún plano.
+    """
 
     def model_copy_for_branch(self, tool_call_id: str) -> "XframeState":
         return self.model_copy(update={"root_tool_call_id": tool_call_id})
@@ -205,8 +251,10 @@ class PartialXframeState(BaseModel):
     todos: list[Todo] | None = None
     job_results: list[JobResult] | None = None
     root_tool_call_id: str | None = None
-    generations_this_turn: int | None = None
     plan_approved: bool | None = None
+    open_tab: str | None = None
+    selected_asset_ids: list[str] | None = None
+    conversation_id: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -220,3 +268,48 @@ MAX_GENERATIONS_PER_TURN = 12
 Tercer límite, el que PostHog no necesita: por recurso, no por tokens. Un bucle de
 tool calls sale barato; un bucle de renders, no.
 """
+
+
+def messages_since_last_human(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
+    """Los mensajes del turno en curso, es decir, desde la última entrada del usuario."""
+    for i in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[i], HumanMessage) and not _is_context(messages[i]):
+            return list(messages[i + 1 :])
+    return list(messages)
+
+
+def _is_context(message: BaseMessage) -> bool:
+    """
+    Los mensajes de contexto son `HumanMessage` marcados; no abren turno.
+
+    La marca se importa de `context.manager` en vez de duplicar el literal aquí: copiar
+    la cadena es exactamente el tipo de divergencia silenciosa que rompió las juntas de
+    este backend la primera vez. El import es perezoso porque `context.manager` no
+    importa `state`, pero no quiero crear la dependencia a nivel de módulo.
+    """
+    from app.context.manager import CONTEXT_MESSAGE_FLAG
+
+    return bool(getattr(message, "additional_kwargs", {}).get(CONTEXT_MESSAGE_FLAG))
+
+
+def count_tool_calls(messages: Sequence[BaseMessage], names: set[str] | None = None) -> int:
+    """
+    Cuenta tool calls del turno, opcionalmente filtrando por nombre.
+
+    Se **deriva de los mensajes** en lugar de llevar un contador en el estado, y eso
+    arregla dos bugs de una vez:
+
+    - Un contador acumulado en el estado contaba las llamadas de **toda la conversación**,
+      no las del turno: a partir de la nº24 el agente perdía las herramientas para siempre.
+    - Bajo fan-out, las N ramas parten del mismo estado y el reductor era "gana el
+      último", así que 12 renders paralelos contaban como 1 — el límite caro no aplicaba
+      justo donde importa.
+
+    Contando sobre los mensajes ambos casos salen exactos y sin coordinación entre ramas.
+    """
+    total = 0
+    for message in messages_since_last_human(messages):
+        for call in getattr(message, "tool_calls", None) or []:
+            if names is None or call.get("name") in names:
+                total += 1
+    return total

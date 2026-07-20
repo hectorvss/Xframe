@@ -88,12 +88,67 @@ Todas están en `.env.example`, comentadas. Las imprescindibles para arrancar:
 ## Tests
 
 ```bash
-pytest -m "not evals"     # suite unitaria: rápida, sin red, sin coste
-pytest -m ffmpeg          # las que necesitan el binario instalado
+pytest -m "not evals and not integration"   # suite unitaria: rápida, sin red, sin coste
+pytest -m ffmpeg                            # las que necesitan el binario instalado
 ```
 
 Las llamadas HTTP a proveedores se simulan con `respx`; ningún test unitario debe salir
 a la red ni gastar un crédito.
+
+## Tests de integración
+
+Viven en `tests/integration/` y existen por una razón concreta: el 20/07/2026 el backend
+tenía 124 tests unitarios en verde y **no arrancaba**. Cada módulo se había probado aislado
+contra dobles, y un doble implementa siempre la firma que su autor imagina, no la que el
+módulo de destino tiene escrita. Esta suite ejecuta las dos mitades de cada contrato a la
+vez.
+
+| Fichero | Qué cubre | Necesita infraestructura |
+|---|---|---|
+| `test_contracts.py` | Por introspección: cada símbolo importado de `app.*` existe y su firma acepta los argumentos con los que se le llama. Más una lista explícita de las juntas críticas. | **No.** Corre en la suite rápida. |
+| `test_turn_e2e.py` | Un turno entero: mensaje → ROOT → tool call → fan-out → tool → cola → worker → asset → evento → SSE. | Sí |
+| `test_money_e2e.py` | Doble cobro bajo concurrencia, reembolso, y la `unique` de idempotencia ante una carrera real. | Sí |
+
+`test_contracts.py` no lleva marca y **debe correr siempre**: es el más barato de todos y
+el que impide que vuelva a haber seis vocabularios para los mismos contratos.
+
+### Cómo correrla
+
+```bash
+pip install -e ".[dev]"
+pytest -m integration
+```
+
+Hace falta un Postgres. Se elige en este orden, y si no hay ninguno los tests se **saltan**
+con un mensaje que dice qué falta — nunca degradan a un fake:
+
+```bash
+# 1. Una base que ya tengas levantada (es lo que usa CI y lo más rápido en local)
+docker compose up -d postgres
+TEST_DATABASE_URL=postgresql://xframe:xframe@localhost:5432/xframe pytest -m integration
+
+# 2. Sin nada levantado: testcontainers arranca un postgres:16-alpine desechable.
+#    Requiere un Docker en marcha.
+pytest -m integration
+```
+
+El esquema se aplica desde `supabase/schema.sql` y `supabase/002_agent.sql` sobre una base
+limpia, no desde un DDL paralelo: un esquema de test mantenido a mano diverge del real y la
+divergencia se descubre en producción. `conftest.py` añade un prólogo que finge lo que pone
+la plataforma Supabase (los esquemas `auth` y `storage`, los roles `anon`/`authenticated`)
+y que no existe en un Postgres desnudo.
+
+Notas:
+
+- **Ni claves de API ni gasto.** El LLM y los adaptadores de proveedor son los dos únicos
+  dobles. Todo lo demás —grafo, estado, reductores, checkpointer, taxonomía, contexto,
+  tools, cola, worker, bus— es el código de producción.
+- **Redis se sustituye por `fakeredis`**, que implementa Streams y por tanto el contrato
+  completo del bus. Postgres no se sustituye por nada: `FOR UPDATE SKIP LOCKED`, el cerrojo
+  de fila sobre el perfil y la restricción `unique` de idempotencia **son** el mecanismo de
+  correctitud del dinero, y contra un doble en memoria no se prueba ninguno de los tres.
+- La base se trunca al principio de cada test, no al final: si uno se cae, queda tal cual
+  para poder inspeccionarla.
 
 ## Evals
 

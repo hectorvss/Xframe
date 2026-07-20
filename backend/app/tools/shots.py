@@ -20,6 +20,7 @@ generar y permitirlo al planificar, porque el plano alucinado llegaría igual al
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
@@ -182,15 +183,29 @@ class CreateShotTool(_ShotToolBase):
             row = await conn.fetchrow(
                 """
                 insert into public.canvas_nodes
-                       (project_id, type, title, text, position, spec, shot_status)
-                values ($1::uuid, 'shot', $2, $3, $4, $5::jsonb, 'pending')
-                returning id, position, title, text, spec, shot_status
+                       (project_id, node_key, type, title, text, position, spec, shot_status)
+                values ($1::uuid, $6, 'shot', $2, $3, $4, $5::jsonb, 'pending')
+                returning id, node_key, position, title, text, spec, shot_status
                 """,
                 self.ctx.project_id,
-                kwargs["title"],
-                kwargs["description"],
+                # `title` y `text` son NOT NULL en `canvas_nodes`. Tienen DEFAULT '',
+                # pero un DEFAULT solo actúa cuando la columna se omite: pasar NULL
+                # explícitamente lo viola igual. El modelo puede dejarse `description`
+                # sin rellenar —es opcional en el esquema de la tool— y eso hundía la
+                # creación de planos con un NotNullViolationError que el agente leía
+                # como "bug interno, no reintentes".
+                kwargs.get("title") or "",
+                kwargs.get("description") or "",
                 position,
                 json.dumps(spec),
+                # `node_key` es el identificador estable del nodo dentro del canvas: es a
+                # lo que apuntan `canvas_edges.from_node` y `to_node`, que son `text` y no
+                # claves ajenas al uuid. Es NOT NULL y sin default, así que hay que
+                # generarlo aquí. No lo usaba ningún código —lo añadió el frontend por su
+                # cuenta— y por eso no estaba en nuestro `schema.sql`: la creación de
+                # planos fallaba contra la base de datos real mientras los tests, que
+                # aplican ese fichero, pasaban en verde.
+                f"shot-{uuid4().hex[:12]}",
             )
         ui = dict(row) | {"id": str(row["id"])}
         return (

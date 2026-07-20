@@ -40,6 +40,32 @@ from app.tools.base import ToolContext, XframeTool
 logger = logging.getLogger(__name__)
 
 
+def _reference_path(url: str | None) -> str:
+    """
+    `assets.url` → ruta dentro del bucket, lista para firmarse más tarde.
+
+    Aquí NO se firma, y ese es el punto. La taxonomía se cachea (`PROJECT_TTL_S`) y los
+    `ElementRef` que salen de aquí acaban serializados en `generation_jobs.request`: una
+    URL firmada puesta en este punto caducaría dentro de la caché y, peor, dentro de una
+    fila de base de datos que se rehidrata en cada reintento. La firma es competencia del
+    worker, inmediatamente antes del `submit`.
+
+    Se normaliza en vez de copiar el valor tal cual para que la migración de los datos
+    existentes no tenga que ser atómica: `object_path` acepta las URLs públicas que hoy
+    hay en producción y las rutas que escribe el worker nuevo, y devuelve lo mismo para
+    las dos. Lo que no reconoce —una URL externa que alguien pegó a mano— se deja intacto:
+    romper esa referencia sería peor que dejarla pasar sin firmar.
+    """
+    from app.storage import StorageError, object_path
+
+    if not url:
+        return ""
+    try:
+        return object_path(url)
+    except StorageError:
+        return url
+
+
 # --------------------------------------------------------------------------- #
 # Base con snapshot                                                            #
 # --------------------------------------------------------------------------- #
@@ -105,7 +131,7 @@ class SnapshotTool(XframeTool):
                     element_id=element.id,
                     name=element.name,
                     role=element.role,
-                    image_url=element.url or "",
+                    image_url=_reference_path(element.url),
                 )
             )
         return refs
@@ -222,7 +248,8 @@ def _tool_classes() -> list[type[SnapshotTool]]:
         generation.GenerateVideoTool,
         generation.GenerateShotBatchTool,
         generation.GenerateLipsyncTool,
-        generation.UpscaleAssetTool,
+        # `UpscaleAssetTool` retirada: no hay modelo de upscale en `gen_models` ni
+        # adaptador que lo sirva. El porqué, en `app/tools/generation.py`.
         generation.AssembleVideoTool,
         # Meta
         meta.FinalizePlanTool,
