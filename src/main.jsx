@@ -6771,12 +6771,12 @@ function GenericSettings({ page }) {
 }
 
 const workspaceColors = [
-  ["pink", "bg-pink-600"],
-  ["violet", "bg-violet-600"],
-  ["blue", "bg-blue-600"],
-  ["green", "bg-green-600"],
-  ["amber", "bg-amber-500"],
-  ["neutral", "bg-neutral-800"],
+  ["pink", "bg-pink-600", "Rosa"],
+  ["violet", "bg-violet-600", "Violeta"],
+  ["blue", "bg-blue-600", "Azul"],
+  ["green", "bg-green-600", "Verde"],
+  ["amber", "bg-amber-500", "Ámbar"],
+  ["neutral", "bg-neutral-800", "Negro"],
 ];
 
 function WorkspaceSettings() {
@@ -6786,6 +6786,7 @@ function WorkspaceSettings() {
   const [limit, setLimit] = useState("");
   const [copied, setCopied] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [slugOpen, setSlugOpen] = useState(false);
   const [toast, setToast] = useState(null);
 
   const notify = (text) => {
@@ -6801,6 +6802,17 @@ function WorkspaceSettings() {
       setLimit(w?.member_credit_limit == null ? "" : String(w.member_credit_limit));
     });
   }, [profile?.id]);
+
+  const validateSlug = (v) =>
+    !/^[a-z0-9-]{3,32}$/.test(v)
+      ? "Entre 3 y 32 caracteres: minúsculas, números y guiones"
+      : null;
+
+  const saveSlug = async (slug) => {
+    const free = await db.isWorkspaceSlugAvailable(slug, workspace.id);
+    if (!free) throw new Error("Ese identificador ya está en uso");
+    await save({ slug }, "Identificador actualizado");
+  };
 
   const save = async (patch, message) => {
     const next = await db.updateWorkspace(workspace.id, patch);
@@ -6840,32 +6852,38 @@ function WorkspaceSettings() {
         title="Perfil del espacio de trabajo"
         desc="Controla cómo aparece este espacio de trabajo en Xframe."
       >
-        <SettingsRow title="Avatar" desc="El color con el que se identifica.">
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "flex size-9 items-center justify-center rounded-lg text-sm font-semibold text-white",
-                colorClass,
-              )}
-            >
-              {initial}
-            </span>
-            <div className="flex gap-1">
-              {workspaceColors.map(([id, cls]) => (
-                <button
+        <SettingsRow
+          title="Avatar"
+          desc="Configura un avatar para tu espacio de trabajo."
+        >
+          {/* El selector de color vive en un menú para no recargar la fila. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                aria-label="Cambiar color del avatar"
+                className={cn(
+                  "flex size-9 items-center justify-center rounded-lg text-sm font-semibold text-white transition-transform hover:scale-105",
+                  colorClass,
+                )}
+              >
+                {initial}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              {workspaceColors.map(([id, cls, label]) => (
+                <DropdownMenuItem
                   key={id}
                   onClick={() => save({ avatar_color: id }, "Color actualizado")}
-                  aria-label={`Color ${id}`}
-                  className={cn(
-                    "size-5 rounded-full transition-transform hover:scale-110",
-                    cls,
-                    workspace.avatar_color === id &&
-                      "ring-2 ring-foreground ring-offset-2 ring-offset-background",
+                >
+                  <span className={cn("mr-2 size-3.5 rounded-full", cls)} />
+                  {label}
+                  {workspace.avatar_color === id && (
+                    <Check className="ml-auto size-3.5" />
                   )}
-                />
+                </DropdownMenuItem>
               ))}
-            </div>
-          </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </SettingsRow>
 
         <div className="flex items-start justify-between gap-4 px-5 py-4">
@@ -6896,7 +6914,7 @@ function WorkspaceSettings() {
 
         <SettingsRow
           title="ID del espacio de trabajo"
-          desc="Identificador único del espacio de trabajo."
+          desc="Identificador único del espacio de trabajo"
         >
           <button
             onClick={() => {
@@ -6912,23 +6930,21 @@ function WorkspaceSettings() {
         </SettingsRow>
 
         <SettingsRow
-          title="Identificador público"
-          desc="Se usa en la URL del perfil del espacio de trabajo."
+          title="Identificador del espacio de trabajo"
+          desc="Configura un identificador para la página de perfil del espacio de trabajo."
         >
-          <InlineEdit
-            value={workspace.slug}
-            placeholder="sin definir"
-            validate={(v) =>
-              !/^[a-z0-9-]{3,32}$/.test(v)
-                ? "Entre 3 y 32 caracteres: minúsculas, números y guiones"
-                : null
-            }
-            onSave={async (slug) => {
-              const free = await db.isWorkspaceSlugAvailable(slug, workspace.id);
-              if (!free) throw new Error("Ese identificador ya está en uso");
-              await save({ slug }, "Identificador actualizado");
-            }}
-          />
+          {workspace.slug ? (
+            <InlineEdit
+              value={workspace.slug}
+              placeholder="sin definir"
+              validate={validateSlug}
+              onSave={saveSlug}
+            />
+          ) : (
+            <UIButton variant="outline" onClick={() => setSlugOpen(true)}>
+              Establecer identificador
+            </UIButton>
+          )}
         </SettingsRow>
       </SettingsSection>
 
@@ -7010,6 +7026,14 @@ function WorkspaceSettings() {
         </SettingsRow>
       </SettingsSection>
 
+      {slugOpen && (
+        <SetSlugDialog
+          validate={validateSlug}
+          onSave={saveSlug}
+          onClose={() => setSlugOpen(false)}
+        />
+      )}
+
       {deleting && (
         <ConfirmDangerDialog
           title="Eliminar espacio de trabajo"
@@ -7023,6 +7047,62 @@ function WorkspaceSettings() {
         />
       )}
     </div>
+  );
+}
+
+/** Primera vez que se define el identificador del espacio de trabajo. */
+function SetSlugDialog({ validate, onSave, onClose }) {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const slug = value.trim().toLowerCase();
+    const problem = validate(slug);
+    if (problem) return setError(problem);
+    setBusy(true);
+    try {
+      await onSave(slug);
+      onClose();
+    } catch (err) {
+      setError(String(err?.message ?? err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>Establecer identificador</DialogTitle>
+          <DialogDescription>
+            Será la dirección pública del espacio de trabajo.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex flex-col gap-3">
+          <div className="flex items-center gap-1 rounded-md border px-3 py-2 text-sm">
+            <span className="shrink-0 text-muted-foreground">xframe.app/</span>
+            <input
+              autoFocus
+              value={value}
+              onChange={(e) => (setValue(e.target.value), setError(null))}
+              placeholder="mi-estudio"
+              className="min-w-0 flex-1 bg-transparent outline-none"
+            />
+          </div>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <UIButton type="button" variant="outline" onClick={onClose}>
+              Cancelar
+            </UIButton>
+            <UIButton type="submit" disabled={!value.trim() || busy}>
+              {busy && <RefreshCw className="animate-spin" />} Guardar
+            </UIButton>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
