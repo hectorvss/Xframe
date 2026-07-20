@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
@@ -59,6 +59,33 @@ import {
   ThumbsDown,
   Bookmark,
   LineChart,
+  Play,
+  Image as ImageIcon,
+  Video,
+  Volume2,
+  VolumeX,
+  Minus,
+  Camera as CameraIcon,
+  Wand2,
+  AtSign,
+  MessageCircle,
+  Frame,
+  Maximize2,
+  Map as MapIcon,
+  GripVertical,
+  Heading1,
+  Heading2,
+  List,
+  ListTodo,
+  Quote,
+  Type,
+  Trash2,
+  Upload,
+  Lightbulb,
+  Pause,
+  SkipBack,
+  SkipForward,
+  Repeat,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button as UIButton } from "@/components/ui/button";
@@ -94,7 +121,42 @@ const go = (p) => {
   history.pushState({}, "", p);
   dispatchEvent(new PopStateEvent("popstate"));
 };
-const LovableHeart = ({ size = 24, className = "" }) => (
+function useResizableWidth(key, initial, min, max) {
+  const [width, setWidth] = useState(() => {
+    const saved = Number(localStorage.getItem(key));
+    return saved >= min && saved <= max ? saved : initial;
+  });
+  const onResize = (clientX) => {
+    const next = Math.min(max, Math.max(min, Math.round(clientX)));
+    setWidth(next);
+    localStorage.setItem(key, String(next));
+  };
+  return [width, onResize];
+}
+function ResizeHandle({ onResize }) {
+  const start = (e) => {
+    e.preventDefault();
+    const move = (ev) => onResize(ev.clientX);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.removeProperty("cursor");
+      document.body.style.removeProperty("user-select");
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  return (
+    <div
+      onPointerDown={start}
+      title="Arrastra para redimensionar"
+      className="absolute inset-y-0 -right-0.5 z-30 w-1.5 cursor-col-resize transition-colors hover:bg-primary/30 active:bg-primary/50"
+    />
+  );
+}
+const XframeHeart = ({ size = 24, className = "" }) => (
   <img
     className={`heart-mark ${className}`}
     src="/lovable-logo.svg"
@@ -124,8 +186,8 @@ const Logo = () => (
     className="flex items-center gap-2 text-lg font-semibold"
     onClick={() => go("/es")}
   >
-    <LovableHeart size={22} />
-    Lovable
+    <XframeHeart size={22} />
+    Xframe
   </button>
 );
 
@@ -178,35 +240,597 @@ function MarketingNav() {
   );
 }
 const templates = [
-  ["Maison", "Editorial home goods storefront", "/assets/maison.webp"],
   [
-    "Inspo Canvas",
-    "Spatial canvas for collecting, arranging, and sharing ideas",
+    "Tráiler cinematográfico",
+    "Ritmo alto, cortes secos y música épica",
+    "/assets/maison.webp",
+  ],
+  [
+    "Videoclip musical",
+    "Planos sincronizados al beat con color intenso",
     "/assets/inspo.jpg",
   ],
-  ["Personal blog", "Muted, intimate design", "/assets/personal-blog.png"],
-  ["Fashion blog", "Minimal, playful design", "/assets/vesper.webp"],
   [
-    "Continuum",
-    "A calm, distraction-free habit tracker with streak cues",
+    "Spot de producto",
+    "Producto en primer plano con luz de estudio",
+    "/assets/personal-blog.png",
+  ],
+  ["Moda editorial", "Cámara lenta, texturas y luz natural", "/assets/vesper.webp"],
+  [
+    "Documental",
+    "Tono sobrio, planos largos y voz en off",
     "/assets/continuum.jpg",
   ],
   [
-    "Lovable slides",
-    "Code-powered presentation builder",
+    "Anuncio vertical",
+    "Formato 9:16 para redes, impacto en los primeros segundos",
     "/assets/lovable-slides.webp",
   ],
   [
-    "Prompt Frame Creative Portfolio",
-    "Dark-first premium aesthetic",
+    "Noir cinematográfico",
+    "Alto contraste, sombras duras y ambiente nocturno",
     "/assets/prompt-frame.webp",
   ],
   [
-    "Ecommerce Store Website Template",
-    "Premium design for webstore",
+    "Time-lapse aéreo",
+    "Planos de dron y paisajes en movimiento",
     "/assets/ecommerce.webp",
   ],
 ];
+const cinematicModels = [
+  ["Cinema Studio 3.5", "Selección de cámara, presets de estilo y director IA", "NEW"],
+  ["Cinema Studio 3.0", "Control avanzado de cámara y speed ramp"],
+  ["Cinema Studio 2.5", "Movimientos de cámara con fotograma inicial"],
+];
+// [nombre, dominio (logo), resolución, duración, badge]
+const featuredModels = [
+  ["Seedance 2.0", "bytedance.com", "4K", "4s-15s"],
+  ["Seedance 2.0 Mini", "bytedance.com", "720p", "4s-15s", "NEW"],
+  ["Seedance 2.0 Fast", "bytedance.com", "720p", "4s-15s"],
+  ["Gemini Omni Flash", "gemini.google.com", "720p", "4s-10s", "NEW"],
+  ["Kling 3.0", "klingai.com", "4K", "3s-15s"],
+  ["Kling 3.0 Turbo", "klingai.com", "1080p", "3s-15s", "NEW"],
+  ["Kling 3.0 Motion Control", "klingai.com", "1080p", "3s-30s"],
+  ["HappyHorse", null, "1080p", "3s-15s", "NEW"],
+  ["Grok Imagine", "x.ai", "720p", "1s-15s"],
+  ["Grok Imagine 1.5", "x.ai", "720p", "1s-15s", "NEW"],
+  ["Google Veo 3.1 Lite", "deepmind.google", "1080p", "4s-8s", "NEW"],
+  ["Wan 2.7", "wan.video", "1080p", "2s-15s", "NEW"],
+];
+// [familia, dominio, descripción, [variantes]]
+const modelFamilies = [
+  ["Minimax Hailuo", "minimax.io", "Alta dinámica, listo para VFX, el más rápido y asequible", [
+    ["Minimax Hailuo 2.3 Fast", "1080p", "6s-10s"],
+    ["Minimax Hailuo 2.3", "1080p", "6s-10s", "PREMIUM"],
+    ["Minimax Hailuo 02 Fast", "512p", "6s-10s"],
+    ["Minimax Hailuo 02", "1080p", "6s-10s", "PREMIUM"],
+  ]],
+  ["Kling", "klingai.com", "Movimiento perfecto con control de vídeo avanzado", [
+    ["Kling 3.0", "4K", "3s-15s"],
+    ["Kling 3.0 Turbo", "1080p", "3s-15s", "NEW"],
+    ["Kling 3.0 Motion Control", "1080p", "3s-30s"],
+    ["Kling 2.5 Turbo", "1080p", "5s-10s"],
+    ["Kling 2.1 Master", "1080p", "5s-10s", "PREMIUM"],
+  ]],
+  ["OpenAI Sora", "openai.com", "Vídeo multiplano con generación de sonido", [
+    ["OpenAI Sora 2 Pro", "1080p", "4s-12s", "PREMIUM"],
+    ["OpenAI Sora 2", "1080p", "4s-12s"],
+  ]],
+  ["Google Veo", "deepmind.google", "Vídeo de precisión con control de sonido", [
+    ["Google Veo 3.1", "4K", "4s-8s", "PREMIUM"],
+    ["Google Veo 3.1 Lite", "1080p", "4s-8s", "NEW"],
+    ["Google Veo 3 Fast", "1080p", "4s-8s"],
+  ]],
+  ["Gemini", "gemini.google.com", "Generación rápida multimodal", [
+    ["Gemini Omni Flash", "720p", "4s-10s", "NEW"],
+  ]],
+  ["Wan", "wan.video", "Vídeo con control de cámara y sonido, más libertad", [
+    ["Wan 2.7", "1080p", "2s-15s", "NEW"],
+    ["Wan 2.5", "1080p", "5s-10s"],
+    ["Wan 2.2 Turbo", "720p", "5s"],
+  ]],
+  ["Seedance", "bytedance.com", "Creación de vídeo cinematográfico multiplano", [
+    ["Seedance 2.0", "4K", "4s-15s"],
+    ["Seedance 2.0 Mini", "720p", "4s-15s", "NEW"],
+    ["Seedance 2.0 Fast", "720p", "4s-15s"],
+    ["Seedance 1.0 Pro", "1080p", "5s-10s"],
+  ]],
+  ["Grok Imagine", "x.ai", "Movimiento perfecto con control de vídeo avanzado", [
+    ["Grok Imagine 1.5", "720p", "1s-15s", "NEW"],
+    ["Grok Imagine", "720p", "1s-15s"],
+  ]],
+  ["Runway", "runwayml.com", "Control de movimiento y referencias de estilo", [
+    ["Runway Gen-4 Turbo", "1080p", "5s-10s"],
+    ["Runway Gen-4", "1080p", "5s-10s", "PREMIUM"],
+  ]],
+  ["Luma", "lumalabs.ai", "Dream Machine, movimiento natural y fluido", [
+    ["Luma Ray 3", "1080p", "5s-9s", "NEW"],
+    ["Luma Ray 2", "1080p", "5s-9s"],
+  ]],
+  ["Pika", "pika.art", "Efectos y transformaciones creativas", [
+    ["Pika 2.2", "1080p", "5s-10s"],
+    ["Pika Turbo", "720p", "3s-5s"],
+  ]],
+  ["HappyHorse", null, "Modelo con sonido nativo y alta consistencia", [
+    ["HappyHorse", "1080p", "3s-15s", "NEW"],
+  ]],
+];
+function ModelLogo({ domain, name, className = "size-5" }) {
+  if (domain) {
+    return (
+      <img
+        src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
+        alt=""
+        className={cn("shrink-0 rounded-sm object-contain", className)}
+        onError={(e) => {
+          e.currentTarget.style.display = "none";
+        }}
+      />
+    );
+  }
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-sm bg-muted text-[10px] font-semibold",
+        className,
+      )}
+    >
+      {name[0]}
+    </span>
+  );
+}
+const genreList = [
+  "Noir",
+  "Drama",
+  "Epic",
+  "General",
+  "Action",
+  "Horror",
+  "Comedy",
+];
+const resolutionList = ["480p", "720p", "1080p", "4K"];
+const durationList = ["4s", "6s", "8s", "10s", "15s"];
+const aspectList = ["Auto", "16:9", "9:16", "1:1", "2.39:1"];
+const cameraGroups = {
+  Cámara: ["Auto", "Handheld", "Steadicam", "Dron", "Grúa", "Dolly"],
+  Lente: ["Auto", "Extreme Macro", "Gran angular", "Estándar", "Teleobjetivo", "Anamórfica"],
+  Focal: ["24mm", "35mm", "50mm", "75mm", "100mm"],
+  Apertura: ["f/1.4 Shallow", "f/2.8", "f/5.6", "f/11 Deep Focus"],
+};
+const styleGroups = {
+  "Paleta de color": ["Auto", "Teal & Orange", "Monocromo", "Pastel", "Neón", "Sepia"],
+  Iluminación: ["Auto", "Hora dorada", "Low key", "High key", "Neón", "Contraluz"],
+  "Movimiento de cámara": ["Auto", "Estático", "Push lento", "Órbita", "Handheld", "Crash zoom"],
+};
+
+function SettingsSlider({ label, value, options, onChange }) {
+  const trackRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+  const i = Math.max(0, options.indexOf(value));
+  const last = options.length - 1;
+  const pct = last ? (i / last) * 100 : 0;
+
+  const pick = (clientX) => {
+    const r = trackRef.current.getBoundingClientRect();
+    const t = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    const next = options[Math.round(t * last)];
+    if (next !== value) onChange(next);
+  };
+  const start = (e) => {
+    e.preventDefault();
+    setDragging(true);
+    pick(e.clientX);
+    const move = (ev) => pick(ev.clientX);
+    const up = () => {
+      setDragging(false);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.removeProperty("user-select");
+    };
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const step = (d) => {
+    const n = Math.min(last, Math.max(0, i + d));
+    if (n !== i) onChange(options[n]);
+  };
+
+  return (
+    <div className="px-2 py-1.5">
+      <div className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="truncate font-medium">{value}</span>
+      </div>
+      <div
+        ref={trackRef}
+        role="slider"
+        tabIndex={0}
+        aria-label={label}
+        aria-valuetext={value}
+        aria-valuemin={0}
+        aria-valuemax={last}
+        aria-valuenow={i}
+        onPointerDown={start}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") (e.preventDefault(), step(-1));
+          if (e.key === "ArrowRight") (e.preventDefault(), step(1));
+        }}
+        className="relative mt-2 flex h-7 cursor-pointer touch-none items-center rounded-full bg-muted px-1 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        <div
+          className={cn(
+            "pointer-events-none absolute left-1 top-1 h-5 w-9 rounded-full bg-background shadow-sm",
+            !dragging && "transition-[left] duration-300 ease-out",
+          )}
+          style={{ left: `calc(0.25rem + ${pct}% - ${(pct / 100) * 2.25}rem)` }}
+        />
+        <div className="pointer-events-none relative flex w-full justify-between px-3">
+          {options.map((o, n) => (
+            <span
+              key={o}
+              title={o}
+              className={cn(
+                "size-1 rounded-full transition-colors",
+                n === i ? "bg-transparent" : "bg-muted-foreground/35",
+              )}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsRowSelect({ label, value, options, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <MiniSelect value={value} options={options} onChange={onChange} />
+    </div>
+  );
+}
+function MiniSelect({ icon: Icon, value, options, onChange }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm transition-colors hover:bg-accent [&_svg]:size-3.5">
+          {Icon && <Icon className="text-muted-foreground" />}
+          {value}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-[9rem]">
+        {options.map((o) => (
+          <DropdownMenuItem key={o} onClick={() => onChange(o)}>
+            {o}
+            {o === value && <Check className="ml-auto size-3.5" />}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+function ModelPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [expanded, setExpanded] = useState(null);
+  const match = (n) => n.toLowerCase().includes(q.toLowerCase());
+  const pick = (n) => {
+    onChange(n);
+    setOpen(false);
+    setQ("");
+  };
+  const rowCls =
+    "flex w-full items-center gap-2 rounded-md p-2 text-left transition-colors hover:bg-accent";
+  const meta = (res, dur) => (
+    <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+      {res} · {dur}
+    </span>
+  );
+  const badgeEl = (b) =>
+    b && (
+      <Badge
+        className={cn(
+          "rounded px-1 py-0 text-[9px]",
+          b === "PREMIUM" && "bg-violet-600 hover:bg-violet-600",
+        )}
+      >
+        {b}
+      </Badge>
+    );
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors hover:bg-accent"
+      >
+        <Wand2 className="size-3.5 text-violet-600" />
+        {value}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full left-0 z-50 mb-2 w-[380px] overflow-hidden rounded-xl border bg-background shadow-2xl">
+            <div className="flex items-center gap-2 border-b px-3">
+              <Search className="size-4 shrink-0 text-muted-foreground" />
+              <input
+                autoFocus
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Buscar modelo…"
+                className="h-10 flex-1 bg-transparent text-sm outline-none"
+              />
+            </div>
+            <div className="max-h-[380px] overflow-y-auto overscroll-contain p-2">
+              {cinematicModels.filter(([n]) => match(n)).length > 0 && (
+                <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                  Modelos cinematográficos
+                </p>
+              )}
+              {cinematicModels
+                .filter(([n]) => match(n))
+                .map(([n, d, badge]) => (
+                  <button key={n} onClick={() => pick(n)} className={rowCls}>
+                    <img src="/lovable-logo.svg" alt="" className="size-5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium">{n}</span>
+                        {badgeEl(badge)}
+                      </div>
+                      <p className="truncate text-xs text-muted-foreground">{d}</p>
+                    </div>
+                    {n === value && <Check className="size-4 shrink-0" />}
+                  </button>
+                ))}
+
+              {featuredModels.filter(([n]) => match(n)).length > 0 && (
+                <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                  Modelos destacados
+                </p>
+              )}
+              {featuredModels
+                .filter(([n]) => match(n))
+                .map(([n, domain, res, dur, badge]) => (
+                  <button key={n} onClick={() => pick(n)} className={rowCls}>
+                    <ModelLogo domain={domain} name={n} />
+                    <span className="truncate text-sm font-medium">{n}</span>
+                    {badgeEl(badge)}
+                    {meta(res, dur)}
+                    {n === value && <Check className="size-4 shrink-0" />}
+                  </button>
+                ))}
+
+              <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                Todos los modelos
+              </p>
+              {modelFamilies
+                .filter(
+                  ([fname, , , variants]) =>
+                    match(fname) || variants.some(([n]) => match(n)),
+                )
+                .map(([fname, domain, desc, variants]) => {
+                  const isOpen = expanded === fname || q.length > 0;
+                  return (
+                    <div key={fname}>
+                      <button
+                        onClick={() =>
+                          setExpanded(expanded === fname ? null : fname)
+                        }
+                        className={rowCls}
+                      >
+                        <ModelLogo domain={domain} name={fname} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium">{fname}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {desc}
+                          </p>
+                        </div>
+                        <ChevronRight
+                          className={cn(
+                            "size-4 shrink-0 text-muted-foreground transition-transform",
+                            isOpen && "rotate-90",
+                          )}
+                        />
+                      </button>
+                      {isOpen &&
+                        variants
+                          .filter(([n]) => match(n) || match(fname))
+                          .map(([n, res, dur, badge]) => (
+                            <button
+                              key={n}
+                              onClick={() => pick(n)}
+                              className={cn(rowCls, "pl-9")}
+                            >
+                              <span className="truncate text-sm">{n}</span>
+                              {badgeEl(badge)}
+                              {meta(res, dur)}
+                              {n === value && <Check className="size-4 shrink-0" />}
+                            </button>
+                          ))}
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function GenSettingsBar({ trailing }) {
+  const [mode, setMode] = useState("video");
+  const [model, setModel] = useState("Cinema Studio 3.5");
+  const [aspect, setAspect] = useState("Auto");
+  const [res, setRes] = useState("1080p");
+  const [dur, setDur] = useState("8s");
+  const [count, setCount] = useState(1);
+  const [sound, setSound] = useState(true);
+  const [genre, setGenre] = useState("General");
+  const [open, setOpen] = useState(false);
+  const [flyout, setFlyout] = useState(null);
+  const [style, setStyle] = useState({
+    "Paleta de color": "Auto",
+    Iluminación: "Auto",
+    "Movimiento de cámara": "Auto",
+  });
+  const [camera, setCamera] = useState({
+    Cámara: "Auto",
+    Lente: "Extreme Macro",
+    Focal: "50mm",
+    Apertura: "f/11 Deep Focus",
+  });
+  const summarize = (o) =>
+    Object.values(o).every((v) => v === "Auto")
+      ? "Auto"
+      : Object.values(o).filter((v) => v !== "Auto").join(", ");
+
+  return (
+    <>
+      <div className="flex items-center gap-0.5 px-1 pb-1">
+        <UIButton variant="ghost" size="icon" className="size-8" aria-label="Añadir">
+          <Plus />
+        </UIButton>
+        <UIButton variant="ghost" size="icon" className="size-8" aria-label="Mencionar">
+          <span className="text-sm">@</span>
+        </UIButton>
+        <div className="flex items-center rounded-md border p-0.5">
+          {[
+            ["image", ImageIcon, "Imagen"],
+            ["video", Video, "Vídeo"],
+          ].map(([id, I, label]) => (
+            <button
+              key={id}
+              onClick={() => setMode(id)}
+              title={label}
+              className={cn(
+                "flex size-6 items-center justify-center rounded transition-colors [&_svg]:size-3.5",
+                mode === id
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:bg-accent",
+              )}
+            >
+              <I />
+            </button>
+          ))}
+        </div>
+        <ModelPicker value={model} onChange={setModel} />
+
+        <div className="relative">
+          <button
+            onClick={() => setOpen(!open)}
+            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Settings className="size-3.5" />
+            {res} · {dur}
+          </button>
+          {open && (
+            <>
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => {
+                  setOpen(false);
+                  setFlyout(null);
+                }}
+              />
+              <div className="absolute bottom-full left-0 z-50 mb-2 w-[280px] rounded-xl border bg-background p-2 shadow-2xl">
+                {[
+                  ["Género", genre, Sparkles, "genre"],
+                  ["Estilo", summarize(style), Palette, "style"],
+                  ["Cámara", summarize(camera), CameraIcon, "camera"],
+                ].map(([label, value, I, key]) => (
+                  <button
+                    key={label}
+                    onClick={() => setFlyout(flyout === key ? null : key)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent",
+                      flyout === key && "bg-accent",
+                    )}
+                  >
+                    <I className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="text-muted-foreground">{label}</span>
+                    <span className="ml-auto max-w-[120px] truncate">{value}</span>
+                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                  </button>
+                ))}
+                <Separator className="my-1.5" />
+                <SettingsSlider label="Aspecto" value={aspect} options={aspectList} onChange={setAspect} />
+                <SettingsSlider label="Resolución" value={res} options={resolutionList} onChange={setRes} />
+                <SettingsSlider label="Duración" value={dur} options={durationList} onChange={setDur} />
+                <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm">
+                  <span className="text-muted-foreground">Cantidad</span>
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={() => setCount(Math.max(1, count - 1))}
+                      className="flex size-6 items-center justify-center rounded hover:bg-accent"
+                    >
+                      <Minus className="size-3" />
+                    </button>
+                    <span className="w-8 text-center tabular-nums">{count}/4</span>
+                    <button
+                      onClick={() => setCount(Math.min(4, count + 1))}
+                      className="flex size-6 items-center justify-center rounded hover:bg-accent"
+                    >
+                      <Plus className="size-3" />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm">
+                  <span className="text-muted-foreground">Sonido</span>
+                  <Switch checked={sound} onCheckedChange={setSound} />
+                </div>
+
+                {flyout && (
+                  <div className="absolute left-full top-0 ml-2 w-[280px] rounded-xl border bg-background p-2 shadow-2xl">
+                    {flyout === "genre" &&
+                      genreList.map((g) => (
+                        <button
+                          key={g}
+                          onClick={() => {
+                            setGenre(g);
+                            setFlyout(null);
+                          }}
+                          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+                        >
+                          {g}
+                          {genre === g && <Check className="size-3.5" />}
+                        </button>
+                      ))}
+                    {flyout === "style" &&
+                      Object.entries(styleGroups).map(([k, opts]) => (
+                        <SettingsSlider
+                          key={k}
+                          label={k}
+                          value={style[k]}
+                          options={opts}
+                          onChange={(v) => setStyle({ ...style, [k]: v })}
+                        />
+                      ))}
+                    {flyout === "camera" &&
+                      Object.entries(cameraGroups).map(([k, opts]) => (
+                        <SettingsSlider
+                          key={k}
+                          label={k}
+                          value={camera[k]}
+                          options={opts}
+                          onChange={(v) => setCamera({ ...camera, [k]: v })}
+                        />
+                      ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="flex-1" />
+        {trailing}
+      </div>
+    </>
+  );
+}
+
 function PromptBox() {
   const [t, setT] = useState("");
   return (
@@ -214,32 +838,26 @@ function PromptBox() {
       <Textarea
         value={t}
         onChange={(e) => setT(e.target.value)}
-        placeholder="Pídele a Lovable que cree una página de destino para mi…"
+        placeholder="Describe tu escena — usa @ para añadir personajes y localizaciones"
         className="min-h-[76px] resize-none border-0 text-base shadow-none focus-visible:ring-0"
       />
-      <div className="flex items-center gap-1 px-1 pb-1">
-        <UIButton variant="ghost" size="icon" aria-label="Añadir">
-          <Plus />
-        </UIButton>
-        <div className="flex-1" />
-        <UIButton variant="outline" size="sm">
-          Crear <ChevronDown />
-        </UIButton>
-        <UIButton variant="ghost" size="icon" aria-label="Grabar voz">
-          <Mic />
-        </UIButton>
-        <UIButton size="icon" aria-label="Enviar" onClick={() => go("/dashboard")}>
-          <ArrowUp />
-        </UIButton>
-      </div>
+      <GenSettingsBar
+        trailing={
+          <UIButton size="sm" onClick={() => go("/dashboard")}>
+            Generar
+          </UIButton>
+        }
+      />
     </Card>
   );
 }
+
 const authProviders = [
-  ["Continuar con Google", "google"],
-  ["Continuar con GitHub", "github"],
-  ["Continuar con Apple", "apple"],
+  ["Continuar con Google", "google.com"],
+  ["Continuar con GitHub", "github.com"],
+  ["Continuar con Apple", "apple.com"],
 ];
+
 function AuthModal() {
   return (
     <Dialog
@@ -250,12 +868,12 @@ function AuthModal() {
     >
       <DialogContent className="sm:max-w-[400px]">
         <DialogHeader className="items-center">
-          <LovableHeart size={36} />
+          <XframeHeart size={36} />
           <DialogTitle className="text-2xl">Empieza a crear.</DialogTitle>
           <DialogDescription>Inicia sesión en tu cuenta</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3">
-          {authProviders.map(([label, slug]) => (
+          {authProviders.map(([label, domain]) => (
             <UIButton
               key={label}
               variant="outline"
@@ -263,7 +881,7 @@ function AuthModal() {
               onClick={() => go("/dashboard")}
             >
               <img
-                src={`https://cdn.simpleicons.org/${slug}`}
+                src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
                 alt=""
                 className="size-4"
               />
@@ -376,7 +994,7 @@ const footerColumns = [
   [
     "Comunidad",
     "Conviértete en socio",
-    "Contrata a un experto de Lovable",
+    "Contrata a un experto de Xframe",
     "Afiliados",
     "Código de conducta",
     "Discord",
@@ -415,21 +1033,21 @@ function MarketingFooter() {
 const featureSteps = [
   [
     "Empieza con una idea",
-    "Describe la aplicación o el sitio web que quieres crear, o adjunta capturas de pantalla y documentos.",
+    "Describe la escena o el vídeo que quieres rodar, o adjunta guiones e imágenes de referencia.",
   ],
   [
     "Velo cobrar vida",
-    "Mira cómo tu visión se transforma en una aplicación funcional en tiempo real.",
+    "Mira cómo tu visión se transforma en planos de vídeo en tiempo real.",
   ],
   [
     "Perfecciona y publica",
-    "Personaliza tu creación con comentarios sencillos y publícala con un solo clic.",
+    "Ajusta la dirección con comentarios sencillos y exporta tu vídeo con un solo clic.",
   ],
 ];
 const stats = [
-  ["50M", "proyectos creados en Lovable"],
-  ["1M", "nuevos proyectos creados por semana en Lovable"],
-  ["100M", "visitas al mes a proyectos creados con Lovable"],
+  ["50M", "vídeos generados en Xframe"],
+  ["1M", "planos nuevos generados cada semana"],
+  ["100M", "reproducciones al mes de vídeos creados con Xframe"],
 ];
 function Landing() {
   const auth = new URLSearchParams(location.search).has("auth");
@@ -446,20 +1064,20 @@ function Landing() {
           }}
         />
         <Badge variant="secondary" className="rounded-full px-3 py-1">
-          Construye con IA
+          Vídeo con IA
         </Badge>
         <h1 className="max-w-3xl text-4xl font-bold tracking-tight sm:text-6xl">
-          Construye algo con Lovable
+          Crea algo con Xframe
         </h1>
         <p className="max-w-xl text-lg text-muted-foreground">
-          Crea apps y sitios web conversando con la IA
+          Crea vídeos y películas conversando con la IA
         </p>
         <PromptBox />
       </section>
 
       <section className="mx-auto max-w-6xl px-6 py-16 text-center">
         <p className="text-sm text-muted-foreground">
-          Equipos de empresas líderes crean con Lovable
+          Equipos de empresas líderes crean con Xframe
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-x-12 gap-y-6 text-lg font-semibold text-muted-foreground/60">
           {["NVIDIA", "HCA Healthcare", "HEARST", "UDACITY", "asana"].map((x) => (
@@ -526,7 +1144,7 @@ function Landing() {
       </section>
 
       <section className="mx-auto max-w-6xl px-6 py-16">
-        <h2 className="text-3xl font-bold tracking-tight">Lovable</h2>
+        <h2 className="text-3xl font-bold tracking-tight">Xframe</h2>
         <p className="mt-1 text-muted-foreground">
           Millones de creadores ya están convirtiendo sus ideas en realidad
         </p>
@@ -557,7 +1175,7 @@ function Landing() {
 const plans = [
   {
     name: "Free",
-    desc: "Descubre lo que Lovable puede hacer por ti",
+    desc: "Descubre lo que Xframe puede hacer por ti",
     price: "€0",
     cadence: "al mes",
     leads: [
@@ -567,7 +1185,7 @@ const plans = [
     features: [
       "Proyectos privados del espacio de trabajo",
       "Colaboradores ilimitados",
-      "5 dominios lovable.app",
+      "5 dominios xframe.app",
       "Nube",
       "Soporte de la comunidad",
     ],
@@ -586,7 +1204,7 @@ const plans = [
       "100 créditos Pro",
       "Acumulación de créditos",
       "Recargas de créditos a demanda",
-      "Dominios lovable.app ilimitados",
+      "Dominios xframe.app ilimitados",
       "Dominios personalizados",
       "Roles y permisos de usuario",
       "Per-member credit limits",
@@ -635,16 +1253,16 @@ const plans = [
   },
 ];
 const pricingFaqs = [
-  "¿Qué es Lovable y cómo funciona?",
+  "¿Qué es Xframe y cómo funciona?",
   "¿Qué es un crédito?",
-  "¿Cómo uso los créditos en Lovable?",
+  "¿Cómo uso los créditos en Xframe?",
   "¿Caducan los créditos?",
   "¿Qué pasa con mis créditos si finaliza mi suscripción?",
   "¿Son reembolsables los créditos?",
   "¿Qué incluyen los planes gratuitos y de pago?",
   "How do I buy credits for a team, class, or community?",
   "Do you charge per seat or per user?",
-  "How much does it cost to run my app on Lovable?",
+  "How much does it cost to run my app on Xframe?",
   "Why is the Business plan more expensive?",
   "¿Quién es propietario de los proyectos y el código?",
   "¿Ofrecen un descuento para estudiantes?",
@@ -719,17 +1337,17 @@ function PricingCard({ p, i }) {
 }
 const pricingEdu = [
   [
-    "Lovable para estudiantes",
-    "Verifica tu condición de estudiante y obtén hasta un 50 % de descuento en Lovable Pro.",
+    "Xframe para estudiantes",
+    "Verifica tu condición de estudiante y obtén hasta un 50 % de descuento en Xframe Pro.",
     "Empezar",
   ],
   [
-    "Lovable para campus",
+    "Xframe para campus",
     "Controles de facturación y administración para universidades y centros de educación superior.",
     "Contactar con ventas",
   ],
   [
-    "Lovable para niños",
+    "Xframe para niños",
     "Acceso conforme a la normativa y plan de estudios para colegios, en colaboración con imagi.",
     "Más información",
   ],
@@ -741,7 +1359,7 @@ function Pricing() {
       <MarketingNav />
       <section className="mx-auto max-w-3xl px-6 pb-6 pt-20 text-center">
         <div className="flex items-center justify-center gap-2.5">
-          <LovableHeart size={32} />
+          <XframeHeart size={32} />
           <h1 className="text-3xl font-bold tracking-tight">Precios</h1>
         </div>
         <p className="mx-auto mt-4 max-w-xl text-muted-foreground">
@@ -952,107 +1570,185 @@ function UserMenu() {
     </DropdownMenu>
   );
 }
-function DashboardSide() {
+function DashboardSide({ width, onResize }) {
   const openOverlay = (name) => go(`${location.pathname}?${name}=1`);
+  const collapsed = width < 160;
+  const navCls = (active) =>
+    cn(
+      "flex items-center rounded-md text-sm transition-colors [&>svg]:size-4 [&>svg]:shrink-0",
+      collapsed ? "h-9 w-full justify-center" : "gap-3 px-3 py-2",
+      active
+        ? "bg-accent font-medium text-accent-foreground"
+        : "text-muted-foreground hover:bg-accent hover:text-foreground",
+    );
   return (
-    <aside className="fixed inset-y-0 left-0 flex w-60 flex-col gap-1 border-r bg-muted/30 p-3">
-      <div className="px-2 py-1">
-        <Logo />
-      </div>
-      <button className="mt-2 flex items-center gap-2 rounded-md p-2 text-sm transition-colors hover:bg-accent">
-        <span className="flex size-6 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
+    <aside
+      style={{ width }}
+      className={cn(
+        "fixed inset-y-0 left-0 flex flex-col gap-1 overflow-hidden border-r bg-muted/30",
+        collapsed ? "items-center p-2" : "p-3",
+      )}
+    >
+      <ResizeHandle onResize={onResize} />
+
+      {collapsed ? (
+        <button
+          onClick={() => go("/es")}
+          title="Xframe"
+          className="flex size-9 items-center justify-center rounded-md hover:bg-accent"
+        >
+          <XframeHeart size={22} />
+        </button>
+      ) : (
+        <div className="px-2 py-1">
+          <Logo />
+        </div>
+      )}
+
+      <button
+        title="Héctor's Xframe"
+        className={cn(
+          "mt-2 flex items-center rounded-md text-sm transition-colors hover:bg-accent",
+          collapsed ? "size-9 justify-center" : "gap-2 p-2",
+        )}
+      >
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
           H
         </span>
-        <span className="flex-1 text-left font-medium">Héctor's Lovable</span>
-        <ChevronDown className="size-4 text-muted-foreground" />
+        {!collapsed && (
+          <>
+            <span className="flex-1 text-left font-medium">Héctor's Xframe</span>
+            <ChevronDown className="size-4 text-muted-foreground" />
+          </>
+        )}
       </button>
-      <nav className="mt-2 flex flex-col gap-1">
+
+      <nav className="mt-2 flex w-full flex-col gap-1">
         {navItems.map(([id, I, l]) => {
-          if (id === "search") {
-            return (
-              <button
-                key={id}
-                className={sideNavClass(false)}
-                onClick={() => openOverlay("search")}
-              >
-                <I />
-                {l}
+          const isOverlay = id === "search" || id === "connectors";
+          const active =
+            id === "connectors"
+              ? location.search.includes("connectors")
+              : !isOverlay && location.pathname === id && !location.search;
+          return (
+            <button
+              key={id}
+              title={l}
+              className={navCls(active)}
+              onClick={() =>
+                isOverlay ? openOverlay(id) : go(id)
+              }
+            >
+              <I />
+              {!collapsed && l}
+              {!collapsed && id === "search" && (
                 <kbd className="ml-auto rounded border bg-background px-1.5 text-xs text-muted-foreground">
                   Ctrl K
                 </kbd>
-              </button>
-            );
-          }
-          if (id === "connectors") {
-            return (
-              <button
-                key={id}
-                className={sideNavClass(location.search.includes("connectors"))}
-                onClick={() => openOverlay("connectors")}
-              >
-                <I />
-                {l}
-              </button>
-            );
-          }
-          const selected = location.pathname === id && !location.search;
-          return (
-            <button key={id} className={sideNavClass(selected)} onClick={() => go(id)}>
-              <I />
-              {l}
+              )}
             </button>
           );
         })}
       </nav>
-      <p className="mt-4 px-3 text-xs font-medium text-muted-foreground">
-        PROYECTOS
-      </p>
-      {[
-        [FolderKanban, "Todos los proyectos"],
-        [Users, "Creados por mí"],
-        [Share2, "Compartido conmigo"],
-      ].map(([I, l]) => (
-        <button key={l} className={sideNavClass(false)}>
-          <I />
-          {l}
-        </button>
-      ))}
-      <p className="mt-4 px-3 text-xs font-medium text-muted-foreground">
-        RECIENTES
-      </p>
-      <button className={sideNavClass(false)} onClick={() => go(PROJECT)}>
-        <span className="size-2 rounded-full bg-green-500" />
-        Telemetry Landing Pages
+
+      {collapsed ? (
+        <Separator className="my-2 w-8" />
+      ) : (
+        <p className="mt-4 px-3 text-xs font-medium text-muted-foreground">
+          PROYECTOS
+        </p>
+      )}
+      <div className="flex w-full flex-col gap-1">
+        {[
+          [FolderKanban, "Todos los proyectos"],
+          [Users, "Creados por mí"],
+          [Share2, "Compartido conmigo"],
+        ].map(([I, l]) => (
+          <button key={l} title={l} className={navCls(false)}>
+            <I />
+            {!collapsed && l}
+          </button>
+        ))}
+      </div>
+
+      {collapsed ? (
+        <Separator className="my-2 w-8" />
+      ) : (
+        <p className="mt-4 px-3 text-xs font-medium text-muted-foreground">
+          RECIENTES
+        </p>
+      )}
+      <button
+        title="Tráiler — Proyecto Neón"
+        className={navCls(false)}
+        onClick={() => go(PROJECT)}
+      >
+        <span className="size-2 shrink-0 rounded-full bg-green-500" />
+        {!collapsed && "Tráiler — Proyecto Neón"}
       </button>
-      <div className="mt-auto flex flex-col gap-2 pt-2">
-        <Card className="p-3">
-          <div className="flex items-center gap-2.5">
-            <Gift className="size-5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium">Compartir Lovable</p>
-              <p className="truncate text-xs text-muted-foreground">
-                100 créditos por cada referido
-              </p>
-            </div>
-          </div>
-        </Card>
-        <button
-          onClick={() => go("/es/pricing")}
-          className="flex items-center gap-2.5 rounded-xl border bg-card p-3 text-left shadow-sm transition-colors hover:bg-accent"
+
+      <div
+        className={cn(
+          "mt-auto flex w-full flex-col gap-2 pt-2",
+          collapsed && "items-center",
+        )}
+      >
+        {collapsed ? (
+          <>
+            <button
+              title="Compartir Xframe — 100 créditos por cada referido"
+              className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Gift className="size-5" />
+            </button>
+            <button
+              onClick={() => go("/es/pricing")}
+              title="Cambia a Pro"
+              className="flex size-9 items-center justify-center rounded-full bg-secondary hover:bg-accent"
+            >
+              <Zap className="size-4" />
+            </button>
+          </>
+        ) : (
+          <>
+            <Card className="p-3">
+              <div className="flex items-center gap-2.5">
+                <Gift className="size-5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">Compartir Xframe</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    100 créditos por cada referido
+                  </p>
+                </div>
+              </div>
+            </Card>
+            <button
+              onClick={() => go("/es/pricing")}
+              className="flex items-center gap-2.5 rounded-xl border bg-card p-3 text-left shadow-sm transition-colors hover:bg-accent"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">Cambia a Pro</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  Desbloquear más funciones
+                </p>
+              </div>
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary">
+                <Zap className="size-4" />
+              </span>
+            </button>
+          </>
+        )}
+        <div
+          className={cn(
+            "flex items-center gap-2 pt-1",
+            collapsed ? "flex-col" : "justify-between px-1",
+          )}
         >
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">Cambia a Pro</p>
-            <p className="truncate text-xs text-muted-foreground">
-              Desbloquear más funciones
-            </p>
-          </div>
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary">
-            <Zap className="size-4" />
-          </span>
-        </button>
-        <div className="flex items-center justify-between px-1 pt-1">
           <UserMenu />
-          <button className="relative rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+          <button
+            title="Notificaciones"
+            className="relative rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
             <Bell className="size-5" />
             <span className="absolute right-0.5 top-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-semibold text-white">
               1
@@ -1064,16 +1760,16 @@ function DashboardSide() {
   );
 }
 const projects = [
-  "Telemetry Landing Pages",
-  "E-commerce Studio",
-  "Portfolio Minimal",
-  "Analytics Dashboard",
+  "Tráiler — Proyecto Neón",
+  "Spot Café Aurora",
+  "Videoclip Vórtice",
+  "Documental Origen",
 ];
 const cmdItemClass =
   "flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition-colors [&_svg]:size-4 [&_svg]:text-muted-foreground";
 const cmdRecent = [
   "Remix of Prompt Frame Creative Portfolio",
-  "Telemetry Landing Pages",
+  "Tráiler — Proyecto Neón",
 ];
 const cmdNavigate = [
   [LayoutDashboard, "Dashboard", "/dashboard"],
@@ -1090,9 +1786,20 @@ const cmdSettingsItems = [
   [Sparkles, "Habilidades", "skills"],
 ];
 function CommandPalette({ close }) {
+  React.useEffect(() => {
+    const el = document.documentElement;
+    const prevHtml = el.style.overflow;
+    const prevBody = document.body.style.overflow;
+    el.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      el.style.overflow = prevHtml;
+      document.body.style.overflow = prevBody;
+    };
+  }, []);
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[14vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center overscroll-contain px-4 pt-[14vh]"
       onClick={close}
     >
       <div
@@ -1113,7 +1820,7 @@ function CommandPalette({ close }) {
             <X className="size-4" />
           </button>
         </div>
-        <div className="overflow-y-auto p-2">
+        <div className="overflow-y-auto overscroll-contain p-2">
           <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
             Recent projects
           </p>
@@ -1170,23 +1877,27 @@ const projectThumbs = [
   "/assets/vesper.webp",
 ];
 const activityItems = [
-  "Actualizaste la landing de Telemetry",
-  "Lovable publicó una nueva versión",
-  "Conectaste el proyecto con GitHub",
-  "Se guardaron los últimos cambios",
+  "Regeneraste el plano 3 de Tráiler — Proyecto Neón",
+  "Xframe renderizó tu vídeo en 4K",
+  "Añadiste voz en off con ElevenLabs",
+  "Se guardó una nueva versión del montaje",
 ];
 const projectTabs = [
   ["mine", "Mis proyectos"],
   ["recent", "Vistos recientemente"],
   ["shared", "Compartidos conmigo"],
-  ["templates", "Plantillas de Lovable"],
+  ["templates", "Plantillas de Xframe"],
 ];
 function Dashboard({ kind = "home" }) {
   const [projectView, setProjectView] = useState("mine");
+  const [sidebarW, resizeSidebar] = useResizableWidth("xf-dash-sidebar", 240, 60, 420);
   return (
     <div className="min-h-screen bg-background">
-      <DashboardSide />
-      <main className="relative isolate ml-60 min-h-screen">
+      <DashboardSide width={sidebarW} onResize={resizeSidebar} />
+      <main
+        style={{ marginLeft: sidebarW }}
+        className="relative isolate min-h-screen"
+      >
         {kind === "home" ? (
           <>
             <div
@@ -1206,7 +1917,7 @@ function Dashboard({ kind = "home" }) {
               </button>
               <button className="flex items-center gap-2 rounded-full bg-background/70 py-1.5 pl-1.5 pr-4 text-sm shadow-sm ring-1 ring-black/5 backdrop-blur">
                 <Badge className="rounded-full">Nuevo</Badge>
-                Las apps de Lovable ahora funcionan en ChatGPT y Claude
+                Xframe ya genera vídeo en 4K con sonido nativo
                 <ArrowRight className="size-4" />
               </button>
               <h1 className="text-center text-3xl font-bold tracking-tight sm:text-4xl">
@@ -1292,7 +2003,7 @@ function Dashboard({ kind = "home" }) {
                           </p>
                         </div>
                         <span className="hidden text-sm text-muted-foreground sm:block">
-                          Telemetry Landing Pages
+                          Tráiler — Proyecto Neón
                         </span>
                       </div>
                     ))}
@@ -1312,9 +2023,9 @@ function Resources() {
   const items = [...templates, ...templates, ...templates, ...templates];
   return (
     <div className="px-8 py-8">
-      <h1 className="text-2xl font-bold tracking-tight">Resources</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Recursos</h1>
       <p className="mt-1 text-muted-foreground">
-        Start from a template to build your next project
+        Empieza con un estilo para tu próximo vídeo
       </p>
       <div className="mt-6 grid grid-cols-2 gap-6 md:grid-cols-3 lg:grid-cols-4">
         {items.map((x, i) => (
@@ -1348,39 +2059,39 @@ const connectorCategories = [
   ["Microsoft", 8],
   ["AWS", 2],
 ];
-// [name, slug, description, category, { enabled, badge, kind }]
+// [name, domain, description, category, { enabled, badge, kind, icon }]
 const connectors = [
-  ["Cloud", null, "Built-in backend, ready to use", "Productivity", { enabled: true, kind: "connections" }],
-  ["AI", null, "Unlock powerful AI features", "Productivity", { enabled: true }],
-  ["Stripe", "stripe", "Set up payments", "Ecommerce", { enabled: true }],
-  ["Paddle", "paddle", "Set up payments with tax handled for you", "Ecommerce", {}],
-  ["Shopify", "shopify", "Build an eCommerce store", "Ecommerce", {}],
-  ["Apollo.io", null, "Search, enrich, and engage B2B contacts and companies", "Sales", { badge: "New" }],
-  ["ClickHouse", "clickhouse", "Query ClickHouse databases over the HTTP interface", "Productivity", { badge: "New", kind: "connections" }],
-  ["dbt Semantic Layer", null, "Query governed metrics from your dbt Semantic Layer", "Productivity", { badge: "New", kind: "connections" }],
-  ["Google Search Console", "googlesearchconsole", "Read Search Console analytics and manage sites", "Google", {}],
-  ["Firecrawl", null, "AI-powered scraper, search and retrieval tool", "Productivity", {}],
-  ["Google Sheets", "googlesheets", "Read and update spreadsheet data", "Google", {}],
-  ["Google Maps Platform", "googlemaps", "Maps, geocoding, directions, and places APIs", "Google", { kind: "connections" }],
-  ["Resend", "resend", "Email API for developers", "Marketing", {}],
-  ["Gmail", "gmail", "Read, send, and manage your emails", "Google", {}],
-  ["Google Drive", "googledrive", "Upload and download files to and from Google Drive", "Google", {}],
-  ["Google Calendar", "googlecalendar", "Create and manage Google Calendar events", "Google", {}],
-  ["Telegram", "telegram", "Messaging platform with Bot API for automated interactions", "Messaging", {}],
-  ["Twilio", "twilio", "Cloud communications platform for SMS, voice, and messaging", "Messaging", {}],
-  ["ElevenLabs", "elevenlabs", "AI voice generation, text-to-speech, and speech-to-text", "Productivity", {}],
-  ["Notion", "notion", "Add Notion pages and databases to your app", "Productivity", {}],
-  ["Google Docs", "googledocs", "Create and edit Google Docs documents", "Google", {}],
-  ["Brevo", "brevo", "Email, SMS, CRM, and marketing automation API", "Marketing", {}],
-  ["Airtable", "airtable", "Spreadsheet-database hybrid and automation platform", "Productivity", {}],
-  ["Slack", "slack", "Send messages and interact with Slack workspaces", "Messaging", {}],
-  ["Microsoft Outlook", "microsoftoutlook", "Read, send, and manage Outlook email", "Microsoft", {}],
-  ["HubSpot", "hubspot", "CRM, marketing, and sales platform", "Sales", {}],
-  ["GitHub", "github", "Sync code and manage repositories", "Productivity", { enabled: true }],
-  ["Supabase", "supabase", "Postgres database, auth, and storage", "Productivity", { enabled: true, kind: "connections" }],
-].map(([name, slug, desc, category, meta]) => ({
+  ["Cloud", null, "Built-in backend, ready to use", "Productivity", { enabled: true, kind: "connections", icon: Cloud }],
+  ["AI", null, "Unlock powerful AI features", "Productivity", { enabled: true, icon: Sparkles }],
+  ["Stripe", "stripe.com", "Set up payments", "Ecommerce", { enabled: true }],
+  ["Paddle", "paddle.com", "Set up payments with tax handled for you", "Ecommerce", {}],
+  ["Shopify", "shopify.com", "Build an eCommerce store", "Ecommerce", {}],
+  ["Apollo.io", "apollo.io", "Search, enrich, and engage B2B contacts and companies", "Sales", { badge: "New" }],
+  ["ClickHouse", "clickhouse.com", "Query ClickHouse databases over the HTTP interface", "Productivity", { badge: "New", kind: "connections" }],
+  ["dbt Semantic Layer", "getdbt.com", "Query governed metrics from your dbt Semantic Layer", "Productivity", { badge: "New", kind: "connections" }],
+  ["Google Search Console", "search.google.com", "Read Search Console analytics and manage sites", "Google", {}],
+  ["Firecrawl", "firecrawl.dev", "AI-powered scraper, search and retrieval tool", "Productivity", {}],
+  ["Google Sheets", "sheets.google.com", "Read and update spreadsheet data", "Google", {}],
+  ["Google Maps Platform", "mapsplatform.google.com", "Maps, geocoding, directions, and places APIs", "Google", { kind: "connections" }],
+  ["Resend", "resend.com", "Email API for developers", "Marketing", {}],
+  ["Gmail", "gmail.com", "Read, send, and manage your emails", "Google", {}],
+  ["Google Drive", "drive.google.com", "Upload and download files to and from Google Drive", "Google", {}],
+  ["Google Calendar", "calendar.google.com", "Create and manage Google Calendar events", "Google", {}],
+  ["Telegram", "telegram.org", "Messaging platform with Bot API for automated interactions", "Messaging", {}],
+  ["Twilio", "twilio.com", "Cloud communications platform for SMS, voice, and messaging", "Messaging", {}],
+  ["ElevenLabs", "elevenlabs.io", "AI voice generation, text-to-speech, and speech-to-text", "Productivity", {}],
+  ["Notion", "notion.so", "Add Notion pages and databases to your app", "Productivity", {}],
+  ["Google Docs", "docs.google.com", "Create and edit Google Docs documents", "Google", {}],
+  ["Brevo", "brevo.com", "Email, SMS, CRM, and marketing automation API", "Marketing", {}],
+  ["Airtable", "airtable.com", "Spreadsheet-database hybrid and automation platform", "Productivity", {}],
+  ["Slack", "slack.com", "Send messages and interact with Slack workspaces", "Messaging", {}],
+  ["Microsoft Outlook", "outlook.com", "Read, send, and manage Outlook email", "Microsoft", {}],
+  ["HubSpot", "hubspot.com", "CRM, marketing, and sales platform", "Sales", {}],
+  ["GitHub", "github.com", "Sync code and manage repositories", "Productivity", { enabled: true }],
+  ["Supabase", "supabase.com", "Postgres database, auth, and storage", "Productivity", { enabled: true, kind: "connections" }],
+].map(([name, domain, desc, category, meta]) => ({
   name,
-  slug,
+  domain,
   desc,
   category,
   kind: meta.kind || "permissions",
@@ -1388,12 +2099,16 @@ const connectors = [
 }));
 
 function ConnectorIcon({ c, className = "size-6" }) {
-  if (c.slug) {
+  if (c.icon) {
+    const I = c.icon;
+    return <I className={cn("text-foreground", className)} />;
+  }
+  if (c.domain) {
     return (
       <img
-        src={`https://cdn.simpleicons.org/${c.slug}`}
+        src={`https://www.google.com/s2/favicons?domain=${c.domain}&sz=64`}
         alt=""
-        className={className}
+        className={cn("rounded-sm object-contain", className)}
         onError={(e) => {
           e.currentTarget.style.display = "none";
         }}
@@ -1558,6 +2273,17 @@ const sideItemClass =
 function ConnectorsDialog({ onClose }) {
   const [selected, setSelected] = useState(null);
   const [category, setCategory] = useState("All");
+  React.useEffect(() => {
+    const el = document.documentElement;
+    const prevHtml = el.style.overflow;
+    const prevBody = document.body.style.overflow;
+    el.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      el.style.overflow = prevHtml;
+      document.body.style.overflow = prevBody;
+    };
+  }, []);
   const list = connectors.filter((c) =>
     category === "All"
       ? true
@@ -1567,11 +2293,11 @@ function ConnectorsDialog({ onClose }) {
   );
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-center overscroll-contain p-4 pl-[248px]"
       onClick={onClose}
     >
       <div
-        className="flex h-[85vh] w-full max-w-5xl overflow-hidden rounded-xl border bg-background shadow-2xl"
+        className="flex h-[85vh] w-full max-w-6xl overflow-hidden rounded-xl border bg-background shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex w-56 shrink-0 flex-col gap-1 border-r bg-muted/30 p-3">
@@ -1662,7 +2388,7 @@ function ConnectorsDialog({ onClose }) {
               <X className="size-4" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-5">
+          <div className="flex-1 overflow-y-auto overscroll-contain p-5">
             {selected ? (
               <ConnectorDetail c={selected} />
             ) : (
@@ -1672,7 +2398,7 @@ function ConnectorsDialog({ onClose }) {
                     Build from what you already use
                   </h2>
                   <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-                    Connectors let your Lovable app talk to external tools like
+                    Connectors let your Xframe app talk to external tools like
                     Stripe, Slack, and Google. Ask the agent to get started.
                   </p>
                   <div className="mt-4 flex justify-center gap-2">
@@ -1727,55 +2453,162 @@ function ConnectorsDialog({ onClose }) {
 }
 
 const editorTabs = [
-  ["preview", Globe, "Vista previa"],
-  ["files", FileText, "Archivos"],
-  ["code", Code2, "Código"],
-  ["more", Layers, "Más"],
+  ["preview", Monitor, "Vista previa"],
+  ["assets", Layers, "All assets"],
+  ["brief", FileText, "Project brief"],
+  ["elements", AtSign, "Elements"],
+  ["canvas", Frame, "Canvas"],
+  ["chat", MessageCircle, "Chat"],
 ];
 const editorChips = [
-  "Configurar analítica",
-  "Añadir formulario demo",
-  "Mejorar SEO técnico",
-  "Crear…",
+  "Alargar el plano 2",
+  "Añadir voz en off",
+  "Cambiar a iluminación nocturna",
+  "Generar…",
 ];
-const codeTree = [
-  ["folder", ".lovable", 0],
-  ["file", "project.json", 1],
-  ["folder", "public", 0],
-  ["file", "favicon.ico", 1],
-  ["file", "robots.txt", 1],
-  ["folder", "src", 0],
-  ["folder", "assets", 1],
-  ["folder", "components / ui", 1],
-  ["folder", "hooks", 1],
-  ["folder", "lib", 1],
-  ["folder", "routes", 1],
-  ["file", "router.tsx", 1],
-  ["file", "routeTree.gen.ts", 1],
-  ["file", "server.ts", 1],
-  ["file", "start.ts", 1],
-  ["file", "styles.css", 1],
-  ["file", ".gitignore", 0],
-  ["file", ".prettierignore", 0],
-  ["file", ".prettierrc", 0],
-  ["file", "AGENTS.md", 0],
-  ["file", "bun.lock", 0],
-  ["file", "bunfig.toml", 0],
-  ["file", "components.json", 0],
-  ["file", "eslint.config.js", 0],
-  ["file", "package.json", 0],
-  ["file", "tsconfig.json", 0],
-  ["file", "vite.config.ts", 0],
+const assetFilters = [
+  "Todos",
+  "Vídeos",
+  "Imágenes",
+  "Personajes",
+  "Fondos",
+  "Audio",
 ];
-const moreMenu = [
-  [LineChart, "Analíticas"],
-  [Cloud, "Cloud"],
-  [Layers, "Integraciones de agentes"],
-  [CreditCard, "Pagos"],
-  [Plug, "Conectores"],
-  [Shield, "Seguridad"],
-  [Search, "SEO y búsqueda con IA"],
+// [nombre, tipo, meta, thumbnail]
+const assetItems = [
+  ["Plano 01 — Astronauta", "Vídeos", "00:08 · 4K", "/assets/prompt-frame.webp"],
+  ["Plano 02 — Estación", "Vídeos", "00:06 · 4K", "/assets/continuum.jpg"],
+  ["Plano 03 — Sala de control", "Vídeos", "00:05 · 1080p", "/assets/inspo.jpg"],
+  ["Comandante Vega", "Personajes", "4 referencias", "/assets/vesper.webp"],
+  ["Ingeniera Nara", "Personajes", "3 referencias", "/assets/personal-blog.png"],
+  ["Estación orbital", "Fondos", "2048 × 858", "/assets/maison.webp"],
+  ["Pasillo de emergencia", "Fondos", "2048 × 858", "/assets/ecommerce.webp"],
+  ["Nébula ámbar", "Imágenes", "2048 × 858", "/assets/lovable-slides.webp"],
+  ["Voz en off — ES", "Audio", "00:24", null],
+  ["Score — Noir cálido", "Audio", "01:12", null],
 ];
+const briefSections = [
+  ["Logline", "Una frase que resuma la historia.", "Un astronauta descubre que la estación orbital que viene a rescatar lleva años vacía."],
+  ["Objetivo", "¿Qué quieres conseguir con este vídeo?", "Tráiler de 24 s para lanzamiento en redes, con corte vertical adicional."],
+  ["Audiencia", "¿A quién va dirigido?", "Público de 18-35 aficionado a la ciencia ficción."],
+  ["Tono y referencias", "Estilo visual, ritmo y referencias.", "Noir cálido: luz lateral dura, grano fino, paleta ámbar sobre negro. Referencias: Blade Runner 2049, Interstellar."],
+  ["Entregables", "Formatos y duración final.", "16:9 4K master · 9:16 para redes · subtítulos ES/EN."],
+];
+const elementChars = [
+  ["Comandante Vega", "Protagonista · traje EVA blanco", "/assets/vesper.webp"],
+  ["Ingeniera Nara", "Secundaria · mono técnico", "/assets/personal-blog.png"],
+];
+const elementLocations = [
+  ["Estación orbital", "Interior abandonado, luz de emergencia", "/assets/maison.webp"],
+  ["Sala de control", "Holografías, paneles rojos", "/assets/inspo.jpg"],
+  ["Exterior órbita", "Tierra al fondo, silencio", "/assets/continuum.jpg"],
+];
+const canvasShots = [
+  ["Plano 01", "Astronauta solitario en traje EVA flotando en gravedad cero, luz cinematográfica desde atrás.", "/assets/prompt-frame.webp"],
+  ["Plano 02", "La lanzadera se aproxima a la estación abandonada, dolly lento hacia delante.", "/assets/continuum.jpg"],
+  ["Plano 03", "Entra por la esclusa, la linterna del casco corta la oscuridad.", "/assets/inspo.jpg"],
+  ["Plano 04", "Descubre la sala de control, holografías y paneles rojos parpadeando.", "/assets/maison.webp"],
+  ["Plano 05", "La estación se sacude, luces de alarma y detritos flotando.", "/assets/ecommerce.webp"],
+  ["Plano 06", "La cápsula de escape se aleja, la Tierra llena el encuadre.", "/assets/vesper.webp"],
+];
+const teamMessages = [
+  ["H", "Héctor", "Subo el brief actualizado, el plano 4 necesita más contraste.", "10:24", true],
+  ["N", "Nara", "De acuerdo. ¿Probamos con la paleta ámbar en lugar del azul?", "10:31", false],
+  ["H", "Héctor", "Sí, y alarguemos el plano 2 a 8 s para que respire.", "10:33", true],
+  ["M", "Marco", "Hecho. Regenerando planos 2 y 4 con Cinema Studio 3.5.", "10:40", false],
+];
+function ShareMenu() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <UIButton variant="outline" size="sm" onClick={() => setOpen(!open)}>
+        <span className="flex size-5 items-center justify-center rounded-full bg-green-600 text-[10px] font-semibold text-white">
+          H
+        </span>
+        Share
+      </UIButton>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-50 mt-2 w-[480px] rounded-xl border bg-background p-5 text-left shadow-2xl">
+            <div className="flex items-center justify-between gap-4">
+              <h3 className="font-semibold">Compartir proyecto</h3>
+              <button className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
+                <Link className="size-4" />
+                Copiar enlace de invitación
+              </button>
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <Input
+                placeholder="Invitar por correo electrónico"
+                className="flex-1"
+              />
+              <UIButton className="bg-blue-500 text-white hover:bg-blue-600">
+                Invitar
+              </UIButton>
+            </div>
+
+            <p className="mt-5 text-xs font-medium text-muted-foreground">
+              Quién tiene acceso al proyecto
+            </p>
+            <div className="mt-3 space-y-3">
+              <button className="flex items-center gap-2.5 text-sm">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full border text-muted-foreground">
+                  <Ban className="size-3.5" />
+                </span>
+                Enlace de invitación desactivado
+                <ChevronDown className="size-3.5 text-muted-foreground" />
+              </button>
+              <div className="flex items-center gap-2.5">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-green-600 text-xs font-semibold text-white">
+                  H
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    Héctor Vidal Sánchez (tú)
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    hectorvidal0411@gmail.com
+                  </p>
+                </div>
+                <span className="shrink-0 text-sm text-muted-foreground">
+                  Propietario
+                </span>
+              </div>
+            </div>
+
+            <p className="mt-5 text-xs font-medium text-muted-foreground">
+              Acceso general al proyecto
+            </p>
+            <div className="mt-3 flex items-center gap-2.5">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-pink-600 text-xs font-semibold text-white">
+                H
+              </span>
+              <div className="min-w-0 flex-1">
+                <button className="flex items-center gap-1 text-sm font-medium">
+                  Espacio de trabajo de Héctor's Xframe
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </button>
+                <p className="truncate text-xs text-muted-foreground">
+                  Personas en este espacio de trabajo
+                </p>
+              </div>
+              <button className="flex shrink-0 items-center gap-1 text-sm text-muted-foreground">
+                Puede editar
+                <ChevronDown className="size-3.5" />
+              </button>
+            </div>
+
+            <UIButton variant="outline" className="mt-5 w-full">
+              Compartir vista previa
+            </UIButton>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 const EditorIconBtn = ({ children, onClick, className = "" }) => (
   <button
     onClick={onClick}
@@ -1788,17 +2621,192 @@ const EditorIconBtn = ({ children, onClick, className = "" }) => (
   </button>
 );
 
-function EditorChat() {
+// El sidebar es el mismo en todas las pestañas, pero lo que genera depende de
+// dónde estés: en All assets crea assets, en Vista previa edita el montaje, en
+// Project brief redacta y en Canvas ordena el mapa.
+const chatContext = {
+  assets: {
+    label: "Generación de assets",
+    hint: "Lo que pidas aquí se genera como asset del proyecto.",
+    placeholder: "Describe el asset: un personaje, un fondo, un plano…",
+    chips: [
+      "Un astronauta con traje EVA desgastado",
+      "Interior de estación orbital abandonada",
+      "Nébula ámbar de fondo",
+    ],
+  },
+  preview: {
+    label: "Edición del montaje",
+    hint: "Aquí solo se editan el corte y el ritmo del vídeo final.",
+    placeholder: "Pide un cambio en el montaje: ritmo, orden, duración…",
+    chips: ["Déjalo en 30 s", "Ritmo de tráiler", "Alarga el plano 2"],
+  },
+  brief: {
+    label: "Redacción del brief",
+    hint: "Te ayudo a afinar el brief del proyecto.",
+    placeholder: "Pide ayuda con el brief: logline, tono, entregables…",
+    chips: ["Mejora el logline", "Añade referencias visuales", "Resume el brief"],
+  },
+  canvas: {
+    label: "Organización del canvas",
+    hint: "Reordeno y agrupo los nodos del mapa mental.",
+    placeholder: "Pide reorganizar el canvas: agrupar, ordenar, conectar…",
+    chips: ["Ordena los planos", "Agrupa por escena", "Conecta los conceptos"],
+  },
+  elements: {
+    label: "Elements del proyecto",
+    hint: "Los elements se crean desde All assets: genera y asígnalos.",
+    placeholder: "Pide ajustes sobre personajes y localizaciones…",
+    chips: ["Revisa la continuidad", "Describe a Vega", "Falta una localización"],
+  },
+  chat: {
+    label: "Chat de equipo",
+    hint: "Esta pestaña es la conversación con tu equipo, no conmigo.",
+    placeholder: "Escríbeme para trabajar sobre el proyecto…",
+    chips: [],
+  },
+};
+
+const assetTypeFor = (text) => {
+  const t = text.toLowerCase();
+  if (/person|astronaut|comandante|ingenier|protagon|actor|persona/.test(t))
+    return "Personajes";
+  if (/fondo|estaci|interior|exterior|pasillo|sala|localiza|escenario/.test(t))
+    return "Fondos";
+  if (/voz|audio|m[úu]sica|score|sonido/.test(t)) return "Audio";
+  if (/plano|toma|secuencia|v[íi]deo/.test(t)) return "Vídeos";
+  return "Imágenes";
+};
+
+function EditorChat({ width, onResize, tab, log, onSend, busy }) {
+  const [draft, setDraft] = useState("");
+  const ctx = chatContext[tab] ?? chatContext.assets;
+  const endRef = useRef(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [log.length, busy]);
+
+  const send = (text) => {
+    const value = (text ?? draft).trim();
+    if (!value || busy) return;
+    onSend(value);
+    setDraft("");
+  };
+
   return (
-    <aside className="flex w-[380px] shrink-0 flex-col border-r bg-background">
+    <aside
+      style={{ width }}
+      className="relative flex shrink-0 flex-col border-r bg-background"
+    >
+      <ResizeHandle onResize={onResize} />
+
+      <div className="flex-1 space-y-4 overflow-y-auto p-4 text-sm">
+        {log.length === 0 && !draft.trim() && (
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <Sparkles className="size-5 text-muted-foreground" />
+            <p className="mt-2 text-sm font-medium">{ctx.label}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{ctx.hint}</p>
+          </div>
+        )}
+
+        {log.map((m) =>
+          m.role === "user" ? (
+            <div key={m.id} className="ml-8 rounded-2xl bg-muted p-3">
+              {m.text}
+            </div>
+          ) : (
+            <div key={m.id} className="space-y-2">
+              <p className="leading-relaxed">{m.text}</p>
+              {m.actions && (
+                <div className="flex items-center gap-1 text-muted-foreground">
+                  {[Undo2, ThumbsUp, ThumbsDown, Copy].map((I, i) => (
+                    <EditorIconBtn key={i}>
+                      <I />
+                    </EditorIconBtn>
+                  ))}
+                </div>
+              )}
+            </div>
+          ),
+        )}
+
+        {busy && (
+          <p className="flex items-center gap-2 text-muted-foreground">
+            <RefreshCw className="size-3.5 animate-spin" />
+            Generando…
+          </p>
+        )}
+
+        <div ref={endRef} />
+      </div>
+
+      {!busy && !draft.trim() && ctx.chips.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-3 pb-1">
+          {ctx.chips.map((c) => (
+            <button
+              key={c}
+              onClick={() => send(c)}
+              className="rounded-full border px-3 py-1.5 text-xs transition-colors hover:bg-accent"
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="p-3">
+        <Card className="p-2">
+          <Textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            placeholder={ctx.placeholder}
+            className="min-h-[52px] resize-none border-0 text-sm shadow-none focus-visible:ring-0"
+          />
+          <GenSettingsBar
+            trailing={
+              <>
+                <EditorIconBtn>
+                  <Mic />
+                </EditorIconBtn>
+                <UIButton
+                  size="icon"
+                  className="size-8"
+                  disabled={!draft.trim() || busy}
+                  onClick={() => send()}
+                >
+                  <ArrowUp />
+                </UIButton>
+              </>
+            }
+          />
+        </Card>
+      </div>
+    </aside>
+  );
+}
+
+function EditorChatLegacy({ width, onResize }) {
+  return (
+    <aside
+      style={{ width }}
+      className="relative flex shrink-0 flex-col border-r bg-background"
+    >
+      <ResizeHandle onResize={onResize} />
       <div className="flex-1 space-y-4 overflow-y-auto p-4 text-sm">
         <div className="ml-8 rounded-2xl bg-muted p-3">
-          Hazme una landing web para mi empresa de saas de txlemetry
+          Hazme un tráiler cinematográfico para mi marca de café
         </div>
         <p className="text-muted-foreground">Thought for 12s</p>
         <p className="leading-relaxed">
-          Voy a preparar 3 propuestas visuales para tu landing de SaaS de
-          telemetría para que elijas la dirección antes de construirla.
+          Voy a preparar 3 propuestas de dirección visual para tu tráiler para
+          que elijas el look antes de generar los planos.
         </p>
         <Card className="p-3">
           <div className="flex items-center justify-between">
@@ -1819,11 +2827,10 @@ function EditorChat() {
           </div>
         </Card>
         <p className="leading-relaxed">
-          Tu landing de Txlemetry ya está lista con la dirección{" "}
-          <b>Engineering noir</b>: tema oscuro, acento cian, tipografía Space
-          Grotesk + Inter, hero con imagen generada del dashboard, grid de
-          características, CTA de demo y footer. El build y la vista previa se ven
-          correctos.
+          Tu tráiler ya está listo con la dirección <b>Noir cálido</b>: luz
+          lateral dura, grano fino, paleta ámbar sobre negro, lente 35 mm y
+          cámara lenta en los insertos del producto. 6 planos generados y
+          montados; la vista previa se ve correcta.
         </p>
         <div className="flex items-center gap-1 text-muted-foreground">
           {[Undo2, ThumbsUp, ThumbsDown, Copy, MoreHorizontal].map((I, i) => (
@@ -1846,164 +2853,1730 @@ function EditorChat() {
       <div className="p-3">
         <Card className="p-2">
           <Textarea
-            placeholder="Pregúntale a Lovable…"
+            placeholder="Describe tu escena — usa @ para añadir personajes y localizaciones"
             className="min-h-[52px] resize-none border-0 text-sm shadow-none focus-visible:ring-0"
           />
-          <div className="flex items-center gap-1 px-1 pb-1">
-            <EditorIconBtn>
-              <Plus />
-            </EditorIconBtn>
-            <div className="flex-1" />
-            <UIButton variant="ghost" size="sm">
-              Crear <ChevronDown />
-            </UIButton>
-            <EditorIconBtn>
-              <Mic />
-            </EditorIconBtn>
-            <UIButton size="icon" className="size-8">
-              <ArrowUp />
-            </UIButton>
-          </div>
+          <GenSettingsBar
+            trailing={
+              <>
+                <EditorIconBtn>
+                  <Mic />
+                </EditorIconBtn>
+                <UIButton size="icon" className="size-8">
+                  <ArrowUp />
+                </UIButton>
+              </>
+            }
+          />
         </Card>
       </div>
     </aside>
   );
 }
 
+
+const previewAspects = [
+  ["16:9", "aspect-video"],
+  ["9:16", "aspect-[9/16]"],
+  ["1:1", "aspect-square"],
+];
+const fmt = (s) =>
+  Number.isFinite(s)
+    ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
+    : "0:00";
+
 function EditorPreview() {
+  const videoRef = useRef(null);
+  const barRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [loop, setLoop] = useState(true);
+  const [time, setTime] = useState(0);
+  const [dur, setDur] = useState(0);
+  const [aspect, setAspect] = useState("16:9");
+
+  const shotLen = dur ? dur / canvasShots.length : 0;
+  const active = shotLen ? Math.min(canvasShots.length - 1, Math.floor(time / shotLen)) : 0;
+
+  const seek = (t) => {
+    const v = videoRef.current;
+    if (!v || !Number.isFinite(dur)) return;
+    v.currentTime = Math.min(dur, Math.max(0, t));
+    setTime(v.currentTime);
+  };
+  const toggle = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.paused ? v.play() : v.pause();
+  };
+  const scrub = (e) => {
+    const r = barRef.current.getBoundingClientRect();
+    const at = (clientX) => seek(((clientX - r.left) / r.width) * dur);
+    at(e.clientX);
+    const move = (ev) => at(ev.clientX);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (/INPUT|TEXTAREA/.test(document.activeElement?.tagName)) return;
+      if (e.code === "Space") (e.preventDefault(), toggle());
+      if (e.key === "ArrowLeft") seek(time - 5);
+      if (e.key === "ArrowRight") seek(time + 5);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [time, dur]);
+
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-xl border bg-[#070707] font-grotesk text-white">
-      <div className="flex h-14 shrink-0 items-center gap-8 border-b border-white/10 px-6">
-        <span className="flex items-center gap-2 font-semibold">
-          <span className="flex size-6 items-center justify-center rounded bg-cyan-400 text-xs text-black">
-            ◆
-          </span>
-          TXLEMETRY
-        </span>
-        <span className="flex-1 text-sm text-white/60">
-          Platform　Integrations　Pricing
-        </span>
-        <button className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-black">
-          Request Demo
-        </button>
-      </div>
-      <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-        <p className="text-xs tracking-widest text-cyan-400">
-          ● REAL-TIME TRANSMISSION MONITORING
-        </p>
-        <h1 className="mt-4 text-5xl font-medium leading-tight">
-          Observe every <span className="text-cyan-400">TX</span>
-          <br />
-          in high definition.
-        </h1>
-        <p className="mt-4 max-w-md text-white/60">
-          Stop guessing. Txlemetry provides millisecond-level visibility into
-          distributed transactions and data streams for engineering teams that
-          ship fast.
-        </p>
-        <div className="mt-6 flex gap-3">
-          <button className="rounded-md bg-cyan-400 px-5 py-2.5 font-medium text-black">
-            Get Started for Free
-          </button>
-          <button className="rounded-md border border-white/20 px-5 py-2.5 font-medium">
-            View Documentation
-          </button>
+    <div className="flex h-full flex-col gap-2">
+      <div className="flex items-center gap-2 rounded-xl border bg-background px-3 py-2">
+        <div className="flex items-center rounded-md border p-0.5">
+          {previewAspects.map(([id]) => (
+            <button
+              key={id}
+              onClick={() => setAspect(id)}
+              className={cn(
+                "rounded px-2 py-0.5 text-xs transition-colors",
+                aspect === id
+                  ? "bg-accent font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-accent",
+              )}
+            >
+              {id}
+            </button>
+          ))}
         </div>
+        <Badge variant="secondary" className="font-normal">
+          1080p · {canvasShots.length} planos
+        </Badge>
+        <div className="flex-1" />
+        <UIButton variant="ghost" size="sm">
+          <Share2 /> Compartir
+        </UIButton>
+        <UIButton variant="outline" size="sm">
+          <Download /> Exportar
+        </UIButton>
       </div>
-    </div>
-  );
-}
 
-function EditorFiles() {
-  return (
-    <div className="grid h-full grid-cols-2 overflow-hidden rounded-xl border bg-background">
-      <div className="flex flex-col items-center justify-center gap-2 border-r px-6 text-center">
-        <FileText className="size-8 text-muted-foreground" />
-        <p className="font-semibold">You haven't generated any files yet.</p>
-        <p className="text-sm text-muted-foreground">
-          Once you create one, it will appear here.
-        </p>
-      </div>
-      <div className="flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
-        File preview unavailable.
-      </div>
-    </div>
-  );
-}
+      <div className="flex min-h-0 flex-1 flex-col rounded-xl border bg-background">
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-neutral-950 p-4">
+          <video
+            ref={videoRef}
+            src="/assets/scene-1.webm"
+            poster="/assets/prompt-frame.webp"
+            playsInline
+            loop={loop}
+            muted={muted}
+            onClick={toggle}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+            onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
+            className={cn(
+              "max-h-full cursor-pointer rounded-lg bg-black object-contain",
+              previewAspects.find(([id]) => id === aspect)[1],
+            )}
+          />
+        </div>
 
-function EditorCode() {
-  return (
-    <div className="grid h-full grid-cols-[minmax(280px,340px)_1fr] overflow-hidden rounded-xl border bg-background">
-      <div className="flex flex-col overflow-hidden border-r">
-        <div className="flex items-center gap-2 p-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-            <input
-              placeholder="Search code"
-              className="h-9 w-full rounded-md border bg-background pl-8 pr-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        <div className="border-t px-3 py-2">
+          <div
+            ref={barRef}
+            onPointerDown={scrub}
+            className="group relative h-4 cursor-pointer touch-none"
+          >
+            <div className="absolute top-1.5 h-1 w-full rounded-full bg-muted" />
+            <div
+              className="absolute top-1.5 h-1 rounded-full bg-primary"
+              style={{ width: `${dur ? (time / dur) * 100 : 0}%` }}
+            />
+            {canvasShots.map((_, i) =>
+              i ? (
+                <span
+                  key={i}
+                  className="absolute top-1.5 h-1 w-px bg-background"
+                  style={{ left: `${(i / canvasShots.length) * 100}%` }}
+                />
+              ) : null,
+            )}
+            <div
+              className="absolute top-0.5 size-3 -translate-x-1/2 rounded-full bg-primary opacity-0 shadow transition-opacity group-hover:opacity-100"
+              style={{ left: `${dur ? (time / dur) * 100 : 0}%` }}
             />
           </div>
-          <EditorIconBtn>
-            <ChevronsUpDown />
-          </EditorIconBtn>
-        </div>
-        <div className="overflow-y-auto px-2 pb-3 text-sm">
-          {codeTree.map(([type, name, depth]) => (
+
+          <div className="mt-1 flex items-center gap-1">
             <button
-              key={name}
-              style={{ paddingLeft: `${8 + depth * 16}px` }}
-              className="flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent"
+              onClick={() => seek(active * shotLen - 0.01)}
+              title="Plano anterior"
+              className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
             >
-              {type === "folder" ? (
-                <>
-                  <ChevronRight className="size-3.5 text-muted-foreground" />
-                  {name}
-                </>
-              ) : (
-                <>
-                  <FileText className="size-3.5 text-muted-foreground" />
-                  {name}
-                </>
+              <SkipBack className="size-4" />
+            </button>
+            <button
+              onClick={toggle}
+              title="Reproducir / pausar (Espacio)"
+              className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
+            >
+              {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+            </button>
+            <button
+              onClick={() => seek((active + 1) * shotLen)}
+              title="Plano siguiente"
+              className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
+            >
+              <SkipForward className="size-4" />
+            </button>
+            <span className="ml-1 text-xs tabular-nums text-muted-foreground">
+              {fmt(time)} / {fmt(dur)}
+            </span>
+            <div className="flex-1" />
+            <button
+              onClick={() => setLoop(!loop)}
+              title="Bucle"
+              className={cn(
+                "flex size-8 items-center justify-center rounded-md hover:bg-accent",
+                loop ? "text-foreground" : "text-muted-foreground",
               )}
+            >
+              <Repeat className="size-4" />
+            </button>
+            <button
+              onClick={() => setMuted(!muted)}
+              title={muted ? "Activar sonido" : "Silenciar"}
+              className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
+            >
+              {muted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+            </button>
+            <button
+              onClick={() => videoRef.current?.requestFullscreen?.()}
+              title="Pantalla completa"
+              className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
+            >
+              <Maximize2 className="size-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="shrink-0 rounded-xl border bg-background p-2">
+        <div className="flex gap-2 overflow-x-auto">
+          {canvasShots.map(([title, text, thumb], i) => (
+            <button
+              key={title}
+              onClick={() => seek(i * shotLen)}
+              title={text}
+              className={cn(
+                "w-32 shrink-0 overflow-hidden rounded-lg border text-left transition-shadow hover:shadow-md",
+                active === i && "ring-2 ring-primary",
+              )}
+            >
+              <div
+                className="aspect-video bg-muted bg-cover bg-center"
+                style={{ backgroundImage: `url(${thumb})` }}
+              />
+              <div className="px-2 py-1.5">
+                <p className="truncate text-xs font-medium">{title}</p>
+                <p className="text-[10px] tabular-nums text-muted-foreground">
+                  {fmt(i * shotLen)}
+                </p>
+              </div>
             </button>
           ))}
         </div>
       </div>
-      <div />
     </div>
   );
 }
 
-function EditorMore() {
+const elementRoles = ["Personaje", "Localización", "Objeto"];
+
+// Vista ampliada del asset.
+function AssetLightbox({ asset, onClose, onAssign, onRegenerate, onDuplicate }) {
   return (
-    <div className="grid h-full grid-cols-[minmax(240px,280px)_1fr] overflow-hidden rounded-xl border bg-background">
-      <div className="flex flex-col gap-1 border-r p-2">
-        {moreMenu.map(([I, l], i) => (
-          <button
-            key={l}
-            className={cn(
-              "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors [&_svg]:size-4 [&_svg]:text-muted-foreground",
-              i === 0 ? "bg-accent font-medium" : "hover:bg-accent",
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="truncate pr-6">{asset.name}</DialogTitle>
+          <DialogDescription className="flex items-center gap-2">
+            <Badge variant="secondary" className="rounded px-1.5 py-0 text-[10px]">
+              {asset.type}
+            </Badge>
+            {asset.meta}
+            {asset.role && (
+              <span className="flex items-center gap-1 text-foreground">
+                <AtSign className="size-3" />
+                {asset.role}
+              </span>
             )}
+          </DialogDescription>
+        </DialogHeader>
+
+        {asset.thumb ? (
+          <img
+            src={asset.thumb}
+            alt={asset.name}
+            className="max-h-[65vh] w-full rounded-lg bg-muted object-contain"
+          />
+        ) : (
+          <div className="flex h-64 items-center justify-center rounded-lg bg-muted">
+            <Volume2 className="size-10 text-muted-foreground" />
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <UIButton variant="outline" size="sm" onClick={() => onRegenerate(asset.id)}>
+            <RefreshCw /> Regenerar
+          </UIButton>
+          <UIButton variant="outline" size="sm" onClick={() => onDuplicate(asset.id)}>
+            <Copy /> Duplicar
+          </UIButton>
+          <UIButton variant="outline" size="sm" asChild>
+            <a href={asset.thumb ?? "#"} download>
+              <Download /> Descargar
+            </a>
+          </UIButton>
+          <div className="flex-1" />
+          {elementRoles.map((role) => (
+            <UIButton
+              key={role}
+              size="sm"
+              variant={asset.role === role ? "default" : "outline"}
+              onClick={() => onAssign(asset.id, asset.role === role ? null : role)}
+            >
+              <AtSign /> {role}
+            </UIButton>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Diálogo para asignar un rol de elemento escrito por el usuario.
+function CustomRoleDialog({ asset, onClose, onAssign }) {
+  const [value, setValue] = useState(asset.role ?? "");
+  const confirm = () => {
+    const role = value.trim();
+    if (!role) return;
+    onAssign(asset.id, role);
+    onClose();
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>Nuevo tipo de elemento</DialogTitle>
+          <DialogDescription>
+            Escribe el tipo que quieras — vehículo, criatura, prop, lo que necesite
+            tu proyecto.
+          </DialogDescription>
+        </DialogHeader>
+        <Input
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && confirm()}
+          placeholder="Vehículo, criatura, prop…"
+        />
+        <div className="flex justify-end gap-2">
+          <UIButton variant="outline" onClick={onClose}>
+            Cancelar
+          </UIButton>
+          <UIButton disabled={!value.trim()} onClick={confirm}>
+            Asignar
+          </UIButton>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Acciones del asset: aparecen al pasar el ratón sobre la tarjeta.
+function AssetMenu({
+  asset,
+  onAssign,
+  onDuplicate,
+  onRemove,
+  onRegenerate,
+  onOpen,
+  onCustomRole,
+}) {
+  return (
+    <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover/card:opacity-100 focus-within:opacity-100">
+      <button
+        onClick={() => onRegenerate(asset.id)}
+        title="Regenerar"
+        className="flex size-7 items-center justify-center rounded-md bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/75"
+      >
+        <RefreshCw className="size-3.5" />
+      </button>
+      <button
+        onClick={() => onDuplicate(asset.id)}
+        title="Duplicar"
+        className="flex size-7 items-center justify-center rounded-md bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/75"
+      >
+        <Copy className="size-3.5" />
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            title="Más acciones"
+            className="flex size-7 items-center justify-center rounded-md bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/75"
           >
-            <I />
-            {l}
+            <MoreHorizontal className="size-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <AtSign className="mr-2 size-3.5" />
+              Asignar a Elements
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              {(asset.role && !elementRoles.includes(asset.role)
+                ? [...elementRoles, asset.role]
+                : elementRoles
+              ).map((role) => (
+                <DropdownMenuItem
+                  key={role}
+                  onClick={() => onAssign(asset.id, asset.role === role ? null : role)}
+                >
+                  {role}
+                  {asset.role === role && <Check className="ml-auto size-3.5" />}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => onCustomRole(asset.id)}>
+                <Plus className="mr-2 size-3.5" />
+                Otro tipo…
+              </DropdownMenuItem>
+              {asset.role && (
+                <DropdownMenuItem onClick={() => onAssign(asset.id, null)}>
+                  <X className="mr-2 size-3.5" />
+                  Quitar de Elements
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => onOpen(asset.id)}>
+            <Maximize2 className="mr-2 size-3.5" />
+            Abrir en grande
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onRegenerate(asset.id)}>
+            <RefreshCw className="mr-2 size-3.5" />
+            Regenerar
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onDuplicate(asset.id)}>
+            <Copy className="mr-2 size-3.5" />
+            Duplicar
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <a href={asset.thumb ?? "#"} download>
+              <Download className="mr-2 size-3.5" />
+              Descargar
+            </a>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={() => onRemove(asset.id)}
+            className="text-destructive focus:text-destructive"
+          >
+            <Trash2 className="mr-2 size-3.5" />
+            Eliminar
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+function EditorAssets({ assets, onAssign, onDuplicate, onRemove, onRegenerate }) {
+  const [filter, setFilter] = useState("Todos");
+  const [query, setQuery] = useState("");
+  const [openId, setOpenId] = useState(null);
+  const [customId, setCustomId] = useState(null);
+  const openAsset = assets.find((a) => a.id === openId);
+  const customAsset = assets.find((a) => a.id === customId);
+  const list = assets.filter(
+    (a) =>
+      (filter === "Todos" || a.type === filter) &&
+      a.name.toLowerCase().includes(query.toLowerCase()),
+  );
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border bg-background">
+      <div className="flex flex-wrap items-center gap-2 border-b p-4">
+        <div className="relative w-56">
+          <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar en assets…"
+            className="h-9 w-full rounded-md border bg-background pl-8 pr-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          {assetFilters.map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={cn(
+                "rounded-full px-3 py-1.5 text-xs transition-colors",
+                filter === f
+                  ? "bg-secondary font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-accent",
+              )}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {list.length} elementos
+          </span>
+          <UIButton size="sm">
+            <Plus /> Subir
+          </UIButton>
+        </div>
+      </div>
+      <div className="grid flex-1 auto-rows-min grid-cols-2 gap-4 overflow-y-auto p-4 md:grid-cols-3 xl:grid-cols-4">
+        {list.map((a) => (
+          <div key={a.id} className="group/card relative">
+            <button
+              title={a.name}
+              onClick={() => a.status === "ready" && setOpenId(a.id)}
+              className={cn(
+                "relative block w-full overflow-hidden rounded-xl transition-shadow hover:shadow-md",
+                a.role && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                a.status === "generating" && "cursor-default",
+              )}
+            >
+              {a.status === "generating" ? (
+                <div className="flex aspect-video animate-pulse items-center justify-center bg-muted">
+                  <RefreshCw className="size-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : a.thumb ? (
+                <div
+                  className="aspect-video bg-muted bg-cover bg-center"
+                  style={{ backgroundImage: `url(${a.thumb})` }}
+                />
+              ) : (
+                <div className="flex aspect-video items-center justify-center bg-muted">
+                  <Volume2 className="size-7 text-muted-foreground" />
+                </div>
+              )}
+
+              <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
+                {a.status === "generating" ? "Generando…" : a.type}
+              </span>
+
+              {a.status === "ready" && (
+                <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/70 to-transparent px-2 pb-1.5 pt-6 text-left text-[11px] text-white opacity-0 transition-opacity group-hover/card:opacity-100">
+                  {a.name}
+                </span>
+              )}
+            </button>
+
+            {a.role && (
+              <span className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground group-hover/card:opacity-0">
+                <AtSign className="size-2.5" />
+                {a.role}
+              </span>
+            )}
+
+            {a.status === "ready" && (
+              <AssetMenu
+                asset={a}
+                onAssign={onAssign}
+                onDuplicate={onDuplicate}
+                onRemove={onRemove}
+                onRegenerate={onRegenerate}
+                onOpen={setOpenId}
+                onCustomRole={setCustomId}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {openAsset && (
+        <AssetLightbox
+          asset={openAsset}
+          onClose={() => setOpenId(null)}
+          onAssign={onAssign}
+          onRegenerate={onRegenerate}
+          onDuplicate={onDuplicate}
+        />
+      )}
+      {customAsset && (
+        <CustomRoleDialog
+          asset={customAsset}
+          onClose={() => setCustomId(null)}
+          onAssign={onAssign}
+        />
+      )}
+    </div>
+  );
+}
+
+const blockTypes = [
+  ["text", "Texto", Type, "Escribe algo, o pulsa / para comandos"],
+  ["h1", "Título 1", Heading1, "Título"],
+  ["h2", "Título 2", Heading2, "Subtítulo"],
+  ["bullet", "Lista", List, "Elemento de lista"],
+  ["todo", "Tareas", ListTodo, "Por hacer"],
+  ["quote", "Cita", Quote, "Cita"],
+  ["callout", "Destacado", Lightbulb, "Idea clave"],
+  ["image", "Imagen", ImageIcon, ""],
+  ["divider", "Separador", Minus, ""],
+];
+const blockMeta = Object.fromEntries(
+  blockTypes.map(([id, label, icon, ph]) => [id, { label, icon, ph }]),
+);
+let briefUid = 0;
+const newBlock = (type = "text", extra) => ({
+  id: `b${++briefUid}`,
+  type,
+  text: "",
+  checked: false,
+  src: null,
+  ...extra,
+});
+const initialBrief = () =>
+  briefSections.flatMap(([title, hint, value]) => [
+    newBlock("h2", { text: title }),
+    newBlock("text", { text: value }),
+  ]);
+
+function AutoTextarea({ value, className, autoFocus, ...props }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  useEffect(() => {
+    if (!autoFocus) return;
+    const el = ref.current;
+    el?.focus();
+    el?.setSelectionRange(el.value.length, el.value.length);
+  }, [autoFocus]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      className={cn(
+        "w-full resize-none overflow-hidden bg-transparent outline-none placeholder:text-muted-foreground/60",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+function BriefBlock({ block, focus, update, onEnter, onBackspace, onRemove, dragProps }) {
+  const [menu, setMenu] = useState(false);
+  const q = block.text.startsWith("/") ? block.text.slice(1).toLowerCase() : "";
+  const matches = blockTypes.filter(([, label]) => label.toLowerCase().includes(q));
+
+  const setType = (type) => {
+    update({ type, text: "" });
+    setMenu(false);
+  };
+  const onKeyDown = (e) => {
+    if (menu && matches.length) {
+      if (e.key === "Enter") return e.preventDefault(), setType(matches[0][0]);
+      if (e.key === "Escape") return setMenu(false);
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      onEnter();
+    }
+    if (e.key === "Backspace" && !block.text) {
+      e.preventDefault();
+      onBackspace();
+    }
+  };
+  const onChange = (e) => {
+    const text = e.target.value;
+    update({ text });
+    setMenu(text.startsWith("/"));
+  };
+  const shared = {
+    value: block.text,
+    onChange,
+    onKeyDown,
+    autoFocus: focus,
+    placeholder: blockMeta[block.type].ph,
+  };
+
+  return (
+    <div className="group relative -ml-14 flex items-start gap-1 pl-14">
+      <div className="absolute left-0 top-0.5 flex opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <button
+          onClick={onRemove}
+          title="Eliminar bloque"
+          className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+        <button
+          {...dragProps}
+          title="Arrastra para reordenar"
+          className="flex size-6 cursor-grab items-center justify-center rounded text-muted-foreground hover:bg-accent active:cursor-grabbing"
+        >
+          <GripVertical className="size-3.5" />
+        </button>
+      </div>
+
+      <div className="min-w-0 flex-1 py-0.5">
+        {block.type === "divider" && <Separator className="my-3" />}
+        {block.type === "h1" && (
+          <AutoTextarea {...shared} className="text-2xl font-bold tracking-tight" />
+        )}
+        {block.type === "h2" && (
+          <AutoTextarea {...shared} className="text-lg font-semibold tracking-tight" />
+        )}
+        {block.type === "text" && <AutoTextarea {...shared} className="leading-relaxed" />}
+        {block.type === "bullet" && (
+          <div className="flex gap-2">
+            <span className="mt-2 size-1.5 shrink-0 rounded-full bg-foreground" />
+            <AutoTextarea {...shared} className="leading-relaxed" />
+          </div>
+        )}
+        {block.type === "todo" && (
+          <div className="flex gap-2">
+            <input
+              type="checkbox"
+              checked={block.checked}
+              onChange={(e) => update({ checked: e.target.checked })}
+              className="mt-1.5 size-3.5 shrink-0 accent-primary"
+            />
+            <AutoTextarea
+              {...shared}
+              className={cn(
+                "leading-relaxed",
+                block.checked && "text-muted-foreground line-through",
+              )}
+            />
+          </div>
+        )}
+        {block.type === "quote" && (
+          <div className="border-l-2 pl-3">
+            <AutoTextarea {...shared} className="italic leading-relaxed text-muted-foreground" />
+          </div>
+        )}
+        {block.type === "callout" && (
+          <div className="flex gap-2 rounded-lg bg-muted p-3">
+            <Lightbulb className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <AutoTextarea {...shared} className="text-sm leading-relaxed" />
+          </div>
+        )}
+        {block.type === "image" &&
+          (block.src ? (
+            <figure className="my-1">
+              <img src={block.src} alt="" className="max-h-[420px] w-full rounded-lg object-cover" />
+              <input
+                value={block.text}
+                onChange={onChange}
+                placeholder="Añade un pie de foto…"
+                className="mt-1.5 w-full bg-transparent text-xs text-muted-foreground outline-none"
+              />
+            </figure>
+          ) : (
+            <label className="my-1 flex cursor-pointer items-center gap-2 rounded-lg border border-dashed p-4 text-sm text-muted-foreground transition-colors hover:bg-accent">
+              <Upload className="size-4" />
+              Sube una imagen o arrastra un archivo aquí
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) update({ src: URL.createObjectURL(f) });
+                }}
+              />
+            </label>
+          ))}
+
+        {menu && matches.length > 0 && (
+          <div className="absolute z-30 mt-1 w-56 rounded-xl border bg-background p-1 shadow-2xl">
+            {matches.map(([id, label, I]) => (
+              <button
+                key={id}
+                onMouseDown={(e) => (e.preventDefault(), setType(id))}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+              >
+                <I className="size-3.5 text-muted-foreground" />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EditorBrief() {
+  const [blocks, setBlocks] = useState(initialBrief);
+  const [focusId, setFocusId] = useState(null);
+  const [dragIdx, setDragIdx] = useState(null);
+
+  const update = (id, patch) =>
+    setBlocks((bs) => bs.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  const insertAfter = (i, type = "text") => {
+    const b = newBlock(type);
+    setBlocks((bs) => [...bs.slice(0, i + 1), b, ...bs.slice(i + 1)]);
+    setFocusId(b.id);
+  };
+  const remove = (i) => {
+    if (blocks.length === 1) return;
+    setFocusId(blocks[Math.max(0, i - 1)].id);
+    setBlocks((bs) => bs.filter((_, n) => n !== i));
+  };
+  const move = (from, to) =>
+    setBlocks((bs) => {
+      const next = [...bs];
+      next.splice(to, 0, next.splice(from, 1)[0]);
+      return next;
+    });
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    const files = [...(e.dataTransfer?.files || [])].filter((f) =>
+      f.type.startsWith("image/"),
+    );
+    if (!files.length) return;
+    setBlocks((bs) => [
+      ...bs,
+      ...files.map((f) => newBlock("image", { src: URL.createObjectURL(f) })),
+    ]);
+  };
+
+  return (
+    <div
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDrop}
+      className="h-full overflow-y-auto rounded-xl border bg-background"
+    >
+      <div className="mx-auto max-w-3xl px-8 py-10 pl-20">
+        <input
+          defaultValue="Tráiler — Proyecto Neón"
+          className="w-full bg-transparent text-4xl font-bold tracking-tight outline-none"
+        />
+        <p className="mt-1 text-sm text-muted-foreground">
+          Escribe <span className="font-medium text-foreground">/</span> para
+          insertar títulos, listas, imágenes y más. Arrastra archivos aquí para
+          añadirlos.
+        </p>
+
+        <div className="mt-8">
+          {blocks.map((b, i) => (
+            <div
+              key={b.id}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (dragIdx !== null && dragIdx !== i) {
+                  move(dragIdx, i);
+                  setDragIdx(i);
+                }
+              }}
+              className={cn(dragIdx === i && "opacity-40")}
+            >
+              <BriefBlock
+                block={b}
+                focus={focusId === b.id}
+                update={(patch) => update(b.id, patch)}
+                onEnter={() => insertAfter(i)}
+                onBackspace={() => remove(i)}
+                onRemove={() => remove(i)}
+                dragProps={{
+                  draggable: true,
+                  onDragStart: () => setDragIdx(i),
+                  onDragEnd: () => setDragIdx(null),
+                }}
+              />
+            </div>
+          ))}
+        </div>
+
+        <button
+          onClick={() => insertAfter(blocks.length - 1)}
+          className="mt-2 flex w-full items-center gap-2 rounded-md py-1.5 text-sm text-muted-foreground opacity-60 transition-opacity hover:opacity-100"
+        >
+          <Plus className="size-4" /> Añadir un bloque
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ElementGrid({ title, desc, items, action, onAction }) {
+  return (
+    <section className="mt-8 first:mt-0">
+      <div className="flex items-end justify-between">
+        <div>
+          <h3 className="font-semibold">{title}</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">{desc}</p>
+        </div>
+        <UIButton variant="outline" size="sm" onClick={onAction}>
+          <Plus /> {action}
+        </UIButton>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-3">
+        {items.map(([name, meta, thumb]) => (
+          <button
+            key={name}
+            className="overflow-hidden rounded-xl border text-left transition-shadow hover:shadow-md"
+          >
+            <div
+              className="aspect-[4/3] bg-muted bg-cover bg-center"
+              style={{ backgroundImage: `url(${thumb})` }}
+            />
+            <div className="p-3">
+              <p className="flex items-center gap-1 truncate text-sm font-medium">
+                <AtSign className="size-3.5 text-muted-foreground" />
+                {name}
+              </p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                {meta}
+              </p>
+            </div>
           </button>
         ))}
       </div>
-      <div className="flex flex-col items-center justify-center gap-2 px-6 text-center">
-        <LineChart className="size-7 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
-          To view analytics, you first need to publish your project.
+    </section>
+  );
+}
+function EditorElements({ assets, onGoToAssets }) {
+  const elements = assets.filter((a) => a.role);
+  const byRole = (role) =>
+    elements
+      .filter((a) => a.role === role)
+      .map((a) => [a.name, a.meta, a.thumb]);
+
+  return (
+    <div className="h-full overflow-y-auto rounded-xl border bg-background">
+      <div className="mx-auto max-w-4xl px-8 py-10">
+        <h2 className="text-2xl font-bold tracking-tight">Elements</h2>
+        <p className="mt-1 text-muted-foreground">
+          Los assets que has asignado como elemento. El agente los tiene en
+          cuenta al montar el vídeo, y puedes referenciarlos con{" "}
+          <span className="font-medium text-foreground">@</span> en cualquier
+          prompt para mantener la continuidad entre planos.
         </p>
+
+        {elements.length === 0 ? (
+          <div className="mt-10 rounded-xl border border-dashed p-10 text-center">
+            <AtSign className="mx-auto size-7 text-muted-foreground" />
+            <h3 className="mt-3 font-semibold">Aún no hay elements</h3>
+            <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+              Genera assets desde el chat en All assets y pulsa sobre el que te
+              guste para asignarlo como personaje, localización u objeto.
+            </p>
+            <UIButton className="mt-4" onClick={onGoToAssets}>
+              <Layers /> Ir a All assets
+            </UIButton>
+          </div>
+        ) : (
+          [...new Set([...elementRoles, ...elements.map((a) => a.role)])].map((role) => {
+            const items = byRole(role);
+            if (items.length === 0) return null;
+            return (
+              <ElementGrid
+                key={role}
+                title={`${role}s`}
+                desc={
+                  role === "Personaje"
+                    ? "Se mantienen consistentes en todos los planos."
+                    : role === "Localización"
+                      ? "Escenarios reutilizables del proyecto."
+                      : "Atrezo y objetos recurrentes."
+                }
+                items={items}
+                action={`Nuevo ${role.toLowerCase()}`}
+                onAction={onGoToAssets}
+              />
+            );
+          })
+        )}
       </div>
     </div>
   );
 }
 
+const NODE_W = { concept: 250, shot: 190 };
+const NODE_H = { concept: 118, shot: 178 };
+const buildCanvasNodes = () => [
+  {
+    id: "c1",
+    type: "concept",
+    x: 40,
+    y: 110,
+    title: "Concepto",
+    text: "Astronauta solitario en traje EVA blanco, gravedad cero, luz cinematográfica desde atrás, sci-fi fotorrealista.",
+  },
+  {
+    id: "c2",
+    type: "concept",
+    x: 40,
+    y: 330,
+    title: "Localización",
+    text: "Interior de estación orbital abandonada, luz de emergencia, detritos flotando, Tierra visible.",
+  },
+  ...canvasShots.map(([title, text, thumb], i) => ({
+    id: `s${i + 1}`,
+    type: "shot",
+    x: 380 + i * 220,
+    y: 480,
+    title,
+    text,
+    thumb,
+  })),
+];
+const buildCanvasEdges = () =>
+  canvasShots.map((_, i) => ({ from: i < 3 ? "c1" : "c2", to: `s${i + 1}` }));
+
+const PICKER_W = 288;
+const PICKER_H = 380;
+const mediaSources = [
+  ["assets", "Assets", () => assetItems.filter(([, , , t]) => t).map(([n, c, , t]) => [n, c, t])],
+  ["chars", "Personajes", () => elementChars.map(([n, d, t]) => [n, d, t])],
+  ["locs", "Localizaciones", () => elementLocations.map(([n, d, t]) => [n, d, t])],
+  ["shots", "Planos", () => canvasShots.map(([n, d, t]) => [n, d, t])],
+];
+
+function CanvasMediaPicker({ onPick, onClose, at }) {
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("all");
+  const groups = mediaSources
+    .filter(([id]) => cat === "all" || cat === id)
+    .map(([, title, get]) => [
+      title,
+      get().filter(([n]) => n.toLowerCase().includes(q.toLowerCase())),
+    ])
+    .filter(([, items]) => items.length);
+
+  return (
+    <div
+      data-canvas-overlay
+      onPointerDown={(e) => e.stopPropagation()}
+      style={{ left: at.left, top: at.top, width: PICKER_W, maxHeight: PICKER_H }}
+      className="absolute z-30 flex flex-col overflow-hidden rounded-xl border bg-background shadow-2xl"
+    >
+      <div className="flex items-center gap-2 border-b p-2">
+        <Search className="size-3.5 shrink-0 text-muted-foreground" />
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Buscar assets y elementos…"
+          className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+        />
+        <button
+          onClick={onClose}
+          className="flex size-6 shrink-0 items-center justify-center rounded hover:bg-accent"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-1 border-b px-2 py-1.5">
+        {[["all", "Todo"], ...mediaSources.map(([id, l]) => [id, l])].map(
+          ([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setCat(id)}
+              className={cn(
+                "rounded-full px-2 py-0.5 text-xs transition-colors",
+                cat === id
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent",
+              )}
+            >
+              {label}
+            </button>
+          ),
+        )}
+      </div>
+
+      <label className="flex cursor-pointer items-center gap-2 border-b p-2 text-sm transition-colors hover:bg-accent">
+        <Upload className="size-3.5 text-muted-foreground" />
+        Subir una imagen…
+        <input
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onPick(URL.createObjectURL(f), f.name);
+          }}
+        />
+      </label>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-1">
+        {groups.map(([title, items]) => (
+          <div key={title} className="mb-1">
+            <p className="sticky top-0 z-10 bg-background px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {title}
+            </p>
+            {items.map(([name, meta, thumb]) => (
+              <button
+                key={title + name}
+                onClick={() => onPick(thumb, name)}
+                className="flex w-full items-center gap-2 rounded-md p-1 text-left transition-colors hover:bg-accent"
+              >
+                <div
+                  className="size-9 shrink-0 rounded bg-muted bg-cover bg-center"
+                  style={{ backgroundImage: `url(${thumb})` }}
+                />
+                <div className="min-w-0">
+                  <p className="truncate text-sm">{name}</p>
+                  <p className="truncate text-xs text-muted-foreground">{meta}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        ))}
+        {!groups.length && (
+          <p className="p-3 text-center text-sm text-muted-foreground">
+            Sin resultados
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EditorCanvas() {
+  const [nodes, setNodes] = useState(buildCanvasNodes);
+  const [edges, setEdges] = useState(buildCanvasEdges);
+  const [zoom, setZoom] = useState(0.7);
+  const [pan, setPan] = useState({ x: 20, y: 0 });
+  const [selected, setSelected] = useState(null);
+  const [linking, setLinking] = useState(null);
+  const [picking, setPicking] = useState(null);
+  const [heights, setHeights] = useState({});
+  const wrapRef = useRef(null);
+  const elsRef = useRef({});
+  const measure = (id) => (el) => {
+    if (el) elsRef.current[id] = el;
+    else delete elsRef.current[id];
+  };
+  // Ports sit at 50% of each node's *rendered* height, so edges must anchor to
+  // the measured height — nodes grow when media or text is added.
+  useEffect(() => {
+    setHeights((h) => {
+      let next = h;
+      for (const [id, el] of Object.entries(elsRef.current)) {
+        const v = el.offsetHeight;
+        if (h[id] !== v) next = next === h ? { ...h, [id]: v } : ((next[id] = v), next);
+      }
+      return next;
+    });
+  });
+
+  const toCanvas = (clientX, clientY) => {
+    const r = wrapRef.current.getBoundingClientRect();
+    return {
+      x: (clientX - r.left - pan.x) / zoom,
+      y: (clientY - r.top - pan.y) / zoom,
+    };
+  };
+  const drag = (onMove) => {
+    const move = (ev) => onMove(ev);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.removeProperty("user-select");
+    };
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const startNodeDrag = (e, id) => {
+    e.stopPropagation();
+    setSelected(id);
+    const n = nodes.find((x) => x.id === id);
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const ox = n.x;
+    const oy = n.y;
+    drag((ev) =>
+      setNodes((ns) =>
+        ns.map((x) =>
+          x.id === id
+            ? { ...x, x: ox + (ev.clientX - sx) / zoom, y: oy + (ev.clientY - sy) / zoom }
+            : x,
+        ),
+      ),
+    );
+  };
+  const startPan = (e) => {
+    setSelected(null);
+    setPicking(null);
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const o = { ...pan };
+    drag((ev) =>
+      setPan({ x: o.x + (ev.clientX - sx), y: o.y + (ev.clientY - sy) }),
+    );
+  };
+  const startLink = (e, id) => {
+    e.stopPropagation();
+    const p = toCanvas(e.clientX, e.clientY);
+    setLinking({ from: id, x: p.x, y: p.y });
+    const move = (ev) => {
+      const q = toCanvas(ev.clientX, ev.clientY);
+      setLinking((l) => l && { ...l, x: q.x, y: q.y });
+    };
+    const up = (ev) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const target = el?.closest("[data-node-id]")?.dataset.nodeId;
+      if (target && target !== id) {
+        setEdges((es) =>
+          es.some((x) => x.from === id && x.to === target)
+            ? es
+            : [...es, { from: id, to: target }],
+        );
+      }
+      setLinking(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (e) => {
+      // Overlays (media picker, toolbars) scroll on their own — never zoom there.
+      if (e.target.closest?.("[data-canvas-overlay]")) return;
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      const my = e.clientY - r.top;
+      setZoom((z) => {
+        const next = Math.min(2, Math.max(0.2, z * (e.deltaY > 0 ? 0.9 : 1.1)));
+        setPan((p) => ({
+          x: mx - ((mx - p.x) / z) * next,
+          y: my - ((my - p.y) / z) * next,
+        }));
+        return next;
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") setPicking(null);
+      if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+        if (/INPUT|TEXTAREA/.test(document.activeElement?.tagName)) return;
+        setNodes((ns) => ns.filter((n) => n.id !== selected));
+        setEdges((es) => es.filter((x) => x.from !== selected && x.to !== selected));
+        setSelected(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
+
+  const anchor = (n, side) => ({
+    x: n.x + (side === "out" ? NODE_W[n.type] : 0),
+    y: n.y + (heights[n.id] ?? NODE_H[n.type]) / 2,
+  });
+  const curve = (a, b) =>
+    `M ${a.x} ${a.y} C ${a.x + 70} ${a.y}, ${b.x - 70} ${b.y}, ${b.x} ${b.y}`;
+
+  const fit = () => {
+    if (!nodes.length) return;
+    const xs = nodes.map((n) => n.x);
+    const ys = nodes.map((n) => n.y);
+    const maxX = Math.max(...nodes.map((n) => n.x + NODE_W[n.type]));
+    const maxY = Math.max(...nodes.map((n) => n.y + NODE_H[n.type]));
+    const r = wrapRef.current.getBoundingClientRect();
+    const z = Math.min(
+      1.2,
+      Math.max(0.2, Math.min((r.width - 80) / (maxX - Math.min(...xs)), (r.height - 80) / (maxY - Math.min(...ys)))),
+    );
+    setZoom(z);
+    setPan({ x: 40 - Math.min(...xs) * z, y: 40 - Math.min(...ys) * z });
+  };
+  // Screen-space position for the media picker: pinned beside the node, flipped
+  // to its left when it would overflow, and clamped inside the canvas.
+  const pickerPos = (id) => {
+    const n = nodes.find((x) => x.id === id);
+    const r = wrapRef.current?.getBoundingClientRect();
+    if (!n || !r) return { left: 16, top: 16 };
+    const nodeLeft = pan.x + n.x * zoom;
+    const nodeRight = nodeLeft + NODE_W[n.type] * zoom;
+    const left =
+      nodeRight + 8 + PICKER_W <= r.width ? nodeRight + 8 : nodeLeft - 8 - PICKER_W;
+    const top = pan.y + n.y * zoom;
+    return {
+      left: Math.min(r.width - PICKER_W - 8, Math.max(8, left)),
+      top: Math.min(r.height - PICKER_H - 8, Math.max(8, top)),
+    };
+  };
+  const attach = (id, patch) => {
+    setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, ...patch } : n)));
+    setPicking(null);
+  };
+  const dropFiles = (e) => {
+    e.preventDefault();
+    const files = [...(e.dataTransfer?.files || [])].filter((f) =>
+      f.type.startsWith("image/"),
+    );
+    if (!files.length) return;
+    const p = toCanvas(e.clientX, e.clientY);
+    setNodes((ns) => [
+      ...ns,
+      ...files.map((f, i) => ({
+        id: `n${Date.now()}${i}`,
+        type: "concept",
+        x: p.x + i * 30,
+        y: p.y + i * 30,
+        title: "Referencia",
+        text: f.name,
+        thumb: URL.createObjectURL(f),
+        media: f.name,
+      })),
+    ]);
+  };
+  const addNode = () => {
+    const r = wrapRef.current.getBoundingClientRect();
+    const p = toCanvas(r.left + r.width / 2, r.top + r.height / 2);
+    const id = `n${Date.now()}`;
+    setNodes((ns) => [
+      ...ns,
+      { id, type: "concept", x: p.x - 125, y: p.y - 60, title: "Nuevo nodo", text: "Describe esta idea…" },
+    ]);
+    setSelected(id);
+  };
+
+  return (
+    <div
+      ref={wrapRef}
+      onPointerDown={startPan}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={dropFiles}
+      className="relative h-full cursor-grab overflow-hidden rounded-xl border bg-muted/20 active:cursor-grabbing"
+      style={{
+        backgroundImage:
+          "radial-gradient(circle, hsl(var(--border)) 1px, transparent 1px)",
+        backgroundSize: `${22 * zoom}px ${22 * zoom}px`,
+        backgroundPosition: `${pan.x}px ${pan.y}px`,
+      }}
+    >
+      <div
+        className="absolute left-0 top-0 origin-top-left"
+        style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+      >
+        <svg className="pointer-events-none absolute overflow-visible text-muted-foreground/50">
+          {edges.map(({ from, to }, i) => {
+            const a = nodes.find((n) => n.id === from);
+            const b = nodes.find((n) => n.id === to);
+            if (!a || !b) return null;
+            return (
+              <path
+                key={i}
+                d={curve(anchor(a, "out"), anchor(b, "in"))}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              />
+            );
+          })}
+          {linking &&
+            (() => {
+              const a = nodes.find((n) => n.id === linking.from);
+              return (
+                <path
+                  d={curve(anchor(a, "out"), { x: linking.x, y: linking.y })}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeDasharray="4 4"
+                  strokeWidth="1.5"
+                />
+              );
+            })()}
+        </svg>
+
+        {nodes.map((n) => (
+          <div
+            key={n.id}
+            ref={measure(n.id)}
+            data-node-id={n.id}
+            onPointerDown={(e) => startNodeDrag(e, n.id)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const f = [...(e.dataTransfer?.files || [])].find((x) =>
+                x.type.startsWith("image/"),
+              );
+              if (f) attach(n.id, { thumb: URL.createObjectURL(f), media: f.name });
+            }}
+            style={{ left: n.x, top: n.y, width: NODE_W[n.type] }}
+            className={cn(
+              "group absolute cursor-grab rounded-xl border bg-background shadow-sm active:cursor-grabbing",
+              selected === n.id && "ring-2 ring-primary",
+            )}
+          >
+            {n.thumb && (
+              <div className="relative">
+                <div
+                  className="aspect-video rounded-t-xl bg-muted bg-cover bg-center"
+                  style={{ backgroundImage: `url(${n.thumb})` }}
+                />
+                <button
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => attach(n.id, { thumb: null, media: null })}
+                  title="Quitar media"
+                  className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-md bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                >
+                  <X className="size-3" />
+                </button>
+                {n.media && (
+                  <span className="absolute bottom-1 left-1 max-w-[85%] truncate rounded bg-black/55 px-1.5 py-0.5 text-[9px] text-white">
+                    {n.media}
+                  </span>
+                )}
+              </div>
+            )}
+            <div className="p-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {n.title}
+              </p>
+              <textarea
+                value={n.text}
+                onPointerDown={(e) => e.stopPropagation()}
+                onChange={(e) =>
+                  setNodes((ns) =>
+                    ns.map((x) =>
+                      x.id === n.id ? { ...x, text: e.target.value } : x,
+                    ),
+                  )
+                }
+                className="mt-1 h-14 w-full resize-none bg-transparent text-[10px] leading-relaxed outline-none"
+              />
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => setPicking(n.id)}
+                className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+              >
+                <Paperclip className="size-3" />
+                {n.thumb ? "Cambiar media" : "Añadir asset, elemento o foto"}
+              </button>
+            </div>
+            <span
+              onPointerDown={(e) => startLink(e, n.id)}
+              title="Arrastra para conectar"
+              className="absolute -right-1.5 top-1/2 size-3 -translate-y-1/2 cursor-crosshair rounded-full border-2 border-background bg-primary"
+            />
+            <span className="absolute -left-1.5 top-1/2 size-3 -translate-y-1/2 rounded-full border-2 border-background bg-muted-foreground/40" />
+          </div>
+        ))}
+      </div>
+
+      <div
+        data-canvas-overlay onPointerDown={(e) => e.stopPropagation()}
+        className="absolute bottom-4 left-4 flex items-center gap-1 rounded-lg border bg-background p-1 shadow-sm"
+      >
+        <button
+          onClick={() => setZoom((z) => Math.max(0.2, +(z - 0.1).toFixed(2)))}
+          className="flex size-7 items-center justify-center rounded hover:bg-accent"
+        >
+          <Minus className="size-3.5" />
+        </button>
+        <span className="w-12 text-center text-xs tabular-nums">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2)))}
+          className="flex size-7 items-center justify-center rounded hover:bg-accent"
+        >
+          <Plus className="size-3.5" />
+        </button>
+        <Separator orientation="vertical" className="mx-1 h-5" />
+        <button
+          onClick={fit}
+          title="Ajustar a la vista"
+          className="flex size-7 items-center justify-center rounded hover:bg-accent"
+        >
+          <Maximize2 className="size-3.5" />
+        </button>
+        <button
+          onClick={() => {
+            setNodes(buildCanvasNodes());
+            setEdges(buildCanvasEdges());
+            setSelected(null);
+          }}
+          title="Restablecer"
+          className="flex size-7 items-center justify-center rounded hover:bg-accent"
+        >
+          <RefreshCw className="size-3.5" />
+        </button>
+      </div>
+
+      <div
+        data-canvas-overlay onPointerDown={(e) => e.stopPropagation()}
+        className="absolute right-4 top-4 flex items-center gap-2"
+      >
+        {selected && (
+          <UIButton
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setNodes((ns) => ns.filter((n) => n.id !== selected));
+              setEdges((es) =>
+                es.filter((x) => x.from !== selected && x.to !== selected),
+              );
+              setSelected(null);
+            }}
+          >
+            <X /> Eliminar
+          </UIButton>
+        )}
+        <UIButton size="sm" onClick={addNode}>
+          <Plus /> Añadir nodo
+        </UIButton>
+      </div>
+
+      {picking && nodes.some((n) => n.id === picking) && (
+        <CanvasMediaPicker
+          key={picking}
+          at={pickerPos(picking)}
+          onClose={() => setPicking(null)}
+          onPick={(thumb, media) => attach(picking, { thumb, media })}
+        />
+      )}
+
+      <p className="pointer-events-none absolute bottom-5 right-4 text-xs text-muted-foreground">
+        Arrastra para mover · rueda para zoom · tira del punto azul para conectar
+      </p>
+    </div>
+  );
+}
+
+function EditorTeamChat() {
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border bg-background">
+      <div className="flex items-center gap-3 border-b px-5 py-3">
+        <MessageCircle className="size-4 text-muted-foreground" />
+        <div className="flex-1">
+          <p className="text-sm font-medium">Chat del equipo</p>
+          <p className="text-xs text-muted-foreground">
+            3 miembros · Tráiler — Proyecto Neón
+          </p>
+        </div>
+        <div className="flex -space-x-2">
+          {["H", "N", "M"].map((a) => (
+            <span
+              key={a}
+              className="flex size-7 items-center justify-center rounded-full border-2 border-background bg-muted text-xs font-semibold"
+            >
+              {a}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-5">
+        <div className="mx-auto w-full max-w-3xl space-y-5">
+        {teamMessages.map(([initial, name, text, time, me], i) => (
+          <div key={i} className={cn("flex gap-3", me && "flex-row-reverse")}>
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
+              {initial}
+            </span>
+            <div className={cn("max-w-[70%]", me && "text-right")}>
+              <p className="text-xs text-muted-foreground">
+                {name} · {time}
+              </p>
+              <div
+                className={cn(
+                  "mt-1 rounded-2xl px-3 py-2 text-sm",
+                  me ? "bg-primary text-primary-foreground" : "bg-muted",
+                )}
+              >
+                {text}
+              </div>
+            </div>
+          </div>
+        ))}
+        </div>
+      </div>
+      <div className="border-t p-3">
+        <Card className="mx-auto flex w-full max-w-3xl items-center gap-2 p-2">
+          <EditorIconBtn>
+            <Plus />
+          </EditorIconBtn>
+          <input
+            placeholder="Escribe un mensaje al equipo…"
+            className="h-8 flex-1 bg-transparent text-sm outline-none"
+          />
+          <UIButton size="icon" className="size-8">
+            <ArrowUp />
+          </UIButton>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// Banco de imágenes con el que se "resuelven" las generaciones simuladas.
+const generatedPool = [
+  "/assets/prompt-frame.webp",
+  "/assets/continuum.jpg",
+  "/assets/inspo.jpg",
+  "/assets/vesper.webp",
+  "/assets/maison.webp",
+  "/assets/ecommerce.webp",
+  "/assets/scene-2.webp",
+  "/assets/scene-3.webp",
+  "/assets/pulse.webp",
+  "/assets/lovable-slides.webp",
+];
+let uid = 0;
+const seedAssets = () =>
+  assetItems.map(([name, type, meta, thumb]) => ({
+    id: `a${++uid}`,
+    name,
+    type,
+    meta,
+    thumb,
+    status: "ready",
+    role: null,
+  }));
+
 function Editor() {
   const [tab, setTab] = useState("preview");
-  const title = { files: "Files", code: "Code", more: "Más" }[tab];
+  const [chatW, resizeChat] = useResizableWidth("xf-editor-chat", 380, 300, 720);
+  const [assets, setAssets] = useState(seedAssets);
+  const [log, setLog] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  const say = (role, text) =>
+    setLog((l) => [...l, { id: `m${++uid}`, role, text, actions: role === "agent" }]);
+
+  const assign = (id, role) =>
+    setAssets((as) => as.map((a) => (a.id === id ? { ...a, role } : a)));
+
+  const duplicateAsset = (id) =>
+    setAssets((as) => {
+      const i = as.findIndex((a) => a.id === id);
+      if (i < 0) return as;
+      const copy = { ...as[i], id: `a${++uid}`, name: `${as[i].name} (copia)`, role: null };
+      return [...as.slice(0, i + 1), copy, ...as.slice(i + 1)];
+    });
+
+  const removeAsset = (id) => setAssets((as) => as.filter((a) => a.id !== id));
+
+  const regenerateAsset = (id) => {
+    setAssets((as) =>
+      as.map((a) => (a.id === id ? { ...a, status: "generating", thumb: null } : a)),
+    );
+    setTimeout(
+      () =>
+        setAssets((as) =>
+          as.map((a) =>
+            a.id === id
+              ? {
+                  ...a,
+                  status: "ready",
+                  meta: "2048 × 1152",
+                  thumb: generatedPool[++uid % generatedPool.length],
+                }
+              : a,
+          ),
+        ),
+      1200,
+    );
+  };
+
+  // Genera 3 assets en el proyecto: aparecen al instante en estado "generando"
+  // y se van resolviendo de uno en uno, como haría una cola real.
+  const generateAssets = (prompt) => {
+    const type = assetTypeFor(prompt);
+    const batch = Array.from({ length: 3 }, (_, i) => ({
+      id: `a${++uid}`,
+      name: `${prompt.slice(0, 38)}${prompt.length > 38 ? "…" : ""} · v${i + 1}`,
+      type,
+      meta: "Generando",
+      thumb: null,
+      status: "generating",
+      role: null,
+    }));
+    setAssets((as) => [...batch, ...as]);
+
+    batch.forEach((asset, i) => {
+      setTimeout(
+        () =>
+          setAssets((as) =>
+            as.map((a) =>
+              a.id === asset.id
+                ? {
+                    ...a,
+                    status: "ready",
+                    meta: "2048 × 1152",
+                    thumb: generatedPool[(uid + i) % generatedPool.length],
+                  }
+                : a,
+            ),
+          ),
+        900 + i * 700,
+      );
+    });
+
+    setTimeout(() => {
+      setBusy(false);
+      say(
+        "agent",
+        `He generado 3 variantes en All assets. Pulsa la que te guste para asignarla como elemento — los elements son los que tendré en cuenta al montar el vídeo.`,
+      );
+    }, 900 + batch.length * 700);
+  };
+
+  const handleSend = (text) => {
+    say("user", text);
+    setBusy(true);
+
+    if (tab === "assets") {
+      generateAssets(text);
+      return;
+    }
+
+    const replies = {
+      preview:
+        "Ajusto el montaje sobre los planos actuales. Aquí solo toco corte, orden y duración — para crear material nuevo, ve a All assets.",
+      brief:
+        "Te propongo una reescritura de esa sección del brief. Puedes editarla directamente en los bloques de la derecha.",
+      canvas:
+        "Reorganizo los nodos del canvas y agrupo los que pertenecen a la misma escena.",
+      elements: `Tienes ${assets.filter((a) => a.role).length} elements asignados. Genera más assets en All assets para ampliarlos.`,
+      chat: "Esta pestaña es el chat con tu equipo. Cambia de sección para que trabaje sobre el proyecto.",
+    };
+    setTimeout(() => {
+      setBusy(false);
+      say("agent", replies[tab] ?? replies.preview);
+    }, 700);
+  };
   return (
     <div className="flex h-screen flex-col bg-muted/30">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3">
@@ -2012,7 +4585,7 @@ function Editor() {
           onClick={() => go("/dashboard")}
         >
           <img src="/lovable-logo.svg" alt="" className="size-6" />
-          Telemetry Landing Pages
+          Tráiler — Proyecto Neón
           <ChevronDown className="size-3.5 text-muted-foreground" />
         </button>
         <div className="flex items-center">
@@ -2041,71 +4614,51 @@ function Editor() {
           ))}
         </div>
 
-        {tab === "preview" ? (
-          <>
-            <div className="ml-auto flex items-center gap-0.5">
-              <EditorIconBtn>
-                <Monitor />
-              </EditorIconBtn>
-              <EditorIconBtn>
-                <RefreshCw />
-              </EditorIconBtn>
-            </div>
-            <button className="flex h-8 items-center gap-2 rounded-md border px-3 text-sm">
-              Homepage <ChevronDown className="size-3.5 text-muted-foreground" />
-            </button>
-            <EditorIconBtn>
-              <ExternalLink />
-            </EditorIconBtn>
-            <UIButton variant="outline" size="sm">
-              <Share2 /> Share
-            </UIButton>
-            <UIButton
-              size="sm"
-              className="bg-violet-600 text-white hover:bg-violet-700"
-            >
-              <Zap /> Mejorar plan
-            </UIButton>
-            <UIButton
-              size="sm"
-              className="bg-blue-600 text-white hover:bg-blue-700"
-            >
-              Publish
-            </UIButton>
-          </>
-        ) : (
-          <>
-            <span className="absolute left-1/2 -translate-x-1/2 text-sm font-medium">
-              {title}
-            </span>
-            {tab === "code" && (
-              <div className="ml-auto flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Read only</span>
-                <UIButton
-                  size="sm"
-                  className="bg-violet-600 text-white hover:bg-violet-700"
-                >
-                  Upgrade
-                </UIButton>
-              </div>
-            )}
-            <EditorIconBtn
-              className={tab === "code" ? "" : "ml-auto"}
-              onClick={() => setTab("preview")}
-            >
-              <X />
-            </EditorIconBtn>
-          </>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <EditorIconBtn>
+            <RefreshCw />
+          </EditorIconBtn>
+          <ShareMenu />
+          <UIButton
+            size="sm"
+            className="bg-violet-600 text-white hover:bg-violet-700"
+          >
+            <Zap /> Mejorar plan
+          </UIButton>
+          <UIButton size="sm" className="bg-blue-600 text-white hover:bg-blue-700">
+            Publicar
+          </UIButton>
+        </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <EditorChat />
+        {tab !== "chat" && (
+          <EditorChat
+            width={chatW}
+            onResize={resizeChat}
+            tab={tab}
+            log={log}
+            busy={busy}
+            onSend={handleSend}
+          />
+        )}
         <main className="flex-1 overflow-hidden p-2">
           {tab === "preview" && <EditorPreview />}
-          {tab === "files" && <EditorFiles />}
-          {tab === "code" && <EditorCode />}
-          {tab === "more" && <EditorMore />}
+          {tab === "assets" && (
+            <EditorAssets
+              assets={assets}
+              onAssign={assign}
+              onDuplicate={duplicateAsset}
+              onRemove={removeAsset}
+              onRegenerate={regenerateAsset}
+            />
+          )}
+          {tab === "brief" && <EditorBrief />}
+          {tab === "elements" && (
+            <EditorElements assets={assets} onGoToAssets={() => setTab("assets")} />
+          )}
+          {tab === "canvas" && <EditorCanvas />}
+          {tab === "chat" && <EditorTeamChat />}
         </main>
       </div>
     </div>
@@ -2123,7 +4676,7 @@ const settingsGroups = [
   {
     title: "ESPACIO DE TRABAJO",
     items: [
-      ["workspace", "Héctor's Lovable", "H"],
+      ["workspace", "Héctor's Xframe", "H"],
       ["billing", "Planes y uso de créditos", CreditCard],
     ],
   },
@@ -2162,9 +4715,13 @@ const settingsGroups = [
     ],
   },
 ];
-function SettingsSide({ page }) {
+function SettingsSide({ page, width, onResize }) {
   return (
-    <aside className="fixed inset-y-0 left-0 flex w-[264px] flex-col overflow-y-auto border-r bg-muted/30 p-3">
+    <aside
+      style={{ width }}
+      className="fixed inset-y-0 left-0 flex flex-col overflow-y-auto border-r bg-muted/30 p-3"
+    >
+      <ResizeHandle onResize={onResize} />
       <button
         onClick={() => go(PROJECT)}
         className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
@@ -2245,7 +4802,7 @@ const settingContent = {
     [
       ["Sesiones activas", "Windows · Cartagena, España · Ahora"],
       [
-        "Lovable Desktop",
+        "Xframe Desktop",
         "Conecta el escritorio para trabajar con proyectos locales.",
       ],
       [
@@ -2256,19 +4813,19 @@ const settingContent = {
   ],
   project: [
     "Ajustes del proyecto",
-    "Configura Telemetry Landing Pages",
+    "Configura Tráiler — Proyecto Neón",
     [
-      ["Nombre del proyecto", "Telemetry Landing Pages"],
+      ["Nombre del proyecto", "Tráiler — Proyecto Neón"],
       ["Visibilidad", "Privado"],
-      ["Dominio de Lovable", "telemetry-landing-pages.lovable.app"],
+      ["Dominio de Xframe", "telemetry-landing-pages.xframe.app"],
       ["Eliminar proyecto", "Esta acción no se puede deshacer."],
     ],
   ],
   workspace: [
     "Espacio de trabajo",
-    "Gestiona Héctor's Lovable",
+    "Gestiona Héctor's Xframe",
     [
-      ["Nombre del espacio de trabajo", "Héctor's Lovable"],
+      ["Nombre del espacio de trabajo", "Héctor's Xframe"],
       ["Icono", "H"],
       [
         "Preferencias",
@@ -2300,7 +4857,7 @@ const settingContent = {
     [
       [
         "Conocimiento del espacio de trabajo",
-        "Lovable usará estas instrucciones en nuevas conversaciones.",
+        "Xframe usará estas instrucciones en nuevas conversaciones.",
       ],
       ["Archivos", "Añade documentación, guías y referencias."],
     ],
@@ -2312,21 +4869,21 @@ const settingContent = {
       ["Habilidades personalizadas", "No hay habilidades instaladas todavía."],
       [
         "Crear una habilidad",
-        "Enseña a Lovable un flujo de trabajo repetible.",
+        "Enseña a Xframe un flujo de trabajo repetible.",
       ],
     ],
   ],
   "mcp-server": [
     "Conectores MCP",
-    "Controla los servidores MCP que Lovable puede usar desde el chat.",
+    "Controla los servidores MCP que Xframe puede usar desde el chat.",
     [
       [
         "Conectores MCP remotos",
-        "Permite que los miembros del espacio de trabajo conecten servidores MCP que Lovable puede invocar desde el chat. Al desactivarlo se eliminan las conexiones MCP existentes.",
+        "Permite que los miembros del espacio de trabajo conecten servidores MCP que Xframe puede invocar desde el chat. Al desactivarlo se eliminan las conexiones MCP existentes.",
       ],
       [
         "Servidores MCP locales de escritorio",
-        "Permite que los miembros usen servidores MCP de sesiones conectadas de Lovable Desktop. Requiere que los conectores MCP remotos permanezcan habilitados.",
+        "Permite que los miembros usen servidores MCP de sesiones conectadas de Xframe Desktop. Requiere que los conectores MCP remotos permanezcan habilitados.",
       ],
       [
         "Añadir servidor MCP",
@@ -2352,11 +4909,11 @@ const settingContent = {
       ],
       [
         "Análisis de datos confidenciales",
-        "Activa la detección de información personal en el historial de chat, la base de datos y el almacenamiento de Lovable Cloud.",
+        "Activa la detección de información personal en el historial de chat, la base de datos y el almacenamiento de Xframe Cloud.",
       ],
       [
         "Bloquear buckets de almacenamiento públicos",
-        "Impide que los usuarios creen buckets de almacenamiento de acceso público en Lovable Cloud.",
+        "Impide que los usuarios creen buckets de almacenamiento de acceso público en Xframe Cloud.",
       ],
       [
         "Región de alojamiento predeterminada",
@@ -2392,7 +4949,7 @@ function AccountSettings() {
     <div className="mx-auto max-w-3xl px-8 py-10">
       <h1 className="text-2xl font-bold tracking-tight">Cuenta</h1>
       <p className="mt-1 text-muted-foreground">
-        Personaliza cómo te ven los demás e interactúan contigo en Lovable.
+        Personaliza cómo te ven los demás e interactúan contigo en Xframe.
       </p>
 
       <Card className="mt-6 p-5">
@@ -2411,7 +4968,7 @@ function AccountSettings() {
         </p>
       </Card>
 
-      <SettingsSection title="Perfil" desc="Controla cómo apareces en Lovable.">
+      <SettingsSection title="Perfil" desc="Controla cómo apareces en Xframe.">
         <SettingsRow
           title="Perfil"
           desc="Cambia el nombre, la ubicación, el avatar y el banner de tu perfil."
@@ -2447,11 +5004,11 @@ function AccountSettings() {
 
       <SettingsSection
         title="Preferencias"
-        desc="Personaliza cómo funciona Lovable para ti."
+        desc="Personaliza cómo funciona Xframe para ti."
       >
         <SettingsRow
           title="Idioma (Language)"
-          desc="Elige el idioma que Lovable usará para tu cuenta."
+          desc="Elige el idioma que Xframe usará para tu cuenta."
         >
           <FauxSelect>Español</FauxSelect>
         </SettingsRow>
@@ -2517,7 +5074,7 @@ function AccountSettings() {
       <SettingsSection title="Zona de peligro">
         <SettingsRow
           title="Eliminar cuenta"
-          desc="Elimina permanentemente tu cuenta de Lovable. Esta acción no se puede deshacer."
+          desc="Elimina permanentemente tu cuenta de Xframe. Esta acción no se puede deshacer."
         >
           <UIButton
             variant="ghost"
@@ -2595,7 +5152,7 @@ function WorkspaceSettings() {
 
       <SettingsSection
         title="Perfil del espacio de trabajo"
-        desc="Controla cómo aparece este espacio de trabajo en Lovable."
+        desc="Controla cómo aparece este espacio de trabajo en Xframe."
       >
         <SettingsRow
           title="Avatar"
@@ -2614,7 +5171,7 @@ function WorkspaceSettings() {
             </p>
           </div>
           <div className="w-64 shrink-0">
-            <Input defaultValue="Héctor's Lovable" />
+            <Input defaultValue="Héctor's Xframe" />
             <p className="mt-1 text-right text-xs text-muted-foreground">
               16 / 50 caracteres
             </p>
@@ -2754,17 +5311,17 @@ function BillingPlanCard({ p }) {
 
 const eduCards = [
   [
-    "Lovable para estudiantes",
-    "Verifica tu condición de estudiante y obtén hasta un 50 % de descuento en Lovable Pro.",
+    "Xframe para estudiantes",
+    "Verifica tu condición de estudiante y obtén hasta un 50 % de descuento en Xframe Pro.",
     "Empezar",
   ],
   [
-    "Lovable para campus",
+    "Xframe para campus",
     "Controles de facturación y administración para universidades y centros de educación superior.",
     "Contactar con ventas",
   ],
   [
-    "Lovable para niños",
+    "Xframe para niños",
     "Acceso conforme a la normativa y plan de estudios para colegios, en colaboración con imagi.",
     "Más información",
   ],
@@ -2792,7 +5349,7 @@ function BillingSettings() {
           <div className="flex items-center gap-3">
             <img src="/lovable-logo.svg" alt="" className="size-7" />
             <div className="flex flex-1 items-center gap-2">
-              <span className="font-semibold">Lovable Free</span>
+              <span className="font-semibold">Xframe Free</span>
               <UIButton variant="outline" size="sm">
                 Manage
               </UIButton>
@@ -2850,7 +5407,7 @@ function BillingSettings() {
             <span className="font-medium">2.40 credits</span>
           </div>
           <div className="mt-2 flex items-center justify-between text-sm">
-            <span>Telemetry Landing Pages</span>
+            <span>Tráiler — Proyecto Neón</span>
             <span className="text-muted-foreground">2.40 credits</span>
           </div>
           <UIButton variant="outline" className="mt-4">
@@ -2934,7 +5491,7 @@ function PeopleSettings() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">People</h1>
           <p className="mt-1 max-w-2xl text-muted-foreground">
-            Inviting people to <b className="text-foreground">Héctor's Lovable</b>{" "}
+            Inviting people to <b className="text-foreground">Héctor's Xframe</b>{" "}
             gives access to workspace shared projects and credits. You have 1
             builder in this workspace.
           </p>
@@ -3124,7 +5681,7 @@ const skillFeatures = [
   [
     null,
     "Runs when it matters",
-    'Trigger a skill with "/" or let Lovable activate it automatically when it matches your task.',
+    'Trigger a skill with "/" or let Xframe activate it automatically when it matches your task.',
   ],
   [
     Users,
@@ -3188,7 +5745,7 @@ function SkillsSettings() {
             <X className="size-4" />
           </button>
           <div className="relative max-w-lg">
-            <h2 className="text-lg font-semibold">Teach Lovable how you work</h2>
+            <h2 className="text-lg font-semibold">Teach Xframe how you work</h2>
             <p className="mt-1.5 text-sm text-muted-foreground">
               Skills let you save how things should be done, so the agent gets it
               right without being told twice.
@@ -3227,9 +5784,9 @@ function SkillsSettings() {
       </Card>
 
       <div className="mt-8">
-        <h2 className="text-lg font-semibold">Skills built by Lovable</h2>
+        <h2 className="text-lg font-semibold">Skills built by Xframe</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Maintained by Lovable and ready to use when your team needs proven
+          Maintained by Xframe and ready to use when your team needs proven
           instructions without creating a custom skill.
         </p>
         <div className="mt-3 space-y-3">
@@ -3307,7 +5864,7 @@ function GitSettings() {
       <p className="mt-4 max-w-2xl text-sm text-muted-foreground">
         Connections added here are available to every project in this workspace.
         Once a project is linked to a repository, it syncs both ways: edits in
-        Lovable are committed to the repo, and pushed commits flow back into the
+        Xframe are committed to the repo, and pushed commits flow back into the
         project.
       </p>
       <Card className="mt-6 divide-y p-0">
@@ -3351,9 +5908,9 @@ function McpServerSettings() {
   const [client, setClient] = useState("Claude");
   return (
     <div className="mx-auto max-w-3xl px-8 py-10">
-      <h1 className="text-2xl font-bold tracking-tight">Lovable MCP server</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Xframe MCP server</h1>
       <p className="mt-1 text-muted-foreground">
-        Connect supported AI clients and developer tools to Lovable.
+        Connect supported AI clients and developer tools to Xframe.
       </p>
 
       <div className="mt-6 flex items-start gap-3 rounded-lg border bg-muted/40 p-4">
@@ -3363,8 +5920,8 @@ function McpServerSettings() {
             What is Model Context Protocol (MCP)?
           </p>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            The Lovable MCP server allows AI agents, such as Claude, Codex, and
-            Cursor, to connect to Lovable and build, manage and deploy apps.
+            The Xframe MCP server allows AI agents, such as Claude, Codex, and
+            Cursor, to connect to Xframe and build, manage and deploy apps.
           </p>
         </div>
         <UIButton variant="outline" size="sm" className="shrink-0">
@@ -3376,11 +5933,11 @@ function McpServerSettings() {
       <Card className="mt-3 p-5">
         <p className="text-sm font-medium">Server URL</p>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Use this URL when adding Lovable as an MCP server in a supported
+          Use this URL when adding Xframe as an MCP server in a supported
           client.
         </p>
         <div className="mt-3 flex items-center justify-between gap-2 rounded-md border px-3 py-2 font-mono text-sm">
-          <span>https://mcp.lovable.dev/?src=settings</span>
+          <span>https://mcp.xframe.ai/?src=settings</span>
           <Copy className="size-4 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground" />
         </div>
         <Separator className="my-5" />
@@ -3388,7 +5945,7 @@ function McpServerSettings() {
           <div>
             <p className="text-sm font-medium">Workspace access</p>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              Connected clients use the signed-in user's Lovable access. Tool
+              Connected clients use the signed-in user's Xframe access. Tool
               calls can edit projects, deploy apps, query databases, and consume
               credits.
             </p>
@@ -3426,14 +5983,14 @@ function McpServerSettings() {
           {client === "Claude" && (
             <>
               <p>
-                Add Lovable through Claude's connector settings. Works in Claude
+                Add Xframe through Claude's connector settings. Works in Claude
                 Desktop and on claude.ai.
               </p>
               <ol className="mt-4 space-y-3">
                 {[
                   "In Claude, click the plus sign in the composer.",
-                  "Open Connectors, browse connectors, then search for Lovable.",
-                  "Click Connect, then sign in to Lovable when Claude prompts you.",
+                  "Open Connectors, browse connectors, then search for Xframe.",
+                  "Click Connect, then sign in to Xframe when Claude prompts you.",
                 ].map((s, i) => (
                   <li key={i} className="flex items-center gap-3">
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full border text-xs text-muted-foreground">
@@ -3444,7 +6001,7 @@ function McpServerSettings() {
                 ))}
               </ol>
               <p className="mt-4 text-muted-foreground">
-                The Lovable tools appear in the composer's tool menu once
+                The Xframe tools appear in the composer's tool menu once
                 authentication is complete.
               </p>
               <details className="mt-4">
@@ -3462,7 +6019,7 @@ function McpServerSettings() {
   "mcpServers": {
     "lovable": {
       "type": "http",
-      "url": "https://mcp.lovable.dev/?src=settings"
+      "url": "https://mcp.xframe.ai/?src=settings"
     }
   }
 }`}</CodeBlock>
@@ -3473,10 +6030,10 @@ function McpServerSettings() {
             <>
               <p>Run this command in your terminal:</p>
               <CodeBlock title="terminal">
-                {`claude mcp add --transport http lovable "https://mcp.lovable.dev/?src=settings"`}
+                {`claude mcp add --transport http lovable "https://mcp.xframe.ai/?src=settings"`}
               </CodeBlock>
               <p className="mt-3 text-muted-foreground">
-                Claude Code opens a browser window for OAuth. Sign in to Lovable
+                Claude Code opens a browser window for OAuth. Sign in to Xframe
                 to complete the connection.
               </p>
             </>
@@ -3493,7 +6050,7 @@ function McpServerSettings() {
               <CodeBlock title="~/.cursor/mcp.json">{`{
   "mcpServers": {
     "lovable": {
-      "url": "https://mcp.lovable.dev/?src=settings"
+      "url": "https://mcp.xframe.ai/?src=settings"
     }
   }
 }`}</CodeBlock>
@@ -3516,7 +6073,7 @@ function McpServerSettings() {
   "servers": {
     "lovable": {
       "type": "http",
-      "url": "https://mcp.lovable.dev/?src=settings"
+      "url": "https://mcp.xframe.ai/?src=settings"
     }
   }
 }`}</CodeBlock>
@@ -3537,7 +6094,7 @@ const privacySections = [
       { t: "Restringir invitaciones al espacio de trabajo", tier: "Enterprise", d: "Cuando está activado, solo los administradores y propietarios pueden invitar miembros a este espacio de trabajo.", on: false },
       { t: "Enlaces de invitación", d: "Permite que los miembros del espacio de trabajo creen y compartan enlaces de invitación.", on: true },
       { t: "Detección del espacio de trabajo", tier: "Business", d: "Permite que los miembros del mismo dominio de correo electrónico descubran este espacio de trabajo y soliciten acceso a él.", on: false },
-      { t: "Perfiles públicos de miembros", tier: "Enterprise", d: "Los espacios de trabajo empresariales ocultan los perfiles de los miembros de forma predeterminada. Activa esta opción para que los perfiles públicos de Lovable de los miembros (lovable.dev/@username) sean visibles fuera del espacio de trabajo.", on: false },
+      { t: "Perfiles públicos de miembros", tier: "Enterprise", d: "Los espacios de trabajo empresariales ocultan los perfiles de los miembros de forma predeterminada. Activa esta opción para que los perfiles públicos de Xframe de los miembros (xframe.ai/@username) sean visibles fuera del espacio de trabajo.", on: false },
       { t: "Transferencias de proyectos por editores", tier: "Enterprise", d: "Cuando está habilitado, los editores propietarios de un proyecto pueden transferirlo, o hacer un remix de una copia, a otro espacio de trabajo.", on: false },
       { t: "Exigir rol de editor del espacio de trabajo", tier: "Enterprise", d: "Cuando está activado, los espectadores del espacio de trabajo y los colaboradores externos pueden ver los proyectos, pero no editarlos, ni siquiera mediante la propiedad del proyecto o el acceso como colaborador.", on: false },
       { t: "Colaboradores externos del proyecto", tier: "Business", d: "Elige el rol de proyecto más alto que pueden tener las personas ajenas a este espacio de trabajo.", control: "select", value: "Permitir todos" },
@@ -3552,7 +6109,7 @@ const privacySections = [
       { t: "Invitaciones externas", tier: "Business", d: "Los miembros pueden invitar por correo electrónico a personas ajenas al espacio de trabajo para que vean los proyectos publicados. Cuando se desactiva, los usuarios externos ya invitados conservan su acceso.", on: true },
       { t: "Bloquear la publicación con problemas críticos", d: "Impide que los proyectos con problemas de seguridad críticos se publiquen o actualicen.", on: false },
       { t: "Exigir análisis de seguridad básico antes de la primera publicación", d: "Exige que se complete el análisis de seguridad básico antes de que un proyecto pueda publicarse por primera vez.", on: false },
-      { t: "Métodos de inicio de sesión de la app", tier: "Business", d: "Controla qué métodos de inicio de sesión pueden usar los proyectos de este espacio de trabajo para las apps generadas. Esto no afecta la forma en que los miembros del espacio de trabajo inician sesión en Lovable.", control: "button", value: "Configurar" },
+      { t: "Métodos de inicio de sesión de la app", tier: "Business", d: "Controla qué métodos de inicio de sesión pueden usar los proyectos de este espacio de trabajo para las apps generadas. Esto no afecta la forma en que los miembros del espacio de trabajo inician sesión en Xframe.", control: "button", value: "Configurar" },
     ],
   },
   {
@@ -3581,10 +6138,10 @@ const privacySections = [
   },
   {
     title: "Conectores MCP",
-    desc: "Controla los servidores MCP que Lovable puede usar desde el chat.",
+    desc: "Controla los servidores MCP que Xframe puede usar desde el chat.",
     rows: [
-      { t: "Conectores MCP remotos", tier: "Business", d: "Permite que los miembros del espacio de trabajo conecten servidores MCP que Lovable puede invocar desde el chat. Al desactivarlo se eliminan las conexiones MCP existentes.", on: true },
-      { t: "Servidores MCP locales de escritorio", tier: "Business", d: "Permite que los miembros del espacio de trabajo usen servidores MCP de sesiones conectadas de Lovable Desktop. Requiere que los conectores MCP remotos permanezcan habilitados.", on: true },
+      { t: "Conectores MCP remotos", tier: "Business", d: "Permite que los miembros del espacio de trabajo conecten servidores MCP que Xframe puede invocar desde el chat. Al desactivarlo se eliminan las conexiones MCP existentes.", on: true },
+      { t: "Servidores MCP locales de escritorio", tier: "Business", d: "Permite que los miembros del espacio de trabajo usen servidores MCP de sesiones conectadas de Xframe Desktop. Requiere que los conectores MCP remotos permanezcan habilitados.", on: true },
     ],
   },
   {
@@ -3592,8 +6149,8 @@ const privacySections = [
     desc: "Controla cómo se recopilan y exponen los datos de este espacio de trabajo.",
     rows: [
       { t: "Exclusión de la recopilación de datos", tier: "Business", d: "Excluye este espacio de trabajo de la recopilación de datos.", on: false },
-      { t: "Análisis de datos confidenciales", tier: "Enterprise", d: "Activa la detección de PII para este espacio de trabajo. Incluye análisis bajo demanda del historial de chat, Lovable Cloud Database y Lovable Cloud Storage, y activa la protección de envío en el chat para mensajes nuevos y archivos adjuntos.", on: false },
-      { t: "Bloquear buckets de almacenamiento públicos", d: "Impide que los usuarios creen buckets de almacenamiento de acceso público en Lovable Cloud.", on: true },
+      { t: "Análisis de datos confidenciales", tier: "Enterprise", d: "Activa la detección de PII para este espacio de trabajo. Incluye análisis bajo demanda del historial de chat, Xframe Cloud Database y Xframe Cloud Storage, y activa la protección de envío en el chat para mensajes nuevos y archivos adjuntos.", on: false },
+      { t: "Bloquear buckets de almacenamiento públicos", d: "Impide que los usuarios creen buckets de almacenamiento de acceso público en Xframe Cloud.", on: true },
       { t: "Región de alojamiento predeterminada", tier: "Business", d: "Elige dónde se alojan los nuevos proyectos de este espacio de trabajo. Requiere una instancia de base de datos micro o superior y puede consumir más créditos.", control: "select", value: "Sin definir" },
     ],
   },
@@ -3653,10 +6210,11 @@ function PrivacySettings() {
 }
 
 function SettingsPage({ page }) {
+  const [sideW, resizeSide] = useResizableWidth("xf-settings-sidebar", 264, 220, 420);
   return (
     <div className="min-h-screen bg-background">
-      <SettingsSide page={page} />
-      <main className="ml-[264px]">
+      <SettingsSide page={page} width={sideW} onResize={resizeSide} />
+      <main style={{ marginLeft: sideW }}>
         {page === "account" ? (
           <AccountSettings />
         ) : page === "workspace" ? (
@@ -3714,4 +6272,8 @@ function App() {
     </>
   );
 }
-createRoot(document.getElementById("root")).render(<App />);
+// Reutiliza la raíz entre hot-reloads: createRoot() en cada recarga apila
+// raíces sobre el mismo contenedor y deja la UI en un estado inconsistente.
+const container = document.getElementById("root");
+const root = (window.__xframeRoot ??= createRoot(container));
+root.render(<App />);
