@@ -6,7 +6,7 @@
 --
 -- Además del SQL, el proyecto necesita:
 --   · bucket "assets" (público, 50 MB, imagen/vídeo/audio) — ver más abajo
---   · edge functions generate-assets y resolve-asset (carpeta supabase/functions)
+--   · edge functions generate-assets, resolve-asset y delete-account
 --   · Auth → desactivar "Confirm email" o configurar SMTP propio
 
 -- ---------------------------------------------------------------- perfiles
@@ -20,9 +20,18 @@ create table if not exists public.profiles (
   plan        text        not null default 'free'
                 check (plan in ('free', 'pro', 'business', 'enterprise')),
   credits     integer     not null default 200 check (credits >= 0),
+  username    text,
+  -- `settings` son los ajustes de generación; `preferences` la cuenta:
+  -- idioma, tema, sonidos, visibilidad y avisos por correo.
   settings    jsonb       not null default '{}'::jsonb,
+  preferences jsonb       not null default '{}'::jsonb,
   created_at  timestamptz not null default now()
 );
+
+-- Handle público único, insensible a mayúsculas.
+create unique index if not exists profiles_username_key
+  on public.profiles (lower(username))
+  where username is not null;
 
 -- Alta automática del perfil al registrarse.
 create or replace function public.handle_new_user()

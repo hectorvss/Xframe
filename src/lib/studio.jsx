@@ -13,7 +13,13 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { db, defaultGenSettings, isRemote, uid } from "./db";
+import {
+  db,
+  defaultGenSettings,
+  defaultPreferences,
+  isRemote,
+  uid,
+} from "./db";
 
 const StudioContext = createContext(null);
 
@@ -108,6 +114,34 @@ export function StudioProvider({ children }) {
     [genSettings, updateProfile],
   );
 
+  /** Preferencias de cuenta: idioma, tema, sonidos, visibilidad. */
+  const preferences = { ...defaultPreferences, ...(profile?.preferences ?? {}) };
+  const setPreferences = useCallback(
+    (patch) => updateProfile({ preferences: { ...preferences, ...patch } }),
+    [preferences, updateProfile],
+  );
+
+  // Las preferencias no son solo datos: se aplican al documento.
+  useEffect(() => {
+    const root = document.documentElement;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+
+    const applyTheme = () => {
+      const dark =
+        preferences.theme === "dark" ||
+        (preferences.theme === "system" && media.matches);
+      root.classList.toggle("dark", dark);
+    };
+
+    applyTheme();
+    media.addEventListener("change", applyTheme);
+
+    root.lang = preferences.language;
+    root.classList.toggle("reduce-motion", preferences.reducedMotion);
+
+    return () => media.removeEventListener("change", applyTheme);
+  }, [preferences.theme, preferences.language, preferences.reducedMotion]);
+
   const spendCredits = useCallback(
     async (amount) => {
       const next = await db.spendCredits(profile, amount);
@@ -169,6 +203,8 @@ export function StudioProvider({ children }) {
       projects,
       genSettings,
       setGenSettings,
+      preferences,
+      setPreferences,
       updateProfile,
       spendCredits,
       createProject,
@@ -187,6 +223,8 @@ export function StudioProvider({ children }) {
       projects,
       genSettings,
       setGenSettings,
+      preferences,
+      setPreferences,
       updateProfile,
       spendCredits,
       createProject,

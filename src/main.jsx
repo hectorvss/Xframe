@@ -110,6 +110,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { uploadAsset } from "@/lib/supabase";
+import { db } from "@/lib/db";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   StudioProvider,
   useStudio,
@@ -2969,6 +2977,7 @@ function EditorChat({
 }) {
   const [draft, setDraft] = useState("");
   const [mentionAt, setMentionAt] = useState(null);
+  const { preferences } = useStudio();
   const ctx = chatContext[tab] ?? chatContext.assets;
   const endRef = useRef(null);
   const areaRef = useRef(null);
@@ -3066,7 +3075,7 @@ function EditorChat({
         <div ref={endRef} />
       </div>
 
-      {!busy && !draft.trim() && ctx.chips.length > 0 && (
+      {preferences.chatSuggestions && !busy && !draft.trim() && ctx.chips.length > 0 && (
         <div className="flex flex-wrap gap-2 px-3 pb-1">
           {ctx.chips.map((c) => (
             <button
@@ -5562,63 +5571,294 @@ function SettingsRow({ title, desc, children }) {
     </div>
   );
 }
+/** Select real con la estética de los ajustes. */
+function SettingSelect({ value, options, onChange, className }) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className={cn("h-9 w-[200px]", className)}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map(([id, label]) => (
+          <SelectItem key={id} value={id}>
+            {label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** Campo editable en línea: se guarda al confirmar y avisa del resultado. */
+function InlineEdit({ value, onSave, placeholder, validate }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? "");
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => setDraft(value ?? ""), [value]);
+
+  const commit = async () => {
+    const next = draft.trim();
+    if (next === (value ?? "")) return setEditing(false);
+    const problem = validate?.(next);
+    if (problem) return setError(problem);
+    setSaving(true);
+    try {
+      await onSave(next);
+      setEditing(false);
+      setError(null);
+    } catch (e) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <button
+        onClick={() => setEditing(true)}
+        className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+      >
+        {value || <span className="italic">{placeholder}</span>}
+        <Pencil className="size-3.5" />
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-1.5">
+        <Input
+          autoFocus
+          value={draft}
+          disabled={saving}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setError(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") {
+              setDraft(value ?? "");
+              setEditing(false);
+              setError(null);
+            }
+          }}
+          placeholder={placeholder}
+          className="h-9 w-56"
+        />
+        <UIButton size="icon" className="size-9" disabled={saving} onClick={commit}>
+          {saving ? <RefreshCw className="animate-spin" /> : <Check />}
+        </UIButton>
+        <UIButton
+          size="icon"
+          variant="ghost"
+          className="size-9"
+          onClick={() => {
+            setDraft(value ?? "");
+            setEditing(false);
+            setError(null);
+          }}
+        >
+          <X />
+        </UIButton>
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+const languageOptions = [
+  ["es", "Español"],
+  ["en", "English"],
+  ["fr", "Français"],
+  ["pt", "Português"],
+];
+const themeOptions = [
+  ["light", "Claro"],
+  ["dark", "Oscuro"],
+  ["system", "Sistema"],
+];
+const visibilityOptions = [
+  ["public", "Público"],
+  ["workspace", "Solo mi espacio"],
+  ["private", "Privado"],
+];
+const soundOptions = [
+  ["off", "Desactivado"],
+  ["first", "Primera generación"],
+  ["always", "Todas"],
+];
+
 function AccountSettings() {
-  const [chatSug, setChatSug] = useState(true);
-  const [autoInvite, setAutoInvite] = useState(true);
+  const { profile, preferences, setPreferences, updateProfile, isRemote } =
+    useStudio();
+  const [identities, setIdentities] = useState([]);
+  const [dialog, setDialog] = useState(null);
+  const [toast, setToast] = useState(null);
+  const avatarRef = useRef(null);
+
+  useEffect(() => {
+    db.listIdentities().then(setIdentities).catch(() => setIdentities([]));
+  }, [profile?.id]);
+
+  const notify = (text, kind = "ok") => {
+    setToast({ text, kind });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const uploadAvatar = async (file) => {
+    if (!file) return;
+    try {
+      const url = await uploadAsset({
+        userId: profile.id,
+        projectId: "avatar",
+        file,
+      });
+      await updateProfile({ avatar_url: url });
+      notify("Foto de perfil actualizada");
+    } catch (error) {
+      notify(String(error?.message ?? error), "error");
+    }
+  };
+
+  if (!profile) return null;
+  const initial = (profile.name ?? "?").charAt(0).toUpperCase();
+
   return (
     <div className="mx-auto max-w-3xl px-8 py-10">
       <h1 className="text-2xl font-bold tracking-tight">Cuenta</h1>
       <p className="mt-1 text-muted-foreground">
-        Personaliza cómo te ven los demás e interactúan contigo en Xframe.
+        Tus datos, tus preferencias y la seguridad de tu cuenta.
       </p>
 
-      <Card className="mt-6 p-5">
-        <div className="flex items-center gap-2">
-          <p className="font-medium">Showcase skills</p>
-          <Badge variant="secondary" className="rounded">
-            Beta
-          </Badge>
+      {toast && (
+        <div
+          className={cn(
+            "mt-4 flex items-center gap-2 rounded-lg border p-3 text-sm",
+            toast.kind === "error"
+              ? "border-destructive/40 text-destructive"
+              : "text-muted-foreground",
+          )}
+        >
+          {toast.kind === "error" ? (
+            <Info className="size-4 shrink-0" />
+          ) : (
+            <Check className="size-4 shrink-0" />
+          )}
+          {toast.text}
         </div>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          No skills yet. Build apps that get real usage to unlock skills to
-          showcase on your LinkedIn profile.{" "}
-          <a href="#" className="text-foreground underline">
-            Learn how to unlock skills
-          </a>
-        </p>
+      )}
+
+      {/* Resumen de la cuenta */}
+      <Card className="mt-6 flex flex-wrap items-center gap-4 p-5">
+        <button
+          onClick={() => avatarRef.current?.click()}
+          title="Cambiar foto"
+          className="group relative size-16 shrink-0 overflow-hidden rounded-full bg-green-600"
+        >
+          {profile.avatar_url ? (
+            <img
+              src={profile.avatar_url}
+              alt=""
+              className="size-full object-cover"
+            />
+          ) : (
+            <span className="flex size-full items-center justify-center text-xl font-semibold text-white">
+              {initial}
+            </span>
+          )}
+          <span className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+            <Pencil className="size-4 text-white" />
+          </span>
+        </button>
+        <input
+          ref={avatarRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            uploadAvatar(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium">{profile.name}</p>
+          <p className="truncate text-sm text-muted-foreground">
+            {profile.email}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="rounded capitalize">
+            Plan {profile.plan}
+          </Badge>
+          <Badge variant="secondary" className="gap-1 rounded">
+            <Zap className="size-3" />
+            {profile.credits} créditos
+          </Badge>
+          <UIButton size="sm" onClick={() => go("/es/pricing")}>
+            Mejorar plan
+          </UIButton>
+        </div>
       </Card>
 
       <SettingsSection title="Perfil" desc="Controla cómo apareces en Xframe.">
-        <SettingsRow
-          title="Perfil"
-          desc="Cambia el nombre, la ubicación, el avatar y el banner de tu perfil."
-        >
-          <UIButton variant="ghost" className="text-muted-foreground">
-            Abrir perfil <ExternalLink />
-          </UIButton>
+        <SettingsRow title="Nombre" desc="El nombre que ven tus colaboradores.">
+          <InlineEdit
+            value={profile.name}
+            placeholder="Tu nombre"
+            validate={(v) => (v.length < 2 ? "Mínimo 2 caracteres" : null)}
+            onSave={(name) => updateProfile({ name }).then(() => notify("Nombre actualizado"))}
+          />
         </SettingsRow>
         <SettingsRow
           title="Nombre de usuario"
           desc="Tu identificador público y la URL de tu perfil."
         >
-          <button className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
-            e60r71rqUdTmME4wb4oYLy4G9vE3
-            <Pencil className="size-3.5" />
-          </button>
+          <InlineEdit
+            value={profile.username}
+            placeholder="sin definir"
+            validate={(v) =>
+              !/^[a-zA-Z0-9_]{3,24}$/.test(v)
+                ? "Entre 3 y 24 caracteres: letras, números y guion bajo"
+                : null
+            }
+            onSave={async (username) => {
+              const free = await db.isUsernameAvailable(username, profile.id);
+              if (!free) throw new Error("Ese nombre ya está en uso");
+              await updateProfile({ username });
+              notify("Nombre de usuario actualizado");
+            }}
+          />
         </SettingsRow>
         <SettingsRow
           title="Correo electrónico"
-          desc="Tu dirección de correo electrónico asociada a tu cuenta."
+          desc="Se usa para iniciar sesión y recibir avisos."
         >
-          <span className="text-sm text-muted-foreground">
-            hectorvidal0411@gmail.com
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">{profile.email}</span>
+            {isRemote && (
+              <UIButton
+                variant="outline"
+                size="sm"
+                onClick={() => setDialog("email")}
+              >
+                Cambiar
+              </UIButton>
+            )}
+          </div>
         </SettingsRow>
         <SettingsRow
           title="Visibilidad del perfil"
           desc="Controla quién puede ver tu perfil público."
         >
-          <FauxSelect>Público</FauxSelect>
+          <SettingSelect
+            value={preferences.profileVisibility}
+            options={visibilityOptions}
+            onChange={(profileVisibility) => setPreferences({ profileVisibility })}
+          />
         </SettingsRow>
       </SettingsSection>
 
@@ -5627,86 +5867,377 @@ function AccountSettings() {
         desc="Personaliza cómo funciona Xframe para ti."
       >
         <SettingsRow
-          title="Idioma (Language)"
-          desc="Elige el idioma que Xframe usará para tu cuenta."
+          title="Idioma"
+          desc="El idioma de la interfaz de Xframe."
         >
-          <FauxSelect>Español</FauxSelect>
+          <SettingSelect
+            value={preferences.language}
+            options={languageOptions}
+            onChange={(language) => setPreferences({ language })}
+          />
+        </SettingsRow>
+        <SettingsRow title="Tema" desc="Claro, oscuro o el del sistema.">
+          <SettingSelect
+            value={preferences.theme}
+            options={themeOptions}
+            onChange={(theme) => setPreferences({ theme })}
+          />
         </SettingsRow>
         <SettingsRow
-          title="Sugerencias de chat"
-          desc="Muestra sugerencias útiles en la interfaz de chat para mejorar tu experiencia."
+          title="Sonido al terminar una generación"
+          desc="Avisa cuando el material esté listo."
         >
-          <Switch checked={chatSug} onCheckedChange={setChatSug} />
+          <SettingSelect
+            value={preferences.generationSound}
+            options={soundOptions}
+            onChange={(generationSound) => setPreferences({ generationSound })}
+          />
         </SettingsRow>
         <SettingsRow
-          title="Sonido de generación completada"
-          desc="Reproduce un sonido de notificación agradable cuando finaliza una generación."
+          title="Sugerencias en el chat"
+          desc="Muestra atajos bajo el cuadro de texto del agente."
         >
-          <FauxSelect>Primera generación</FauxSelect>
+          <Switch
+            checked={preferences.chatSuggestions}
+            onCheckedChange={(chatSuggestions) => setPreferences({ chatSuggestions })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="Reducir animaciones"
+          desc="Minimiza los movimientos de la interfaz."
+        >
+          <Switch
+            checked={preferences.reducedMotion}
+            onCheckedChange={(reducedMotion) => setPreferences({ reducedMotion })}
+          />
         </SettingsRow>
         <SettingsRow
           title="Aceptar invitaciones automáticamente"
-          desc="Únete automáticamente a espacios de trabajo y proyectos cuando te inviten, sin tener que aceptarlos manualmente."
+          desc="Únete a proyectos y espacios sin confirmar cada invitación."
         >
-          <Switch checked={autoInvite} onCheckedChange={setAutoInvite} />
+          <Switch
+            checked={preferences.autoAcceptInvites}
+            onCheckedChange={(autoAcceptInvites) => setPreferences({ autoAcceptInvites })}
+          />
+        </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Notificaciones por correo"
+        desc="Decide qué te enviamos."
+      >
+        <SettingsRow
+          title="Novedades del producto"
+          desc="Funciones nuevas y cambios importantes."
+        >
+          <Switch
+            checked={preferences.emailProduct}
+            onCheckedChange={(emailProduct) => setPreferences({ emailProduct })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          title="Consejos y tutoriales"
+          desc="Ideas para sacarle más partido a Xframe."
+        >
+          <Switch
+            checked={preferences.emailTips}
+            onCheckedChange={(emailTips) => setPreferences({ emailTips })}
+          />
         </SettingsRow>
       </SettingsSection>
 
       <SettingsSection
         title="Cuentas vinculadas"
-        desc="Gestiona las cuentas vinculadas para el inicio de sesión."
+        desc="Proveedores con los que puedes iniciar sesión."
       >
-        <div className="flex items-center gap-3 px-5 py-4">
-          <img
-            src="https://cdn.simpleicons.org/google"
-            alt=""
-            className="size-6"
-          />
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-medium">Google</p>
-              <Badge variant="secondary" className="rounded">
-                Principal
-              </Badge>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              hectorvidal0411@gmail.com
-            </p>
+        {identities.length === 0 && (
+          <div className="px-5 py-4 text-sm text-muted-foreground">
+            Solo inicias sesión con correo y contraseña.
           </div>
-        </div>
-        <SettingsRow
-          title="Vincular cuenta de empresa"
-          desc="Usa el inicio de sesión único de tu organización."
-        >
-          <UIButton variant="outline">Vincular</UIButton>
-        </SettingsRow>
+        )}
+        {identities.map((identity) => (
+          <div key={identity.identity_id} className="flex items-center gap-3 px-5 py-4">
+            <img
+              src={`https://www.google.com/s2/favicons?domain=${identity.provider}.com&sz=64`}
+              alt=""
+              className="size-6"
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium capitalize">{identity.provider}</p>
+              <p className="truncate text-sm text-muted-foreground">
+                {identity.identity_data?.email ?? profile.email}
+              </p>
+            </div>
+            {identities.length > 1 && (
+              <UIButton
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={async () => {
+                  try {
+                    await db.unlinkIdentity(identity);
+                    setIdentities(await db.listIdentities());
+                    notify("Cuenta desvinculada");
+                  } catch (error) {
+                    notify(String(error?.message ?? error), "error");
+                  }
+                }}
+              >
+                Desvincular
+              </UIButton>
+            )}
+          </div>
+        ))}
       </SettingsSection>
 
       <SettingsSection title="Seguridad" desc="Protege el acceso a tu cuenta.">
         <SettingsRow
-          title="Se requiere reautenticación"
-          desc="Por seguridad, por favor vuelve a autenticarte para gestionar los ajustes de la autenticación."
+          title="Contraseña"
+          desc="Cámbiala periódicamente y no la reutilices."
         >
-          <UIButton variant="outline">Volver a autenticarte</UIButton>
+          <UIButton variant="outline" onClick={() => setDialog("password")}>
+            Cambiar contraseña
+          </UIButton>
+        </SettingsRow>
+        <SettingsRow
+          title="Sesiones abiertas"
+          desc="Cierra la sesión en todos los dispositivos donde hayas entrado."
+        >
+          <UIButton
+            variant="outline"
+            onClick={async () => {
+              await db.signOutEverywhere();
+              go("/es");
+            }}
+          >
+            Cerrar en todas partes
+          </UIButton>
         </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title="Zona de peligro">
         <SettingsRow
           title="Eliminar cuenta"
-          desc="Elimina permanentemente tu cuenta de Xframe. Esta acción no se puede deshacer."
+          desc="Borra tu cuenta, tus proyectos y todo tu material. No se puede deshacer."
         >
           <UIButton
             variant="ghost"
             className="text-destructive hover:text-destructive"
+            onClick={() => setDialog("delete")}
           >
             Eliminar cuenta
           </UIButton>
         </SettingsRow>
       </SettingsSection>
+
+      {dialog === "password" && (
+        <PasswordDialog
+          email={profile.email}
+          onClose={() => setDialog(null)}
+          onDone={(msg) => notify(msg)}
+        />
+      )}
+      {dialog === "email" && (
+        <EmailDialog
+          current={profile.email}
+          onClose={() => setDialog(null)}
+          onDone={(msg) => notify(msg)}
+        />
+      )}
+      {dialog === "delete" && (
+        <DeleteAccountDialog onClose={() => setDialog(null)} />
+      )}
     </div>
   );
 }
+
+function PasswordDialog({ email, onClose, onDone }) {
+  const [password, setPassword] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (password.length < 8) return setError("Mínimo 8 caracteres");
+    if (password !== repeat) return setError("Las contraseñas no coinciden");
+    setBusy(true);
+    try {
+      await db.updatePassword(password);
+      onDone("Contraseña actualizada");
+      onClose();
+    } catch (err) {
+      setError(String(err?.message ?? err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>Cambiar contraseña</DialogTitle>
+          <DialogDescription>
+            Se aplicará de inmediato a esta sesión.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex flex-col gap-3">
+          <Input
+            autoFocus
+            type="password"
+            value={password}
+            onChange={(e) => (setPassword(e.target.value), setError(null))}
+            placeholder="Contraseña nueva"
+            autoComplete="new-password"
+          />
+          <Input
+            type="password"
+            value={repeat}
+            onChange={(e) => (setRepeat(e.target.value), setError(null))}
+            placeholder="Repite la contraseña"
+            autoComplete="new-password"
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                await db.sendPasswordReset(email);
+                onDone("Te hemos enviado un correo para restablecerla");
+                onClose();
+              }}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              No la recuerdo
+            </button>
+            <div className="flex gap-2">
+              <UIButton type="button" variant="outline" onClick={onClose}>
+                Cancelar
+              </UIButton>
+              <UIButton type="submit" disabled={busy}>
+                {busy && <RefreshCw className="animate-spin" />} Guardar
+              </UIButton>
+            </div>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EmailDialog({ current, onClose, onDone }) {
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (email === current) return setError("Es el correo que ya tienes");
+    setBusy(true);
+    try {
+      await db.updateEmail(email);
+      onDone("Confirma el cambio desde el correo que te hemos enviado");
+      onClose();
+    } catch (err) {
+      setError(String(err?.message ?? err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>Cambiar correo</DialogTitle>
+          <DialogDescription>
+            Enviaremos un enlace de confirmación a la dirección nueva. El cambio
+            no se aplica hasta que lo confirmes.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex flex-col gap-3">
+          <Input
+            autoFocus
+            type="email"
+            required
+            value={email}
+            onChange={(e) => (setEmail(e.target.value), setError(null))}
+            placeholder="nuevo@correo.com"
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <UIButton type="button" variant="outline" onClick={onClose}>
+              Cancelar
+            </UIButton>
+            <UIButton type="submit" disabled={busy}>
+              {busy && <RefreshCw className="animate-spin" />} Enviar
+            </UIButton>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Borrado de cuenta: exige escribir ELIMINAR para evitar accidentes. */
+function DeleteAccountDialog({ onClose }) {
+  const { projects } = useStudio();
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await db.deleteAccount();
+      go("/es");
+    } catch (err) {
+      setError(String(err?.message ?? err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[440px]">
+        <DialogHeader>
+          <DialogTitle className="text-destructive">Eliminar cuenta</DialogTitle>
+          <DialogDescription>
+            Se borrarán tu perfil, tus {projects.length} proyectos y todo su
+            material. Esta acción no se puede deshacer.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            Escribe <span className="font-medium text-foreground">ELIMINAR</span>{" "}
+            para confirmar.
+          </p>
+          <Input
+            autoFocus
+            value={confirm}
+            onChange={(e) => (setConfirm(e.target.value), setError(null))}
+            placeholder="ELIMINAR"
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <UIButton variant="outline" onClick={onClose}>
+              Cancelar
+            </UIButton>
+            <UIButton
+              variant="destructive"
+              disabled={confirm !== "ELIMINAR" || busy}
+              onClick={submit}
+            >
+              {busy && <RefreshCw className="animate-spin" />} Eliminar para siempre
+            </UIButton>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function GenericSettings({ page }) {
   const navItem = settingsGroups
     .flatMap((group) => group.items)

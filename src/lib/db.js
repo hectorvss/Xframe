@@ -52,6 +52,19 @@ export const defaultGenSettings = {
   },
 };
 
+// Preferencias de cuenta por defecto (distintas de los ajustes de generación).
+export const defaultPreferences = {
+  language: "es",
+  theme: "system",
+  profileVisibility: "public",
+  chatSuggestions: true,
+  autoAcceptInvites: true,
+  generationSound: "first",
+  emailProduct: true,
+  emailTips: false,
+  reducedMotion: false,
+};
+
 const emptyState = () => ({
   profiles: [],
   projects: [],
@@ -296,6 +309,75 @@ export const db = {
 
   async signOut() {
     if (hasSupabase) await supabase.auth.signOut();
+  },
+
+  /* --- seguridad de la cuenta --- */
+
+  /** Cambia la contraseña del usuario en sesión. */
+  async updatePassword(password) {
+    if (!hasSupabase) return true;
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) throw error;
+    return true;
+  },
+
+  /** Cambia el correo. Supabase envía confirmación a la dirección nueva. */
+  async updateEmail(email) {
+    if (!hasSupabase) return true;
+    const { error } = await supabase.auth.updateUser({ email });
+    if (error) throw error;
+    return true;
+  },
+
+  /** Envía un correo para restablecer la contraseña. */
+  async sendPasswordReset(email) {
+    if (!hasSupabase) return true;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${location.origin}/settings/account`,
+    });
+    if (error) throw error;
+    return true;
+  },
+
+  /** Proveedores con los que el usuario puede iniciar sesión. */
+  async listIdentities() {
+    if (!hasSupabase) return [];
+    const { data } = await supabase.auth.getUserIdentities();
+    return data?.identities ?? [];
+  },
+
+  async unlinkIdentity(identity) {
+    const { error } = await supabase.auth.unlinkIdentity(identity);
+    if (error) throw error;
+  },
+
+  /** Cierra la sesión en todos los dispositivos. */
+  async signOutEverywhere() {
+    if (!hasSupabase) return;
+    const { error } = await supabase.auth.signOut({ scope: "global" });
+    if (error) throw error;
+  },
+
+  /** Comprueba si un nombre de usuario está libre. */
+  async isUsernameAvailable(username, currentId) {
+    if (!hasSupabase) return true;
+    const { data } = await supabase
+      .from("profiles")
+      .select("id")
+      .ilike("username", username)
+      .neq("id", currentId);
+    return !data?.length;
+  },
+
+  /** Borra la cuenta y todo su contenido (edge function con rol de servicio). */
+  async deleteAccount() {
+    if (!hasSupabase) return true;
+    const { error } = await supabase.functions.invoke("delete-account", {
+      body: { confirm: "ELIMINAR" },
+    });
+    if (error) throw error;
+    await supabase.auth.signOut();
+    return true;
   },
 
   onAuthChange(callback) {
