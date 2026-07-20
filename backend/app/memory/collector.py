@@ -271,9 +271,9 @@ class MemoryCollectorNode:
             return self._model
     
         settings = get_settings()
-        from app.llm import chat_model
+        from app import llm
 
-        self._model = chat_model(
+        self._model = llm.chat_model(
             "fast", max_tokens=1_024, temperature=0.2, streaming=False
         ).bind_tools(memory_collector_tools)
         return self._model

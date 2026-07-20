@@ -573,6 +573,25 @@ def _render(
 # --------------------------------------------------------------------------- #
 
 
+def _coerce_tab(value: OpenTab | str) -> OpenTab:
+    """
+    Pestaña abierta, tolerante a basura.
+
+    El valor viene del frontend en cada turno. Con `OpenTab(value)` a secas, una pestaña
+    que el cliente renombre —o un cliente viejo tras un despliegue— lanza `ValueError`
+    dentro del nodo raíz y **tumba el turno entero** por un dato puramente decorativo:
+    `open_tab` solo decide a qué parte del contexto se le da más detalle. Degradar a
+    `ASSETS` y registrar el valor raro es la respuesta proporcionada.
+    """
+    if isinstance(value, OpenTab):
+        return value
+    try:
+        return OpenTab(value)
+    except ValueError:
+        logger.info("xframe_unknown_open_tab", extra={"open_tab": str(value)[:40]})
+        return OpenTab.ASSETS
+
+
 def _flatten_setting(key: str, value: Any) -> Any:
     """
     Normaliza un ajuste de generación a lo que `GenSettings` declara.
@@ -652,7 +671,7 @@ class XframeContextManager:
         return XframeUIContext(
             project_id=self._project_id,
             project_title=project.get("title", ""),
-            open_tab=OpenTab(open_tab) if not isinstance(open_tab, OpenTab) else open_tab,
+            open_tab=_coerce_tab(open_tab),
             brief=brief,
             timeline=sorted(shots, key=narrative_sort_key),
             elements=elements,
@@ -816,6 +835,7 @@ class XframeContextManager:
                 role=a.role or "",
                 meta=a.meta,
                 sheet=sheets.get(a.id),
+                status=a.status,
             )
             for a in assets
             if a.role

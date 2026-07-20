@@ -27,7 +27,7 @@ from app.agent.state import (
     count_tool_calls,
 )
 from app.config import get_settings
-from app.llm import chat_model
+from app import llm
 from app.tools.base import ToolContext, ToolFactory
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class RootNode:
 
         system = build_system_prompt(mode=str(state.mode or AgentMode.PREPRODUCTION))
 
-        model = chat_model("root", max_tokens=8192, temperature=0.4)
+        model = llm.chat_model("root", max_tokens=8192, temperature=0.4)
 
         # 4. Límites, con degradación amable: al alcanzarlos no se lanza una excepción,
         #    se le quitan las herramientas al modelo y se le pide que cierre. El usuario

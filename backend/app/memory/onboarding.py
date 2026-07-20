@@ -257,10 +257,10 @@ class MemoryOnboarding:
     def _get_model(self) -> Any:
         if self._model is not None:
             return self._model
-        from app.llm import chat_model
+        from app import llm
 
         settings = get_settings()
-        self._model = chat_model(
+        self._model = llm.chat_model(
             "fast",
             max_tokens=4_096,
             temperature=0.3,

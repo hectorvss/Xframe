@@ -69,6 +69,19 @@ create table if not exists auth.users (
   raw_user_meta_data jsonb not null default '{}'::jsonb
 );
 
+-- `my_sessions()` y `revoke_session()` de schema.sql leen de aquí. Supabase la provee
+-- de serie; nuestro `auth` de mentira no, y sin ella el esquema entero fallaba al
+-- aplicarse con `relation "auth.sessions" does not exist`, dejando los siete tests de
+-- integración en error. Solo se declaran las columnas que esas dos funciones tocan.
+create table if not exists auth.sessions (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references auth.users on delete cascade,
+  created_at   timestamptz not null default now(),
+  refreshed_at timestamp,
+  user_agent   text,
+  ip           inet
+);
+
 -- El backend usa la conexión de servicio y salta RLS, así que `auth.uid()` nunca
 -- resuelve a nadie. Devuelve NULL a propósito: si alguna consulta del backend
 -- dependiera de ella para filtrar, aquí no devolvería filas y el test lo vería.
@@ -196,6 +209,29 @@ async def db(schema: str) -> Any:
                        public.visual_styles restart identity cascade
         """
     )
+
+    # Los checkpoints de LangGraph viven en sus propias tablas y **no** cuelgan de
+    # `projects`, así que el `cascade` de arriba no los toca. Como el `conversation_id`
+    # de la semilla es fijo, sin esto un test hereda el checkpoint del anterior: el
+    # runner encuentra estado previo, deduce de él un modo o un turno a medias, y el
+    # resultado es un test que pasa en aislamiento y falla dentro de la suite —o al
+    # revés—, según el orden. Se hace con `to_regclass` porque las tablas solo existen
+    # después del primer `checkpointer.setup()`.
+    await app_db.execute(
+        """
+        do $$
+        declare t text;
+        begin
+          foreach t in array array['checkpoints', 'checkpoint_blobs',
+                                   'checkpoint_writes', 'checkpoint_migrations']
+          loop
+            if to_regclass('public.' || t) is not null then
+              execute format('truncate table public.%I', t);
+            end if;
+          end loop;
+        end $$;
+        """
+    )
     _reset_caches()
 
     try:
@@ -274,10 +310,23 @@ async def seed(db: Any) -> Seed:
         "director@xframe.test",
     )
     # El trigger `on_auth_user_created` ya creó el perfil; aquí solo se le da plan y saldo.
-    # `profiles.credits` es el espejo que lee el frontend: el libro mayor se siembra solo
-    # desde esta columna la primera vez que alguien reserva (`_balance_bootstrapped`).
     await db.execute(
         "update public.profiles set plan = 'pro', credits = $2 where id = $1::uuid",
+        SEED.user_id,
+        SEED.credits,
+    )
+    # Y el libro mayor, que es la fuente de verdad. `profiles.credits` es solo el espejo
+    # que lee el frontend.
+    #
+    # Sembrarlo aquí no es adorno: en producción lo hizo la migración, y sin esta fila el
+    # saldo arranca en 0 y el bootstrap perezoso salta **a mitad del primer `reserve`**.
+    # El resultado era un test que leía 0 antes de encolar y 9904 después, y que por tanto
+    # no comprobaba nada de lo que decía comprobar.
+    await db.execute(
+        """
+        insert into public.credit_ledger (profile_id, kind, amount, balance_after, note)
+        values ($1::uuid, 'grant', $2, $2, 'saldo inicial del fixture')
+        """,
         SEED.user_id,
         SEED.credits,
     )
@@ -354,9 +403,10 @@ async def seed(db: Any) -> Seed:
     )
     await db.execute(
         """
-        insert into public.canvas_nodes (id, project_id, type, title, text, position, spec)
-        values ($1::uuid, $2::uuid, 'shot', 'Plano 1', 'Marta entra en el bar',
-                1, '{"duration_s": 6}'::jsonb)
+        insert into public.canvas_nodes
+               (id, project_id, node_key, type, title, text, position, spec)
+        values ($1::uuid, $2::uuid, 'shot-seed-1', 'shot', 'Plano 1',
+                'Marta entra en el bar', 1, '{"duration_s": 6}'::jsonb)
         """,
         SEED.shot_id,
         SEED.project_id,

@@ -89,6 +89,14 @@ límite. El mismo valor que usa la capa HTTP, a propósito: dos capas con jitter
 producen un patrón de reintento que nadie ha razonado.
 """
 
+SHUTDOWN_GRACE_S = 10.0
+"""
+Margen para que los jobs en vuelo terminen al apagar antes de cancelarlos.
+
+Diez segundos: lo justo para que un job que ya está escribiendo en la base de datos cierre
+su transacción, y no tanto como para que un despliegue se quede esperando a uno colgado.
+"""
+
 STALE_AFTER_S = 3600
 """Un job sin latido durante una hora se da por muerto y se reembolsa."""
 
@@ -268,8 +276,34 @@ class JobWorker:
             self._running.add(task)
             task.add_done_callback(self._running.discard)
 
-        if self._running:
-            await asyncio.gather(*self._running, return_exceptions=True)
+        await self._drain(timeout_s=SHUTDOWN_GRACE_S)
+
+    async def _drain(self, *, timeout_s: float) -> None:
+        """
+        Espera a los jobs en vuelo al apagar, pero no para siempre.
+
+        `gather` a secas es lo que había, y cuelga el proceso indefinidamente si una tarea
+        se queda atascada —esperando un semáforo que nadie libera, o un poll que no
+        vuelve—. En producción eso convierte un SIGTERM en un `kill -9` a los treinta
+        segundos, y el job muere en `running` en vez de quedar liquidado.
+
+        Se les da margen para terminar; a los que no lleguen se les cancela, y `_guarded`
+        —que captura `CancelledError` bajo `shield`— los deja en un estado terminal antes
+        de morir. Salir sucio deprisa es peor que salir limpio con un tope.
+        """
+        if not self._running:
+            return
+        pending = set(self._running)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True), timeout=timeout_s
+            )
+        except TimeoutError:
+            stuck = [t for t in pending if not t.done()]
+            logger.warning("worker_shutdown_forced", extra={"stuck_jobs": len(stuck)})
+            for task in stuck:
+                task.cancel()
+            await asyncio.gather(*stuck, return_exceptions=True)
 
     async def stop(self) -> None:
         self._stop.set()

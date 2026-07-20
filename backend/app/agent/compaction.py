@@ -467,9 +467,9 @@ async def _default_summarizer(messages: Sequence[BaseMessage]) -> str:
     """
 
     settings = get_settings()
-    from app.llm import chat_model
+    from app import llm
 
-    model = chat_model("summarize", max_tokens=8_192, streaming=False)
+    model = llm.chat_model("summarize", max_tokens=8_192, streaming=False)
     response = await model.ainvoke(
         [*_strip_cache_control(messages), HumanMessage(content=SUMMARY_PROMPT)]
     )

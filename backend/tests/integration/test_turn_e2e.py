@@ -68,6 +68,19 @@ class FakeChat:
     calls: ClassVar[list[list[Any]]] = []
     root_models: ClassVar[set[str]] = set()
 
+    def with_structured_output(self, schema: Any, **_: Any) -> FakeChat:
+        """
+        El colector de memoria y el onboarding piden salida estructurada.
+
+        Devuelve el propio doble en vez de un envoltorio: lo que este test verifica es el
+        turno —herramientas, escrituras, eventos—, no lo que destile la memoria. Sin este
+        método, el onboarding reventaba con un `AttributeError` que el nodo de memoria se
+        tragaba, así que el turno "funcionaba" mientras la biblia de estilo no se escribía
+        nunca. Un doble incompleto que falla en silencio es peor que ninguno.
+        """
+        self.structured_schema = schema
+        return self
+
     def bind_tools(self, tools: Any, **_: Any) -> FakeChat:
         self._tools = list(tools)
         return self
@@ -92,25 +105,31 @@ class FakeChat:
 @pytest.fixture
 def fake_llm(monkeypatch: pytest.MonkeyPatch, seed: Seed) -> type[FakeChat]:
     """
-    Enchufa `FakeChat` allí donde se importa `ChatAnthropic`.
+    Enchufa `FakeChat` en la fábrica de modelos.
 
-    Dos sitios y los dos hacen falta: `executables` la importa a nivel de módulo (así que
-    hay que parchear el atributo ya vinculado) y `compaction`/`memory.collector` la
-    importan perezosamente dentro de la función (así que hay que parchear el paquete).
+    Se parchea `app.llm.chat_model` y no el cliente de un proveedor concreto: desde que
+    existe la fábrica, `executables`, `compaction`, `memory.collector` y `onboarding`
+    construyen su modelo por ahí, y cuál sea el proveedor de debajo —OpenAI o Anthropic—
+    es precisamente lo que este test no debe saber. Antes se parcheaba `ChatAnthropic` en
+    dos sitios, y el cambio de proveedor lo dejó apuntando a un atributo inexistente.
     """
-    pytest.importorskip("langchain_anthropic", reason="el e2e del turno necesita el cliente del LLM")
-
-    import langchain_anthropic
-
-    from app.agent import executables
+    import app.llm as llm_module
     from app.config import get_settings
 
     FakeChat.script = []
     FakeChat.calls = []
     FakeChat.root_models = {get_settings().model_root}
 
-    monkeypatch.setattr(executables, "ChatAnthropic", FakeChat)
-    monkeypatch.setattr(langchain_anthropic, "ChatAnthropic", FakeChat)
+    def _fake_chat_model(purpose: str = "root", **kwargs: Any) -> Any:
+        settings = get_settings()
+        name = {
+            "root": settings.model_root,
+            "fast": settings.model_fast,
+            "summarize": settings.model_summarize,
+        }[purpose]
+        return FakeChat(model=name, **kwargs)
+
+    monkeypatch.setattr(llm_module, "chat_model", _fake_chat_model)
     return FakeChat
 
 
@@ -183,7 +202,7 @@ async def test_turno_completo_de_mensaje_a_asset(
             project_id=seed.project_id,
             user_id=seed.user_id,
             message="Renderiza el plano 1 con Marta.",
-            ui_context={"open_tab": "timeline", "selected_asset_ids": []},
+            ui_context={"open_tab": "canvas", "selected_asset_ids": []},
         ):
             eventos.append(evento)
 

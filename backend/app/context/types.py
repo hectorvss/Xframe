@@ -126,6 +126,26 @@ class ElementContext(BaseModel):
     sheet: str | None = None
     thumb_url: str | None = None
 
+    status: Literal["generating", "ready", "failed"] = "ready"
+    """Estado del asset que respalda al element. Sin él no se puede saber si sirve."""
+
+    @property
+    def usable_as_reference(self) -> bool:
+        """
+        ¿Puede pasarse a un proveedor como referencia visual?
+
+        Existe también en `taxonomy.repo.Element`, y **esa es la comprobación
+        autoritativa**: allí se exige además que haya URL, y es la que consultan el
+        builder y las tools antes de gastar créditos. Aquí se replica porque un
+        `ElementContext` es lo que el contexto entrega al resto del sistema, y preguntarle
+        si un element sirve es lo natural: sin la propiedad, quien lo intentaba se comía
+        un `AttributeError` en tiempo de ejecución en vez de una respuesta.
+
+        Un asset solo llega a `ready` después de que el worker haya subido el binario, así
+        que el estado implica la existencia de la imagen.
+        """
+        return self.status == "ready"
+
     @property
     def mention(self) -> str:
         """`@nombre-del-element`, con espacios colapsados para que la mención sea un token."""

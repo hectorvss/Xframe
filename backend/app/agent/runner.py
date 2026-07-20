@@ -166,6 +166,15 @@ class ConversationRunner:
             return None
 
         stored_mode = snapshot.values.get("mode") if snapshot else None
+        if not stored_mode:
+            # Sin checkpoint no hay modo en el estado, y caer siempre a preproducción
+            # ignora lo que diga `conversations.mode`. Esa columna la escribe
+            # `switch_mode` y es lo único que sobrevive a que el checkpoint se pierda o
+            # se compacte, así que es la fuente de verdad al arrancar: sin esta consulta
+            # nadie la leía jamás, una conversación en producción volvía a preproducción
+            # en cuanto se reanudaba, y el modelo pedía una tool de generación que ya no
+            # estaba montada.
+            stored_mode = await self._stored_mode(conversation_id)
 
         # El `ui_context` es lo que el usuario tiene delante. La versión anterior lo
         # aceptaba como parámetro y no lo usaba nunca, así que "el frontend manda
@@ -201,6 +210,21 @@ class ConversationRunner:
                 additional_kwargs={JOB_EVENT_FLAG: True},
             )
         return HumanMessage(content=message or "", id=str(uuid4()))
+
+
+    @staticmethod
+    async def _stored_mode(conversation_id: str) -> str | None:
+        """Modo persistido de la conversación. `None` si no existe o si falla la consulta."""
+        from app import db
+
+        try:
+            row = await db.fetchrow(
+                "select mode from public.conversations where id = $1::uuid", conversation_id
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("stored_mode_lookup_failed", extra={"conversation": conversation_id})
+            return None
+        return row["mode"] if row else None
 
     def _to_event(self, chunk: Any) -> dict[str, Any] | None:
         """Traduce el stream de LangGraph al protocolo que entiende el frontend."""
