@@ -9598,7 +9598,8 @@ function PrivacySettings() {
 }
 
 function SettingsPage({ page }) {
-  const [sideW, resizeSide] = useResizableWidth("xf-settings-sidebar", 264, 220, 420);
+  // 300 px de ancho: cabe "Dominios del espacio de trabajo" sin recortar.
+  const [sideW, resizeSide] = useResizableWidth("xf-settings-sidebar", 300, 240, 460);
   return (
     <div className="min-h-screen bg-background">
       <SettingsSide page={page} width={sideW} onResize={resizeSide} />
