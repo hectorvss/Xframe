@@ -375,3 +375,97 @@ create policy "consumo propio" on public.credit_usage
   for all to authenticated
   using ((select auth.uid()) = owner_id)
   with check ((select auth.uid()) = owner_id);
+
+-- --------------------------------------------- personas del espacio
+-- Miembros, invitaciones por correo y solicitudes de acceso.
+
+create table if not exists public.workspace_members (
+  id            uuid primary key default gen_random_uuid(),
+  workspace_id  uuid        not null references public.workspaces on delete cascade,
+  user_id       uuid        not null references public.profiles on delete cascade,
+  role          text        not null default 'member'
+                  check (role in ('owner', 'admin', 'member', 'viewer')),
+  credit_limit  integer     check (credit_limit is null or credit_limit >= 0),
+  joined_at     timestamptz not null default now(),
+  unique (workspace_id, user_id)
+);
+
+create table if not exists public.workspace_invites (
+  id            uuid primary key default gen_random_uuid(),
+  workspace_id  uuid        not null references public.workspaces on delete cascade,
+  email         text        not null,
+  role          text        not null default 'member'
+                  check (role in ('admin', 'member', 'viewer')),
+  status        text        not null default 'pending'
+                  check (status in ('pending', 'accepted', 'revoked', 'expired')),
+  token         text        not null unique default encode(gen_random_bytes(16), 'hex'),
+  invited_by    uuid        references public.profiles on delete set null,
+  created_at    timestamptz not null default now(),
+  expires_at    timestamptz not null default now() + interval '14 days'
+);
+
+-- Solo una invitación viva por correo y espacio.
+create unique index if not exists invites_pending_key
+  on public.workspace_invites (workspace_id, lower(email))
+  where status = 'pending';
+
+create table if not exists public.workspace_join_requests (
+  id            uuid primary key default gen_random_uuid(),
+  workspace_id  uuid        not null references public.workspaces on delete cascade,
+  user_id       uuid        not null references public.profiles on delete cascade,
+  message       text        not null default '',
+  status        text        not null default 'pending'
+                  check (status in ('pending', 'approved', 'rejected')),
+  created_at    timestamptz not null default now(),
+  unique (workspace_id, user_id)
+);
+
+alter table public.workspace_members       enable row level security;
+alter table public.workspace_invites       enable row level security;
+alter table public.workspace_join_requests enable row level security;
+
+-- Evita repetir la subconsulta de propiedad en cada política.
+create or replace function public.owns_workspace(ws uuid)
+returns boolean language sql stable security definer set search_path = public
+as $fn$
+  select exists (
+    select 1 from public.workspaces w
+    where w.id = ws and w.owner_id = auth.uid()
+  );
+$fn$;
+
+revoke all on function public.owns_workspace(uuid) from public, anon;
+grant execute on function public.owns_workspace(uuid) to authenticated;
+
+create policy "miembros del espacio" on public.workspace_members
+  for all to authenticated
+  using (public.owns_workspace(workspace_id) or user_id = (select auth.uid()))
+  with check (public.owns_workspace(workspace_id));
+
+create policy "invitaciones del espacio" on public.workspace_invites
+  for all to authenticated
+  using (public.owns_workspace(workspace_id))
+  with check (public.owns_workspace(workspace_id));
+
+create policy "solicitudes del espacio" on public.workspace_join_requests
+  for all to authenticated
+  using (public.owns_workspace(workspace_id) or user_id = (select auth.uid()))
+  with check (public.owns_workspace(workspace_id) or user_id = (select auth.uid()));
+
+-- El dueño es miembro desde el primer momento.
+create or replace function public.handle_new_workspace()
+returns trigger language plpgsql security definer set search_path = public
+as $fn$
+begin
+  insert into public.workspace_members (workspace_id, user_id, role)
+  values (new.id, new.owner_id, 'owner')
+  on conflict do nothing;
+  return new;
+end;
+$fn$;
+
+revoke all on function public.handle_new_workspace() from public, anon, authenticated;
+
+create trigger on_workspace_created
+  after insert on public.workspaces
+  for each row execute function public.handle_new_workspace();

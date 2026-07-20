@@ -426,6 +426,83 @@ export const db = {
     return DRIVER.remove("workspaces", { id });
   },
 
+  /* --- personas del espacio de trabajo --- */
+
+  /** Miembros con su perfil incorporado. */
+  async listMembers(workspaceId) {
+    if (!hasSupabase) return DRIVER.select("workspace_members", { workspace_id: workspaceId });
+    const { data, error } = await supabase
+      .from("workspace_members")
+      .select("*, profile:profiles(id, name, email, avatar_url)")
+      .eq("workspace_id", workspaceId)
+      .order("joined_at");
+    if (error) throw error;
+    return data ?? [];
+  },
+
+  async updateMember(id, patch) {
+    return DRIVER.update("workspace_members", id, patch);
+  },
+
+  async removeMember(id) {
+    return DRIVER.remove("workspace_members", { id });
+  },
+
+  async listInvites(workspaceId) {
+    const rows = await DRIVER.select("workspace_invites", {
+      workspace_id: workspaceId,
+    });
+    return rows.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  },
+
+  async createInvite(workspaceId, { email, role, invitedBy }) {
+    return DRIVER.insert("workspace_invites", {
+      ...(hasSupabase
+        ? {}
+        : {
+            id: uid(),
+            token: uid() + uid(),
+            status: "pending",
+            created_at: nowISO(),
+            expires_at: new Date(Date.now() + 14 * 86400000).toISOString(),
+          }),
+      workspace_id: workspaceId,
+      email: email.trim().toLowerCase(),
+      role,
+      invited_by: invitedBy,
+    });
+  },
+
+  async updateInvite(id, patch) {
+    return DRIVER.update("workspace_invites", id, patch);
+  },
+
+  async listJoinRequests(workspaceId) {
+    if (!hasSupabase)
+      return DRIVER.select("workspace_join_requests", { workspace_id: workspaceId });
+    const { data, error } = await supabase
+      .from("workspace_join_requests")
+      .select("*, profile:profiles(id, name, email, avatar_url)")
+      .eq("workspace_id", workspaceId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data ?? [];
+  },
+
+  /** Aprueba una solicitud: la marca y da de alta a la persona. */
+  async resolveJoinRequest(request, approve) {
+    await DRIVER.update("workspace_join_requests", request.id, {
+      status: approve ? "approved" : "rejected",
+    });
+    if (!approve) return null;
+    return DRIVER.insert("workspace_members", {
+      ...(hasSupabase ? {} : { id: uid(), joined_at: nowISO() }),
+      workspace_id: request.workspace_id,
+      user_id: request.user_id,
+      role: "member",
+    });
+  },
+
   /* --- dispositivos y claves de API --- */
 
   /** Sesiones abiertas del usuario, con navegador, sistema e IP. */

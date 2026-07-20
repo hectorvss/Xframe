@@ -1457,10 +1457,13 @@ const pricingFaqs = [
   "¿Ofrecen un descuento para estudiantes?",
   "¿Dónde puedo obtener más información?",
 ];
-function PricingCard({ p, i }) {
+function PricingCard({ p, i, annual = false }) {
   const isPro = p.name === "Pro";
   const isEnterprise = p.name === "Enterprise";
   const hasSelect = i === 1 || i === 2;
+  const basePrice = isPro ? 25 : 50;
+  const [credits, setCredits] = useState(100);
+  const price = tierPrice(basePrice, credits, annual);
   return (
     <Card className="flex flex-col p-6">
       <h3 className="text-xl font-semibold">{p.name}</h3>
@@ -1472,17 +1475,23 @@ function PricingCard({ p, i }) {
             isEnterprise ? "text-xl text-muted-foreground" : "text-4xl",
           )}
         >
-          {p.price}
+          {hasSelect ? `€${price.toLocaleString("es-ES")}` : p.price}
         </span>
       </div>
       <p className="mt-1 min-h-[20px] text-sm text-muted-foreground">
-        {isEnterprise ? "Precios por volumen" : p.cadence}
+        {isEnterprise
+          ? "Precios por volumen"
+          : hasSelect
+            ? `al mes IVA incl.${annual ? " · facturado anual" : ""}`
+            : p.cadence}
       </p>
       {hasSelect ? (
-        <button className="mt-4 flex h-9 w-full items-center justify-between rounded-md border bg-background px-3 text-sm">
-          100 créditos mensuales
-          <ChevronDown className="size-3.5 text-muted-foreground" />
-        </button>
+        <CreditTierSelect
+          basePrice={basePrice}
+          annual={annual}
+          value={credits}
+          onChange={setCredits}
+        />
       ) : (
         <div className="mt-4 h-9" />
       )}
@@ -1584,7 +1593,7 @@ function Pricing() {
 
       <section className="mx-auto grid max-w-6xl gap-5 px-6 md:grid-cols-2 lg:grid-cols-4">
         {plans.map((p, i) => (
-          <PricingCard key={p.name} p={p} i={i} />
+          <PricingCard key={p.name} p={p} i={i} annual={billing === "annual"} />
         ))}
       </section>
 
@@ -7195,7 +7204,7 @@ function CreditTierSelect({ basePrice, annual, value, onChange }) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto rounded-lg border bg-background p-1 shadow-2xl">
+          <div className="scrollbar-hidden absolute left-0 top-full z-50 mt-1 max-h-[420px] w-[300px] overflow-y-auto rounded-lg border bg-background p-1 shadow-2xl">
             {creditTiers.map((credits) => {
               const discount = volumeDiscount(credits);
               return (
@@ -7210,7 +7219,7 @@ function CreditTierSelect({ basePrice, annual, value, onChange }) {
                     credits === value && "bg-violet-50 text-violet-700",
                   )}
                 >
-                  <span className="flex-1 text-left">
+                  <span className="flex-1 whitespace-nowrap text-left font-medium">
                     {credits.toLocaleString("es-ES")} créditos
                   </span>
                   {discount > 0 && (
@@ -7724,131 +7733,539 @@ function BillingSettings() {
   );
 }
 
-const peopleTabs = ["All", "Invitations", "Collaborators", "Requests"];
+
+const peopleTabs = [
+  ["all", "Todos"],
+  ["invites", "Invitaciones"],
+  ["requests", "Solicitudes"],
+];
+const memberRoles = [
+  ["admin", "Administrador"],
+  ["member", "Miembro"],
+  ["viewer", "Solo lectura"],
+];
+const roleLabel = (role) =>
+  role === "owner"
+    ? "Propietario"
+    : (memberRoles.find(([id]) => id === role)?.[1] ?? role);
+
+/** El trabajo en equipo es de plan Business en adelante. */
+const canInvite = (plan) => plan === "business" || plan === "enterprise";
+
 function PeopleSettings() {
-  const [tab, setTab] = useState("All");
+  const { profile, workspace } = useStudio();
+  const [tab, setTab] = useState("all");
+  const [members, setMembers] = useState([]);
+  const [invites, setInvites] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [query, setQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [inviting, setInviting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const notify = (text) => {
+    setToast(text);
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  const reload = async () => {
+    if (!workspace) return;
+    const [m, i, r] = await Promise.all([
+      db.listMembers(workspace.id).catch(() => []),
+      db.listInvites(workspace.id).catch(() => []),
+      db.listJoinRequests(workspace.id).catch(() => []),
+    ]);
+    setMembers(m);
+    setInvites(i);
+    setRequests(r);
+  };
+
+  useEffect(() => {
+    reload();
+  }, [workspace?.id]);
+
+  if (!profile || !workspace) return null;
+
+  const teamEnabled = canInvite(profile.plan);
+  const pendingInvites = invites.filter((i) => i.status === "pending");
+  const pendingRequests = requests.filter((r) => r.status === "pending");
+
+  const matches = (text) => text.toLowerCase().includes(query.toLowerCase());
+  const visibleMembers = members.filter(
+    (m) =>
+      (roleFilter === "all" || m.role === roleFilter) &&
+      (matches(m.profile?.name ?? "") || matches(m.profile?.email ?? "")),
+  );
+
+  /** Exporta la lista tal y como se ve, en CSV. */
+  const exportCsv = () => {
+    const rows = [
+      ["Nombre", "Correo", "Rol", "Alta", "Límite de créditos"],
+      ...visibleMembers.map((m) => [
+        m.profile?.name ?? "",
+        m.profile?.email ?? "",
+        roleLabel(m.role),
+        new Date(m.joined_at).toLocaleDateString("es-ES"),
+        m.credit_limit ?? "Sin límite",
+      ]),
+    ];
+    const csv = rows
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `miembros-${workspace.slug ?? workspace.id}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const inviteLink = `${location.origin}/join/${workspace.slug ?? workspace.id}`;
+
   return (
     <div className="mx-auto max-w-6xl px-8 py-10">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">People</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Personas</h1>
           <p className="mt-1 max-w-2xl text-muted-foreground">
-            Inviting people to <b className="text-foreground">Héctor's Xframe</b>{" "}
-            gives access to workspace shared projects and credits. You have 1
-            builder in this workspace.
+            Invitar a alguien a <b className="text-foreground">{workspace.name}</b>{" "}
+            le da acceso a los proyectos y créditos compartidos. Ahora mismo hay{" "}
+            {members.length} {members.length === 1 ? "persona" : "personas"} en
+            este espacio.
           </p>
         </div>
-        <UIButton variant="ghost" className="shrink-0 text-muted-foreground">
-          Abrir docs <ExternalLink />
-        </UIButton>
       </div>
 
-      <div className="mt-6 inline-flex rounded-full border bg-muted p-1 text-sm">
-        {peopleTabs.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={cn(
-              "rounded-full px-4 py-1.5 transition-colors",
-              tab === t
-                ? "bg-background shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
+      {!teamEnabled && (
+        <Card className="mt-6 flex flex-wrap items-center gap-4 border-violet-200 bg-violet-50/50 p-4">
+          <Users className="size-5 shrink-0 text-violet-600" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">
+              El trabajo en equipo es del plan Business
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Mejora el plan para invitar a tu equipo, asignar roles y repartir
+              créditos entre sus miembros.
+            </p>
+          </div>
+          <UIButton
+            className="bg-violet-600 text-white hover:bg-violet-700"
+            onClick={() => go("/settings/billing")}
           >
-            {t}
-          </button>
-        ))}
+            <Zap /> Mejorar plan
+          </UIButton>
+        </Card>
+      )}
+
+      {toast && (
+        <div className="mt-4 flex items-center gap-2 rounded-lg border p-3 text-sm text-muted-foreground">
+          <Check className="size-4 shrink-0" />
+          {toast}
+        </div>
+      )}
+
+      <div className="mt-6 inline-flex rounded-full border bg-muted p-1 text-sm">
+        {peopleTabs.map(([id, label]) => {
+          const count =
+            id === "invites"
+              ? pendingInvites.length
+              : id === "requests"
+                ? pendingRequests.length
+                : 0;
+          return (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-full px-4 py-1.5 transition-colors",
+                tab === id
+                  ? "bg-background shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {label}
+              {count > 0 && (
+                <span className="rounded-full bg-primary px-1.5 text-[10px] font-medium text-primary-foreground">
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       <div className="mt-5 flex flex-wrap items-center gap-2">
         <div className="relative flex-1 md:max-w-xs">
           <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
           <input
-            placeholder="Search..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar por nombre o correo…"
             className="h-9 w-full rounded-md border bg-background pl-8 pr-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
         </div>
-        <button className="flex h-9 items-center gap-2 rounded-md border bg-background px-3 text-sm">
-          All roles <ChevronDown className="size-3.5 text-muted-foreground" />
-        </button>
+        <SettingSelect
+          value={roleFilter}
+          options={[["all", "Todos los roles"], ["owner", "Propietario"], ...memberRoles]}
+          onChange={setRoleFilter}
+          className="w-[180px]"
+        />
         <div className="ml-auto flex items-center gap-2">
-          <UIButton variant="outline" size="icon">
-            <Grid2X2 />
+          <UIButton variant="outline" onClick={exportCsv}>
+            <Download /> Exportar
           </UIButton>
-          <UIButton variant="outline">
-            <Download /> Export
+          <UIButton
+            variant="outline"
+            disabled={!teamEnabled}
+            onClick={() => {
+              navigator.clipboard?.writeText(inviteLink);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+          >
+            {copied ? <Check /> : <Link />} {copied ? "Copiado" : "Enlace de invitación"}
           </UIButton>
-          <UIButton variant="outline">
-            <Link /> Invite link
-          </UIButton>
-          <UIButton>
-            <UserPlus /> Invite members
+          <UIButton disabled={!teamEnabled} onClick={() => setInviting(true)}>
+            <UserPlus /> Invitar
           </UIButton>
         </div>
       </div>
 
-      {tab === "All" ? (
+      {tab === "all" && (
         <Card className="mt-4 overflow-hidden p-0">
-          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_auto] items-center gap-4 border-b px-5 py-3 text-xs font-medium text-muted-foreground">
-            {[
-              "Name",
-              "Role",
-              "Joined/Invited",
-              "July usage",
-              "Total usage",
-              "Credit limit",
-            ].map((h) => (
-              <span key={h} className="flex items-center gap-1">
-                {h}
-                <ChevronsUpDown className="size-3" />
-              </span>
-            ))}
+          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] items-center gap-4 border-b px-5 py-3 text-xs font-medium text-muted-foreground">
+            <span>Nombre</span>
+            <span>Rol</span>
+            <span>Alta</span>
+            <span>Límite de créditos</span>
             <span />
           </div>
-          <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_auto] items-center gap-4 px-5 py-4 text-sm">
-            <div className="flex items-center gap-3">
-              <span className="flex size-9 items-center justify-center rounded-full bg-green-600 text-xs font-semibold text-white">
-                H
-              </span>
-              <div className="min-w-0">
-                <p className="truncate font-medium">
-                  Héctor Vidal Sánchez (you)
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  hectorvidal0411@gmail.com
-                </p>
-              </div>
+          {visibleMembers.length === 0 ? (
+            <p className="px-5 py-6 text-sm text-muted-foreground">
+              Nadie coincide con la búsqueda.
+            </p>
+          ) : (
+            <div className="divide-y">
+              {visibleMembers.map((member) => {
+                const isMe = member.user_id === profile.id;
+                const isOwner = member.role === "owner";
+                return (
+                  <div
+                    key={member.id}
+                    className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] items-center gap-4 px-5 py-4 text-sm"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-green-600 text-xs font-semibold text-white">
+                        {member.profile?.avatar_url ? (
+                          <img
+                            src={member.profile.avatar_url}
+                            alt=""
+                            className="size-full object-cover"
+                          />
+                        ) : (
+                          (member.profile?.name ?? "?").charAt(0).toUpperCase()
+                        )}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">
+                          {member.profile?.name}
+                          {isMe && (
+                            <span className="text-muted-foreground"> (tú)</span>
+                          )}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {member.profile?.email}
+                        </p>
+                      </div>
+                    </div>
+
+                    {isOwner ? (
+                      <span className="text-muted-foreground">Propietario</span>
+                    ) : (
+                      <SettingSelect
+                        value={member.role}
+                        options={memberRoles}
+                        onChange={async (role) => {
+                          await db.updateMember(member.id, { role });
+                          await reload();
+                          notify("Rol actualizado");
+                        }}
+                        className="h-8 w-[150px]"
+                      />
+                    )}
+
+                    <span className="text-muted-foreground">
+                      {new Date(member.joined_at).toLocaleDateString("es-ES", {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </span>
+
+                    <span className="text-muted-foreground">
+                      {isOwner ? (
+                        "Sin límite"
+                      ) : (
+                        <InlineEdit
+                          value={
+                            member.credit_limit == null
+                              ? ""
+                              : String(member.credit_limit)
+                          }
+                          placeholder="Sin límite"
+                          validate={(v) =>
+                            v && !/^\d+$/.test(v) ? "Solo números" : null
+                          }
+                          onSave={async (value) => {
+                            await db.updateMember(member.id, {
+                              credit_limit: value === "" ? null : Number(value),
+                            });
+                            await reload();
+                            notify("Límite actualizado");
+                          }}
+                        />
+                      )}
+                    </span>
+
+                    {isOwner ? (
+                      <span />
+                    ) : (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            aria-label="Acciones"
+                            className="text-muted-foreground"
+                          >
+                            <MoreHorizontal className="size-4" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={async () => {
+                              await db.removeMember(member.id);
+                              await reload();
+                              notify("Persona eliminada del espacio");
+                            }}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <X className="mr-2 size-3.5" /> Quitar del espacio
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <button className="flex items-center gap-1 text-muted-foreground">
-              Owner <ChevronDown className="size-3.5" />
-            </button>
-            <span className="text-muted-foreground">Jul 24, 2025</span>
-            <span className="text-muted-foreground">2 credits</span>
-            <span className="text-muted-foreground">10 credits</span>
-            <span />
-            <button className="text-muted-foreground hover:text-foreground">
-              <MoreHorizontal className="size-4" />
-            </button>
-          </div>
+          )}
         </Card>
-      ) : (
-        <div className="mt-4 flex flex-col items-center justify-center gap-3 py-24 text-center">
-          <img
-            src="/lovable-logo.svg"
-            alt=""
-            className="size-10 opacity-30 grayscale"
-          />
-          <p className="text-muted-foreground">No {tab.toLowerCase()} found</p>
-          <UIButton variant="outline">
-            <UserPlus /> Invite members
-          </UIButton>
-        </div>
       )}
 
-      <p className="mt-4 text-xs text-muted-foreground">
-        {tab === "All" ? "Showing 1-1 of 1" : "No results"}
-      </p>
+      {tab === "invites" && (
+        <Card className="mt-4 overflow-hidden p-0">
+          {pendingInvites.length === 0 ? (
+            <div className="p-10 text-center">
+              <Mail className="mx-auto size-7 text-muted-foreground" />
+              <p className="mt-3 font-medium">No hay invitaciones pendientes</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Las invitaciones que envíes aparecerán aquí hasta que se acepten.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y">
+              {pendingInvites.map((invite) => (
+                <div key={invite.id} className="flex items-center gap-3 px-5 py-4">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
+                    <Mail className="size-4 text-muted-foreground" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{invite.email}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {roleLabel(invite.role)} · Enviada {timeAgo(invite.created_at)}{" "}
+                      · Caduca{" "}
+                      {new Date(invite.expires_at).toLocaleDateString("es-ES")}
+                    </p>
+                  </div>
+                  <UIButton
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(
+                        `${location.origin}/join/${invite.token}`,
+                      );
+                      notify("Enlace de la invitación copiado");
+                    }}
+                  >
+                    <Copy /> Copiar enlace
+                  </UIButton>
+                  <UIButton
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={async () => {
+                      await db.updateInvite(invite.id, { status: "revoked" });
+                      await reload();
+                      notify("Invitación revocada");
+                    }}
+                  >
+                    Revocar
+                  </UIButton>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {tab === "requests" && (
+        <Card className="mt-4 overflow-hidden p-0">
+          {pendingRequests.length === 0 ? (
+            <div className="p-10 text-center">
+              <UserPlus className="mx-auto size-7 text-muted-foreground" />
+              <p className="mt-3 font-medium">No hay solicitudes pendientes</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Cuando alguien pida entrar en el espacio, lo verás aquí.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y">
+              {pendingRequests.map((request) => (
+                <div key={request.id} className="flex items-center gap-3 px-5 py-4">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-green-600 text-xs font-semibold text-white">
+                    {(request.profile?.name ?? "?").charAt(0).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {request.profile?.name}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {request.profile?.email} · {timeAgo(request.created_at)}
+                    </p>
+                    {request.message && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        «{request.message}»
+                      </p>
+                    )}
+                  </div>
+                  <UIButton
+                    variant="ghost"
+                    size="sm"
+                    onClick={async () => {
+                      await db.resolveJoinRequest(request, false);
+                      await reload();
+                      notify("Solicitud rechazada");
+                    }}
+                  >
+                    Rechazar
+                  </UIButton>
+                  <UIButton
+                    size="sm"
+                    disabled={!teamEnabled}
+                    onClick={async () => {
+                      await db.resolveJoinRequest(request, true);
+                      await reload();
+                      notify("Persona añadida al espacio");
+                    }}
+                  >
+                    <Check /> Aceptar
+                  </UIButton>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {inviting && (
+        <InviteDialog
+          workspace={workspace}
+          profile={profile}
+          onClose={() => setInviting(false)}
+          onDone={async (message) => {
+            await reload();
+            notify(message);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function InviteDialog({ workspace, profile, onClose, onDone }) {
+  const [emails, setEmails] = useState("");
+  const [role, setRole] = useState("member");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const list = emails
+      .split(/[\s,;]+/)
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+    const invalid = list.find((value) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value));
+    if (!list.length) return setError("Escribe al menos un correo");
+    if (invalid) return setError(`«${invalid}» no es un correo válido`);
+
+    setBusy(true);
+    try {
+      for (const email of list) {
+        await db.createInvite(workspace.id, {
+          email,
+          role,
+          invitedBy: profile.id,
+        });
+      }
+      await onDone(
+        list.length === 1
+          ? "Invitación enviada"
+          : `${list.length} invitaciones enviadas`,
+      );
+      onClose();
+    } catch (err) {
+      setError(
+        /duplicate|unique/i.test(String(err?.message))
+          ? "Ya hay una invitación pendiente para ese correo"
+          : String(err?.message ?? err),
+      );
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle>Invitar a {workspace.name}</DialogTitle>
+          <DialogDescription>
+            Separa varios correos con comas. Recibirán un enlace para unirse.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex flex-col gap-3">
+          <Textarea
+            autoFocus
+            value={emails}
+            onChange={(e) => (setEmails(e.target.value), setError(null))}
+            placeholder="ana@estudio.com, luis@estudio.com"
+            className="min-h-[80px] resize-none"
+          />
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-muted-foreground">Rol</span>
+            <SettingSelect value={role} options={memberRoles} onChange={setRole} />
+          </div>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <UIButton type="button" variant="outline" onClick={onClose}>
+              Cancelar
+            </UIButton>
+            <UIButton type="submit" disabled={busy}>
+              {busy && <RefreshCw className="animate-spin" />} Enviar invitaciones
+            </UIButton>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
