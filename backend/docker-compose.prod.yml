@@ -1,0 +1,99 @@
+# Despliegue en la instancia de Oracle Cloud.
+#
+# Diferencias con `docker-compose.yml`, que es el de desarrollo y no debe usarse aquí:
+#
+# - **Sin Postgres.** La base de datos es Supabase. Levantar uno local aquí sería tener
+#   dos fuentes de verdad y descubrir cuál manda el día que no coincidan.
+# - **Sin `--reload` ni volúmenes de código.** El código viaja dentro de la imagen; montar
+#   `./app` encima significa desplegar copiando ficheros a mano, que es como se acaba con
+#   un servidor que nadie sabe reconstruir.
+# - **Caddy delante**, que resuelve el TLS solo contra Let's Encrypt. Nginx haría lo mismo
+#   con tres ficheros más y un certbot que hay que acordarse de renovar.
+# - **La API no publica su puerto al exterior**: solo Caddy habla con ella por la red
+#   interna. Sin esto, el 8000 quedaría abierto sin TLS y saltándose el rate limit.
+#
+# Arranque:
+#     export XFRAME_DOMAIN=api.tudominio.com
+#     docker compose -f docker-compose.prod.yml up -d --build
+#
+# Escalar el worker, que es el único eje que importa —los jobs son de espera, no de
+# cómputo, así que se escala en número:
+#     docker compose -f docker-compose.prod.yml up -d --scale worker=6
+
+name: xframe
+
+x-app: &app
+  build:
+    context: .
+    target: base
+  env_file: .env
+  environment:
+    REDIS_URL: redis://redis:6379/0
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+  logging:
+    # Sin esto, los logs de un worker que lleva meses corriendo se comen el disco de
+    # arranque de la instancia, que en el tier gratuito de Oracle no sobra.
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  api:
+    <<: *app
+    command: python run_api.py --host 0.0.0.0 --port 8000
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    <<: *app
+    command: python -m app.jobs
+    # El montaje escribe aquí y necesita espacio real: un vídeo 4K de quince segundos no
+    # cabe en el tmpfs por defecto de un contenedor.
+    volumes:
+      - assembly-work:/tmp/xframe
+    deploy:
+      replicas: 2
+
+  redis:
+    image: redis:7-alpine
+    # `appendonly` no: el bus transporta progreso, no estado. La verdad de un job vive en
+    # Postgres, así que persistir el stream solo compraría escrituras a disco a cambio de
+    # nada. Si Redis se reinicia, un cliente conectado pierde el hilo y lo recupera al
+    # recargar; ningún job se pierde.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      XFRAME_DOMAIN: ${XFRAME_DOMAIN:?define XFRAME_DOMAIN, p.ej. api.tudominio.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  assembly-work:
+  caddy-data:
+  caddy-config:
