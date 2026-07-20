@@ -5454,7 +5454,6 @@ const settingsGroups = [
     items: [
       ["people", "Personas", Users],
       ["groups", "Grupos", Users, "Business"],
-      ["identity", "Identidad", Shield, "Business"],
     ],
   },
   {
@@ -8391,198 +8390,371 @@ function InviteDialog({ workspace, profile, onClose, onDone }) {
   );
 }
 
+
+
+const knowledgeHints = [
+  "Define el tono y el estilo visual de tu marca.",
+  "Indica qué modelos, resoluciones o formatos prefieres por defecto.",
+  "Añade reglas que el agente deba respetar siempre: idioma, ritmo, cosas que evitar.",
+];
+
+/**
+ * Conocimiento: instrucciones permanentes que el agente tiene en cuenta en
+ * todo el espacio de trabajo. Se guarda solo al salir del campo.
+ */
 function KnowledgeSettings() {
-  const [banner, setBanner] = useState(true);
+  const { workspace } = useStudio();
+  const [entry, setEntry] = useState(null);
+  const [text, setText] = useState("");
+  const [status, setStatus] = useState("idle");
+
+  useEffect(() => {
+    if (!workspace) return;
+    db.getKnowledge(workspace.id).then((row) => {
+      setEntry(row);
+      setText(row?.content ?? "");
+    });
+  }, [workspace?.id]);
+
+  const save = async () => {
+    if (!entry || text === entry.content) return;
+    setStatus("saving");
+    const next = await db.saveKnowledge(entry.id, text);
+    setEntry(next);
+    setStatus("saved");
+    setTimeout(() => setStatus("idle"), 2500);
+  };
+
+  if (!workspace) return null;
+
   return (
     <div className="mx-auto max-w-3xl px-8 py-10">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Knowledge</h1>
-          <p className="mt-1 text-muted-foreground">
-            Manage knowledge for your project and workspace.
-          </p>
-        </div>
-        <UIButton variant="ghost" className="shrink-0 text-muted-foreground">
-          Abrir docs <ExternalLink />
-        </UIButton>
-      </div>
-
-      {banner && (
-        <div className="mt-6 flex items-start gap-3 rounded-lg border bg-muted/40 p-4">
-          <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <div className="flex-1">
-            <p className="text-sm font-medium">Workspace knowledge</p>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              You can now add custom instructions that apply across all projects
-              in your workspace.
-            </p>
-          </div>
-          <button
-            onClick={() => setBanner(false)}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-      )}
+      <h1 className="text-2xl font-bold tracking-tight">Conocimiento</h1>
+      <p className="mt-1 text-muted-foreground">
+        Lo que el agente debe dar por sabido en todos los proyectos de{" "}
+        <b className="text-foreground">{workspace.name}</b>.
+      </p>
 
       <div className="mt-8 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold">Workspace knowledge</h2>
+          <h2 className="text-lg font-semibold">
+            Conocimiento del espacio de trabajo
+          </h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Set shared rules and preferences that apply to every project in this
-            workspace.
+            Reglas y preferencias compartidas que se aplican a cada proyecto.
           </p>
         </div>
-        <UIButton variant="ghost" className="shrink-0 text-muted-foreground">
-          Get inspiration <ExternalLink />
-        </UIButton>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {status === "saving"
+            ? "Guardando…"
+            : status === "saved"
+              ? "Guardado"
+              : entry?.updated_at
+                ? `Editado ${timeAgo(entry.updated_at)}`
+                : ""}
+        </span>
       </div>
+
       <Card className="mt-3 p-4">
         <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-          <li>Define coding style and naming conventions.</li>
-          <li>Set preferred libraries, frameworks, or patterns.</li>
-          <li>Add behavioral rules like tone, language, or formatting.</li>
+          {knowledgeHints.map((hint) => (
+            <li key={hint}>{hint}</li>
+          ))}
         </ul>
         <Textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={save}
+          placeholder="Nuestra marca usa una paleta ámbar sobre negro, tono sobrio y planos largos. Nunca uses música con voz…"
           className="mt-4 min-h-[220px] resize-none"
-          placeholder="Set coding style, conventions, and preferences for all your projects…"
         />
+        <div className="mt-3 flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">
+            {text.length} caracteres
+          </p>
+          <UIButton
+            size="sm"
+            variant="outline"
+            disabled={!entry || text === entry.content || status === "saving"}
+            onClick={save}
+          >
+            Guardar
+          </UIButton>
+        </div>
       </Card>
     </div>
   );
 }
 
-const skillFeatures = [
-  [
-    Pencil,
-    "Easy to create",
-    "Describe a skill in chat or import skills from GitHub or a URL.",
-  ],
-  [
-    null,
-    "Runs when it matters",
-    'Trigger a skill with "/" or let Xframe activate it automatically when it matches your task.',
-  ],
-  [
-    Users,
-    "Shared with your team",
-    "Codify your workflows once. Your whole team uses them on every project.",
-  ],
-];
-const lovableSkills = [
-  [
-    "accessibility",
-    "Audit a project for accessibility issues and fix them. Triggers on check accessibility, a11y review, accessibility audit, make it accessible, screen reader, WCAG, aria labels, keyboard navigation.",
-  ],
-  [
-    "redesign",
-    "Use when the user wants to visually redesign an existing UI. Triggers on redesign this, give this a real visual identity, make it look beautiful, rethink the look, or any design-open ask on a project that already has working UI.",
-  ],
-  [
-    "seo-review",
-    "Run an SEO review on the current project and direct the user to the results panel. Triggers on /seo-review, check my SEO, SEO audit, review SEO, how is my SEO, SEO issues on my site, improve SEO.",
-  ],
-  [
-    "skill-creator",
-    "Use this skill when the user wants to create, update, or prepare a skill candidate. Skills are reusable prompt instructions that teach the agent how to perform specific tasks.",
-  ],
-  [
-    "video-creator",
-    "Create animated videos programmatically. Triggers on create a video, make an animation, motion graphics, explainer video, promo video, animated intro, render a video.",
-  ],
-];
+/** Habilidades: instrucciones reutilizables que se activan por contexto. */
 function SkillsSettings() {
-  const [intro, setIntro] = useState(true);
+  const { workspace } = useStudio();
+  const [skills, setSkills] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [query, setQuery] = useState("");
+  const [toast, setToast] = useState(null);
+
+  const notify = (text) => {
+    setToast(text);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const reload = async () => {
+    if (!workspace) return;
+    setSkills(await db.listSkills(workspace.id).catch(() => []));
+  };
+
+  useEffect(() => {
+    reload();
+  }, [workspace?.id]);
+
+  if (!workspace) return null;
+
+  const visible = skills.filter(
+    (skill) =>
+      skill.name.toLowerCase().includes(query.toLowerCase()) ||
+      skill.description.toLowerCase().includes(query.toLowerCase()),
+  );
+  const active = skills.filter((s) => s.enabled).length;
+
   return (
     <div className="mx-auto max-w-3xl px-8 py-10">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Skills</h1>
-          <p className="mt-1 flex items-center gap-1 text-muted-foreground">
-            Reusable instructions your agents can apply whenever they're at work.
-            <Info className="size-3.5" />
+          <h1 className="text-2xl font-bold tracking-tight">Habilidades</h1>
+          <p className="mt-1 text-muted-foreground">
+            Instrucciones reutilizables que el agente aplica cuando toca.{" "}
+            {active} de {skills.length} activas.
           </p>
         </div>
-        <UIButton variant="ghost" className="shrink-0 text-muted-foreground">
-          Abrir docs <ExternalLink />
+        <UIButton onClick={() => setEditing({})}>
+          <Plus /> Nueva habilidad
         </UIButton>
       </div>
 
-      {intro && (
-        <Card className="relative mt-6 overflow-hidden p-6">
-          <div
-            className="pointer-events-none absolute inset-y-0 right-0 -z-0 w-1/2 bg-no-repeat opacity-70"
-            style={{
-              backgroundImage: "url(/hero-aura.webp)",
-              backgroundSize: "cover",
-              backgroundPosition: "left center",
-            }}
-          />
-          <button
-            onClick={() => setIntro(false)}
-            className="absolute right-4 top-4 text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-4" />
-          </button>
-          <div className="relative max-w-lg">
-            <h2 className="text-lg font-semibold">Teach Xframe how you work</h2>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Skills let you save how things should be done, so the agent gets it
-              right without being told twice.
-            </p>
-            <div className="mt-5 space-y-4">
-              {skillFeatures.map(([Icon, title, desc]) => (
-                <div key={title} className="flex gap-3">
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-background text-sm text-muted-foreground">
-                    {Icon ? <Icon className="size-4" /> : "/"}
-                  </span>
-                  <div>
-                    <p className="text-sm font-medium">{title}</p>
-                    <p className="mt-0.5 text-sm text-muted-foreground">{desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Card>
+      {toast && (
+        <div className="mt-4 flex items-center gap-2 rounded-lg border p-3 text-sm text-muted-foreground">
+          <Check className="size-4 shrink-0" />
+          {toast}
+        </div>
       )}
 
-      <div className="mt-8 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold">Workspace skills</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Shared with every project in this workspace, so the agent can use them
-            anywhere.
-          </p>
-        </div>
-        <UIButton className="shrink-0">
-          Add <ChevronDown />
-        </UIButton>
+      <div className="relative mt-6">
+        <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Buscar habilidades…"
+          className="h-9 w-full rounded-md border bg-background pl-8 pr-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
       </div>
-      <Card className="mt-3 border-dashed p-6">
-        <p className="text-sm text-muted-foreground">No skills found.</p>
-      </Card>
 
-      <div className="mt-8">
-        <h2 className="text-lg font-semibold">Skills built by Xframe</h2>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Maintained by Xframe and ready to use when your team needs proven
-          instructions without creating a custom skill.
-        </p>
-        <div className="mt-3 space-y-3">
-          {lovableSkills.map(([name, desc]) => (
-            <Card
-              key={name}
-              className="cursor-pointer p-4 transition-colors hover:bg-accent/40"
-            >
-              <p className="font-medium">{name}</p>
-              <p className="mt-1 text-sm text-muted-foreground">{desc}</p>
-            </Card>
-          ))}
-        </div>
+      <div className="mt-4 space-y-3">
+        {visible.length === 0 && (
+          <div className="rounded-xl border border-dashed p-10 text-center">
+            <Sparkles className="mx-auto size-7 text-muted-foreground" />
+            <p className="mt-3 font-medium">
+              {skills.length === 0
+                ? "Aún no hay habilidades"
+                : "Ninguna coincide con la búsqueda"}
+            </p>
+          </div>
+        )}
+
+        {visible.map((skill) => (
+          <Card key={skill.id} className="p-4">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-medium">{skill.name}</p>
+                  {skill.is_builtin && (
+                    <Badge variant="secondary" className="rounded">
+                      De fábrica
+                    </Badge>
+                  )}
+                  {!skill.enabled && (
+                    <Badge variant="secondary" className="rounded text-muted-foreground">
+                      Desactivada
+                    </Badge>
+                  )}
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {skill.description}
+                </p>
+                {skill.triggers?.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {skill.triggers.map((trigger) => (
+                      <span
+                        key={trigger}
+                        className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground"
+                      >
+                        {trigger}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <Switch
+                checked={skill.enabled}
+                onCheckedChange={async (enabled) => {
+                  await db.updateSkill(skill.id, { enabled });
+                  await reload();
+                  notify(enabled ? "Habilidad activada" : "Habilidad desactivada");
+                }}
+              />
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button aria-label="Acciones" className="text-muted-foreground">
+                    <MoreHorizontal className="size-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setEditing(skill)}>
+                    <Pencil className="mr-2 size-3.5" /> Editar
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={async () => {
+                      const { id, created_at, updated_at, is_builtin, ...rest } = skill;
+                      await db.createSkill(workspace.id, {
+                        ...rest,
+                        name: `${skill.name} (copia)`,
+                      });
+                      await reload();
+                      notify("Habilidad duplicada");
+                    }}
+                  >
+                    <Copy className="mr-2 size-3.5" /> Duplicar
+                  </DropdownMenuItem>
+                  {!skill.is_builtin && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={async () => {
+                          await db.deleteSkill(skill.id);
+                          await reload();
+                          notify("Habilidad eliminada");
+                        }}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="mr-2 size-3.5" /> Eliminar
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </Card>
+        ))}
       </div>
+
+      {editing && (
+        <SkillDialog
+          skill={editing}
+          workspaceId={workspace.id}
+          onClose={() => setEditing(null)}
+          onDone={async (message) => {
+            await reload();
+            notify(message);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function SkillDialog({ skill, workspaceId, onClose, onDone }) {
+  const isNew = !skill.id;
+  const [form, setForm] = useState({
+    name: skill.name ?? "",
+    description: skill.description ?? "",
+    instructions: skill.instructions ?? "",
+    triggers: (skill.triggers ?? []).join(", "),
+  });
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return setError("Ponle un nombre");
+    if (!form.instructions.trim())
+      return setError("Escribe qué debe hacer el agente");
+
+    setBusy(true);
+    const payload = {
+      name: form.name.trim(),
+      description: form.description.trim(),
+      instructions: form.instructions.trim(),
+      triggers: form.triggers
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    };
+    try {
+      if (isNew) await db.createSkill(workspaceId, payload);
+      else await db.updateSkill(skill.id, payload);
+      await onDone(isNew ? "Habilidad creada" : "Habilidad actualizada");
+      onClose();
+    } catch (err) {
+      setError(String(err?.message ?? err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>{isNew ? "Nueva habilidad" : "Editar habilidad"}</DialogTitle>
+          <DialogDescription>
+            El agente la aplicará cuando el contexto encaje con sus disparadores.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex flex-col gap-3">
+          <Input
+            autoFocus
+            value={form.name}
+            onChange={set("name")}
+            placeholder="Nombre — por ejemplo, «Ritmo de tráiler»"
+          />
+          <Input
+            value={form.description}
+            onChange={set("description")}
+            placeholder="Una línea explicando para qué sirve"
+          />
+          <Textarea
+            value={form.instructions}
+            onChange={set("instructions")}
+            placeholder="Qué debe hacer el agente, con el detalle que haga falta…"
+            className="min-h-[140px] resize-none"
+          />
+          <div>
+            <Input
+              value={form.triggers}
+              onChange={set("triggers")}
+              placeholder="Disparadores separados por comas: tráiler, ritmo, monta el corte"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Frases que activan la habilidad. Déjalo vacío para que decida el
+              agente.
+            </p>
+          </div>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <UIButton type="button" variant="outline" onClick={onClose}>
+              Cancelar
+            </UIButton>
+            <UIButton type="submit" disabled={busy}>
+              {busy && <RefreshCw className="animate-spin" />}{" "}
+              {isNew ? "Crear" : "Guardar"}
+            </UIButton>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

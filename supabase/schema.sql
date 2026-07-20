@@ -510,3 +510,52 @@ create policy "colaboradores del proyecto" on public.project_collaborators
 -- Ojo al consultar: hay dos claves ajenas a profiles (user_id e invited_by),
 -- así que el embed debe nombrar la relación:
 --   select=*,profile:profiles!project_collaborators_user_id_fkey(...)
+
+-- ------------------------------------------ conocimiento y habilidades
+-- Conocimiento: instrucciones permanentes. Ámbito de espacio (project_id
+-- null) o de un proyecto concreto.
+
+create table if not exists public.knowledge (
+  id           uuid primary key default gen_random_uuid(),
+  workspace_id uuid        not null references public.workspaces on delete cascade,
+  project_id   uuid        references public.projects on delete cascade,
+  content      text        not null default '',
+  updated_at   timestamptz not null default now()
+);
+
+create unique index if not exists knowledge_workspace_key
+  on public.knowledge (workspace_id) where project_id is null;
+create unique index if not exists knowledge_project_key
+  on public.knowledge (project_id) where project_id is not null;
+
+-- Habilidades: instrucciones reutilizables que se activan por contexto.
+create table if not exists public.skills (
+  id           uuid primary key default gen_random_uuid(),
+  workspace_id uuid        not null references public.workspaces on delete cascade,
+  name         text        not null check (char_length(name) between 1 and 60),
+  description  text        not null default '',
+  instructions text        not null default '',
+  triggers     text[]      not null default '{}',
+  enabled      boolean     not null default true,
+  -- Las de fábrica no se borran, solo se desactivan.
+  is_builtin   boolean     not null default false,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+alter table public.knowledge enable row level security;
+alter table public.skills    enable row level security;
+
+create policy "conocimiento del espacio" on public.knowledge
+  for all to authenticated
+  using (public.owns_workspace(workspace_id))
+  with check (public.owns_workspace(workspace_id));
+
+create policy "habilidades del espacio" on public.skills
+  for all to authenticated
+  using (public.owns_workspace(workspace_id))
+  with check (public.owns_workspace(workspace_id));
+
+-- Cada espacio nuevo estrena conocimiento vacío y las habilidades de fábrica
+-- (continuidad, ritmo de tráiler, fotografía y guion a planos). Ver
+-- seed_workspace_skills() y el trigger handle_new_workspace().

@@ -539,6 +539,59 @@ export const db = {
     return DRIVER.remove("project_collaborators", { id });
   },
 
+  /* --- conocimiento y habilidades --- */
+
+  /** Conocimiento del espacio (project_id null) o de un proyecto. */
+  async getKnowledge(workspaceId, projectId = null) {
+    const rows = await DRIVER.select("knowledge", { workspace_id: workspaceId });
+    const found = rows.find((row) => (row.project_id ?? null) === projectId);
+    if (found) return found;
+    return DRIVER.insert("knowledge", {
+      ...(hasSupabase ? {} : { id: uid(), updated_at: nowISO() }),
+      workspace_id: workspaceId,
+      project_id: projectId,
+      content: "",
+    });
+  },
+
+  async saveKnowledge(id, content) {
+    return DRIVER.update("knowledge", id, {
+      content,
+      ...(hasSupabase ? {} : { updated_at: nowISO() }),
+    });
+  },
+
+  async listSkills(workspaceId) {
+    const rows = await DRIVER.select("skills", { workspace_id: workspaceId });
+    return rows.sort(
+      (a, b) =>
+        Number(b.is_builtin) - Number(a.is_builtin) ||
+        a.name.localeCompare(b.name),
+    );
+  },
+
+  async createSkill(workspaceId, skill) {
+    return DRIVER.insert("skills", {
+      ...(hasSupabase
+        ? {}
+        : { id: uid(), is_builtin: false, created_at: nowISO(), updated_at: nowISO() }),
+      workspace_id: workspaceId,
+      name: skill.name,
+      description: skill.description ?? "",
+      instructions: skill.instructions ?? "",
+      triggers: skill.triggers ?? [],
+      enabled: true,
+    });
+  },
+
+  async updateSkill(id, patch) {
+    return DRIVER.update("skills", id, patch);
+  },
+
+  async deleteSkill(id) {
+    return DRIVER.remove("skills", { id });
+  },
+
   /* --- dispositivos y claves de API --- */
 
   /** Sesiones abiertas del usuario, con navegador, sistema e IP. */
