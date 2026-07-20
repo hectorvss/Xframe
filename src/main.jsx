@@ -78,6 +78,8 @@ import {
   Trash2,
   Upload,
   Lightbulb,
+  Mail,
+  Smartphone,
   Pause,
   SkipBack,
   SkipForward,
@@ -906,10 +908,8 @@ function PromptBox() {
   );
 }
 
-const authProviders = [
-  ["Continuar con Google", "google.com", "google"],
-  ["Continuar con GitHub", "github.com", "github"],
-];
+// Proveedores ofrecidos en el acceso. El logo sale de authBrands.
+const authProviders = ["google", "github", "apple"];
 
 /**
  * Alta e inicio de sesión contra Supabase. Al registrarse, el trigger
@@ -966,9 +966,9 @@ function AuthModal() {
         </DialogHeader>
 
         <div className="flex flex-col gap-3">
-          {authProviders.map(([label, domain, provider]) => (
+          {authProviders.map((provider) => (
             <UIButton
-              key={label}
+              key={provider}
               variant="outline"
               className="w-full"
               disabled={busy}
@@ -976,12 +976,8 @@ function AuthModal() {
                 isRemote ? signInWithProvider(provider) : go("/dashboard")
               }
             >
-              <img
-                src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
-                alt=""
-                className="size-4"
-              />
-              {label}
+              <AuthBrandIcon provider={provider} className="size-4" />
+              Continuar con {brandLabel(provider)}
             </UIButton>
           ))}
 
@@ -5670,6 +5666,55 @@ function InlineEdit({ value, onSave, placeholder, validate }) {
   );
 }
 
+/**
+ * Marca de cada proveedor de acceso. El favicon del dominio real da el logo
+ * a todo color; `email` y `phone` no son marcas, así que llevan icono propio.
+ */
+const authBrands = {
+  email: { label: "Correo electrónico", icon: Mail },
+  phone: { label: "Teléfono", icon: Smartphone },
+  google: { label: "Google", domain: "google.com" },
+  github: { label: "GitHub", domain: "github.com" },
+  apple: { label: "Apple", domain: "apple.com" },
+  azure: { label: "Microsoft", domain: "microsoft.com" },
+  gitlab: { label: "GitLab", domain: "gitlab.com" },
+  bitbucket: { label: "Bitbucket", domain: "bitbucket.org" },
+  discord: { label: "Discord", domain: "discord.com" },
+  facebook: { label: "Facebook", domain: "facebook.com" },
+  figma: { label: "Figma", domain: "figma.com" },
+  linkedin: { label: "LinkedIn", domain: "linkedin.com" },
+  linkedin_oidc: { label: "LinkedIn", domain: "linkedin.com" },
+  notion: { label: "Notion", domain: "notion.so" },
+  slack: { label: "Slack", domain: "slack.com" },
+  slack_oidc: { label: "Slack", domain: "slack.com" },
+  spotify: { label: "Spotify", domain: "spotify.com" },
+  twitch: { label: "Twitch", domain: "twitch.tv" },
+  twitter: { label: "X", domain: "x.com" },
+  zoom: { label: "Zoom", domain: "zoom.us" },
+  workos: { label: "WorkOS", domain: "workos.com" },
+  kakao: { label: "Kakao", domain: "kakao.com" },
+  keycloak: { label: "Keycloak", domain: "keycloak.org" },
+};
+
+const brandFavicon = (domain) =>
+  `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+
+/** Logo del proveedor, a todo color, con icono de respaldo. */
+function AuthBrandIcon({ provider, className = "size-6" }) {
+  const brand = authBrands[provider];
+  if (!brand?.domain) {
+    const Icon = brand?.icon ?? Globe;
+    return <Icon className={cn(className, "text-muted-foreground")} />;
+  }
+  return (
+    <img src={brandFavicon(brand.domain)} alt="" className={className} />
+  );
+}
+
+const brandLabel = (provider) =>
+  authBrands[provider]?.label ??
+  provider.charAt(0).toUpperCase() + provider.slice(1);
+
 const languageOptions = [
   ["es", "Español"],
   ["en", "English"],
@@ -5957,13 +6002,13 @@ function AccountSettings() {
         )}
         {identities.map((identity) => (
           <div key={identity.identity_id} className="flex items-center gap-3 px-5 py-4">
-            <img
-              src={`https://www.google.com/s2/favicons?domain=${identity.provider}.com&sz=64`}
-              alt=""
-              className="size-6"
-            />
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border">
+              <AuthBrandIcon provider={identity.provider} className="size-5" />
+            </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium capitalize">{identity.provider}</p>
+              <p className="text-sm font-medium">
+                {brandLabel(identity.provider)}
+              </p>
               <p className="truncate text-sm text-muted-foreground">
                 {identity.identity_data?.email ?? profile.email}
               </p>
@@ -5988,6 +6033,34 @@ function AccountSettings() {
             )}
           </div>
         ))}
+
+        {isRemote &&
+          ["google", "github", "apple"]
+            .filter((p) => !identities.some((i) => i.provider === p))
+            .map((provider) => (
+              <div key={provider} className="flex items-center gap-3 px-5 py-4">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border">
+                  <AuthBrandIcon provider={provider} className="size-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{brandLabel(provider)}</p>
+                  <p className="text-sm text-muted-foreground">Sin vincular</p>
+                </div>
+                <UIButton
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await db.linkIdentity(provider);
+                    } catch (error) {
+                      notify(String(error?.message ?? error), "error");
+                    }
+                  }}
+                >
+                  Vincular
+                </UIButton>
+              </div>
+            ))}
       </SettingsSection>
 
       <SettingsSection title="Seguridad" desc="Protege el acceso a tu cuenta.">
@@ -7036,11 +7109,7 @@ function GitSettings() {
             className="flex w-full items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-accent"
           >
             <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border">
-              <img
-                src={`https://cdn.simpleicons.org/${slug}`}
-                alt=""
-                className="size-5"
-              />
+              <AuthBrandIcon provider={slug} className="size-5" />
             </div>
             <div className="flex-1">
               <p className="text-sm font-medium">{name}</p>

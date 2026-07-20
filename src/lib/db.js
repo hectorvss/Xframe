@@ -346,6 +346,15 @@ export const db = {
     return data?.identities ?? [];
   },
 
+  /** Vincula otro proveedor a la cuenta actual. */
+  async linkIdentity(provider) {
+    const { error } = await supabase.auth.linkIdentity({
+      provider,
+      options: { redirectTo: `${location.origin}/settings/account` },
+    });
+    if (error) throw error;
+  },
+
   async unlinkIdentity(identity) {
     const { error } = await supabase.auth.unlinkIdentity(identity);
     if (error) throw error;
