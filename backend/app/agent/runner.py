@@ -23,7 +23,13 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 
 from app.agent.graph import build_graph
-from app.agent.state import JOB_EVENT_FLAG, RECURSION_LIMIT, AgentMode, XframeState
+from app.agent.state import (
+    JOB_EVENT_FLAG,
+    RECURSION_LIMIT,
+    AgentMode,
+    NodeName,
+    XframeState,
+)
 from app.config import get_settings
 from app.stream.bus import EventBus
 
@@ -235,6 +241,15 @@ class ConversationRunner:
             return None
 
         node = (metadata or {}).get("langgraph_node")
+
+        # Solo hablan los nodos de la conversación. El colector de memoria también llama
+        # a un modelo —destila la biblia de estilo en segundo plano— y su salida se estaba
+        # transmitiendo al chat: el usuario veía pegado a cada respuesta el texto interno
+        # del colector, incluido su marcador de fin. Lo que ese nodo produce es memoria,
+        # no conversación, y cualquier nodo de fondo que se añada mañana queda cubierto
+        # por esta lista en vez de aparecer en la interfaz sin que nadie lo note.
+        if node and node not in (NodeName.ROOT, NodeName.ROOT_TOOLS):
+            return None
 
         if raw_calls := getattr(message, "tool_calls", None):
             # Con `stream_mode="messages"` los `AIMessageChunk` llegan troceados y los
