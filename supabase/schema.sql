@@ -559,3 +559,32 @@ create policy "habilidades del espacio" on public.skills
 -- Cada espacio nuevo estrena conocimiento vacío y las habilidades de fábrica
 -- (continuidad, ritmo de tráiler, fotografía y guion a planos). Ver
 -- seed_workspace_skills() y el trigger handle_new_workspace().
+
+-- ------------------------------------------- fuentes de conocimiento
+-- Además del texto general, el agente puede tirar de notas, archivos y
+-- páginas web. La extracción la hace la edge function extract-url, porque
+-- el navegador no puede pedir a otros dominios.
+
+create table if not exists public.knowledge_sources (
+  id           uuid primary key default gen_random_uuid(),
+  workspace_id uuid        not null references public.workspaces on delete cascade,
+  project_id   uuid        references public.projects on delete cascade,
+  kind         text        not null default 'note'
+                 check (kind in ('note', 'url', 'file')),
+  title        text        not null default 'Sin título',
+  url          text,
+  content      text        not null default '',
+  excerpt      text        not null default '',
+  status       text        not null default 'ready'
+                 check (status in ('pending', 'ready', 'failed')),
+  error        text,
+  enabled      boolean     not null default true,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+alter table public.knowledge_sources enable row level security;
+create policy "fuentes del espacio" on public.knowledge_sources
+  for all to authenticated
+  using (public.owns_workspace(workspace_id))
+  with check (public.owns_workspace(workspace_id));

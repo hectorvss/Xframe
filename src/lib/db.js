@@ -561,6 +561,64 @@ export const db = {
     });
   },
 
+  /* --- fuentes de conocimiento --- */
+
+  async listKnowledgeSources(workspaceId) {
+    const rows = await DRIVER.select("knowledge_sources", {
+      workspace_id: workspaceId,
+    });
+    return rows.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  },
+
+  async createKnowledgeSource(workspaceId, source) {
+    return DRIVER.insert("knowledge_sources", {
+      ...(hasSupabase
+        ? {}
+        : { id: uid(), created_at: nowISO(), updated_at: nowISO() }),
+      workspace_id: workspaceId,
+      kind: source.kind ?? "note",
+      title: source.title ?? "Sin título",
+      url: source.url ?? null,
+      content: source.content ?? "",
+      excerpt: (source.content ?? "").slice(0, 240),
+      status: source.status ?? "ready",
+      enabled: true,
+    });
+  },
+
+  async updateKnowledgeSource(id, patch) {
+    return DRIVER.update("knowledge_sources", id, {
+      ...patch,
+      ...(patch.content !== undefined
+        ? { excerpt: patch.content.slice(0, 240) }
+        : {}),
+    });
+  },
+
+  async deleteKnowledgeSource(id) {
+    return DRIVER.remove("knowledge_sources", { id });
+  },
+
+  /**
+   * Descarga una página y guarda su texto como fuente. La extracción va en el
+   * servidor: el navegador no puede pedir a otros dominios.
+   */
+  async extractUrl(url, sourceId) {
+    if (!hasSupabase) {
+      throw new Error("La extracción web necesita el backend configurado");
+    }
+    const { data, error } = await supabase.functions.invoke("extract-url", {
+      body: { url, sourceId },
+    });
+    if (error) {
+      // El cuerpo del error trae el motivo real de la función.
+      const detail = await error.context?.json?.().catch(() => null);
+      throw new Error(detail?.error ?? error.message);
+    }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  },
+
   async listSkills(workspaceId) {
     const rows = await DRIVER.select("skills", { workspace_id: workspaceId });
     return rows.sort(
@@ -713,38 +771,14 @@ export const db = {
     return data.reduce((total, row) => total + (row.amount ?? 0), 0);
   },
 
-  /**
-   * Descuenta créditos. En Supabase usa la función atómica spend_credits(),
-   * de modo que dos generaciones simultáneas no puedan dejar saldo negativo.
-   * Devuelve null si no hay saldo suficiente.
+  /*
+   * Aquí vivía `spendCredits()`, que llamaba a la función `spend_credits()`.
+   * Está revocada: cobrar desde el navegador era pedirle al cliente que dijera
+   * cuánto vale lo que acaba de pedir. Quien cobra ahora es el backend, contra
+   * el libro mayor y dentro de la misma transacción que encola el trabajo; el
+   * frontend solo vuelve a leer el saldo con `getCreditBalance()` cuando el
+   * turno termina.
    */
-  async spendCredits(profile, amount, { projectId = null, kind = "build" } = {}) {
-    if (hasSupabase) {
-      const { data, error } = await supabase.rpc("spend_credits", {
-        amount,
-        project_id: projectId,
-        kind,
-      });
-      if (error) return null;
-      return { ...profile, credits: data };
-    }
-    // En local guardamos también el histórico, para que la pantalla de uso
-    // funcione sin backend.
-    if (profile.credits >= amount) {
-      await DRIVER.insert("credit_usage", {
-        id: uid(),
-        owner_id: profile.id,
-        project_id: projectId,
-        kind,
-        amount,
-        created_at: nowISO(),
-      });
-    }
-    if (profile.credits < amount) return null;
-    return DRIVER.update("profiles", profile.id, {
-      credits: profile.credits - amount,
-    });
-  },
 
   /* --- proyectos --- */
 
