@@ -48,7 +48,15 @@ services:
     expose:
       - "8000"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      # Con python y no con curl: la imagen es `python:3.12-slim` y **no trae curl**.
+      # Un healthcheck que invoca un binario ausente no falla de forma visible — deja el
+      # contenedor en `health: starting` para siempre y, según el orquestador, lo reinicia
+      # en bucle aunque la API esté perfectamente. Se descubrió levantando esto de verdad.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=4).status == 200 else 1)"
       interval: 20s
       timeout: 5s
       retries: 5
