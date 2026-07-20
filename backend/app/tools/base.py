@@ -62,7 +62,7 @@ class XframeTool(BaseTool):
 
     # -- registro ---------------------------------------------------------- #
 
-    registry: ClassVar[dict[str, type["XframeTool"]]] = {}
+    registry: ClassVar[dict[str, type[XframeTool]]] = {}
 
     @classmethod
     def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
@@ -107,7 +107,7 @@ class XframeTool(BaseTool):
         except XframeToolError as e:
             logger.info("tool_error", extra={"tool": self.name, "err": e.to_summary()})
             return f"{e.to_summary()}{e.retry_hint}", None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             from pydantic import ValidationError
 
             if isinstance(e, ValidationError):
@@ -123,7 +123,7 @@ class XframeTool(BaseTool):
 
     # -- contexto ---------------------------------------------------------- #
 
-    def bind_context(self, ctx: ToolContext) -> "XframeTool":
+    def bind_context(self, ctx: ToolContext) -> XframeTool:
         self._ctx = ctx
         return self
 

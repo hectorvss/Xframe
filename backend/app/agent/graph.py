@@ -18,7 +18,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import StateGraph
 from langgraph.types import Send
 
-from app.agent.executables import RootNode, RootToolsNode
+from app.agent.executables import MemoryCollectorNode, RootNode, RootToolsNode
 from app.agent.state import NodeName, XframeState
 
 logger = logging.getLogger(__name__)
@@ -33,12 +33,13 @@ def route_after_root(state: XframeState) -> str | list[Send]:
     `job_results` junta los resultados sin código de merge.
     """
     if not state.messages:
-        return NodeName.END
+        return NodeName.MEMORY_COLLECTOR
 
     last = state.messages[-1]
     tool_calls = getattr(last, "tool_calls", None)
     if not tool_calls:
-        return NodeName.END
+        # Fin del turno: antes de cerrar, destilar lo aprendido a la biblia de estilo.
+        return NodeName.MEMORY_COLLECTOR
 
     return [
         Send(NodeName.ROOT_TOOLS, state.model_copy_for_branch(tc["id"]))
@@ -56,6 +57,7 @@ def build_graph(checkpointer: AsyncPostgresSaver | None = None):
 
     graph.add_node(NodeName.ROOT, RootNode())
     graph.add_node(NodeName.ROOT_TOOLS, RootToolsNode())
+    graph.add_node(NodeName.MEMORY_COLLECTOR, MemoryCollectorNode())
 
     graph.add_edge(NodeName.START, NodeName.ROOT)
     graph.add_conditional_edges(NodeName.ROOT, route_after_root)
@@ -64,5 +66,6 @@ def build_graph(checkpointer: AsyncPostgresSaver | None = None):
         route_after_tools,
         path_map={NodeName.ROOT: NodeName.ROOT},
     )
+    graph.add_edge(NodeName.MEMORY_COLLECTOR, NodeName.END)
 
     return graph.compile(checkpointer=checkpointer)

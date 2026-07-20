@@ -26,8 +26,9 @@ Dos reglas atraviesan el fichero entero y no se negocian:
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import asdict, is_dataclass
-from typing import Any, Sequence
+from typing import Any
 
 from evals.base import (
     ORDINAL_SCALE,

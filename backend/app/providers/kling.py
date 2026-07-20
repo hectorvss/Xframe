@@ -19,6 +19,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import time
 from decimal import Decimal
 from typing import Any
@@ -47,8 +48,26 @@ _MODEL_NAME: dict[str, str] = {
     "kling-2.1-master": "kling-v2-1-master",
 }
 
-#: Kling factura por modo, no por segundo: `std` frente a `pro` es aproximadamente 2x.
-_MODE_MULTIPLIER: dict[str, Decimal] = {"std": Decimal("1.0"), "pro": Decimal("2.0")}
+#: Kling factura por modo, no por segundo. El ratio real `pro`/`std` es **1.33**, no 2.0:
+#: con 2.0 se reservaba un 50% de más en cada plano en 1080p, que es casi todos, y esa
+#: reserva sale del saldo del usuario aunque luego se devuelva.
+_MODE_MULTIPLIER: dict[str, Decimal] = {"std": Decimal("1.0"), "pro": Decimal("1.33")}
+
+# NO VERIFICADO: la base URL de Kling. La doc oficial responde HTTP 446 a cualquier
+# cliente que no sea un navegador, así que no he podido confirmarla de primera mano.
+# Hay dos candidatas y **no son intercambiables**: la clave de una cuenta global no vale
+# en la otra. `api-singapore.klingai.com` aparece como prefijo por defecto en fuentes
+# secundarias; `api.klingai.com` es la histórica.
+#
+# Se deja configurable por entorno en vez de elegir una a ciegas: acertar por defecto y
+# equivocarse en la cuenta del cliente produce un 401, que nuestra clasificación trata
+# como fatal y mata el job sin reintento. **Confírmala en el dashboard de Kling antes de
+# la primera llamada real** y fija KLING_BASE_URL en el despliegue.
+_KLING_BASE_URL_OPTIONS = (
+    "https://api-singapore.klingai.com",
+    "https://api.klingai.com",
+)
+_KLING_BASE_URL = os.environ.get("KLING_BASE_URL", _KLING_BASE_URL_OPTIONS[0]).rstrip("/")
 
 
 def _b64url(raw: bytes) -> str:
@@ -58,9 +77,12 @@ def _b64url(raw: bytes) -> str:
 class KlingAdapter(HttpAdapter):
     provider_id = "kling"
     supported_modalities: tuple[Modality, ...] = ("video",)
-    base_url = "https://api.klingai.com"
+    base_url = _KLING_BASE_URL
 
     min_poll_interval_s = 5.0
+
+    #: Kling sirve el vídeo desde su CDN, con hosts regionales que rotan.
+    output_domains = ("klingai.com", "kling.ai", "kuaishou.com", "yximgs.com")
 
     def __init__(self, client: Any | None = None) -> None:
         super().__init__(client)
@@ -106,7 +128,34 @@ class KlingAdapter(HttpAdapter):
     # -- submit ------------------------------------------------------------- #
 
     async def submit(self, req: GenerationRequest) -> ProviderJobRef:
-        is_i2v = bool(req.init_image_url or req.elements)
+        if req.elements:
+            # `image_list` **no** es multi-referencia de personaje: es la lista de
+            # fotogramas (primero/último) del plano. Mandar ahí los elements producía un
+            # vídeo perfectamente válido y **sin ninguna referencia aplicada**, con 200 y
+            # sin ningún aviso: el usuario paga un plano que no sirve y no hay forma de
+            # saberlo salvo mirándolo.
+            #
+            # La continuidad real de Kling son los `kling_elements` / `element_list`, que
+            # referencian **elementos ya registrados en la biblioteca de la cuenta** por
+            # id — no URLs de imagen, que es lo único que tiene nuestro `ElementRef`.
+            # Implementarlo exige un paso previo de alta de elementos que hoy no existe.
+            #
+            # NO VERIFICADO: el nombre y la forma exacta del campo (`kling_elements`
+            # frente a `element_list`) siguen sin poder confirmarse contra la doc oficial.
+            #
+            # Hasta entonces se falla ruidosamente. Un error explícito cuesta un turno del
+            # agente; generar en silencio sin la referencia cuesta el plano, el dinero y
+            # la confianza en que la continuidad funciona.
+            raise ProviderRejectedError(
+                self.provider_id,
+                "Kling cannot take character references as image URLs: its continuity "
+                "mechanism (kling_elements) needs elements pre-registered in the account "
+                "library, which this integration does not create yet. Use Veo, Flux or "
+                "Higgsfield Soul for this shot, or drop the elements and rely on the "
+                "prompt plus a start frame.",
+            )
+
+        is_i2v = bool(req.init_image_url)
         path = "/v1/videos/image2video" if is_i2v else "/v1/videos/text2video"
 
         payload: dict[str, Any] = {
@@ -122,16 +171,9 @@ class KlingAdapter(HttpAdapter):
             payload["aspect_ratio"] = req.aspect
 
         if is_i2v:
-            references = self._ref_urls(req)
-            payload["image"] = references[0]
+            payload["image"] = req.init_image_url
             if req.last_frame_url:
                 payload["image_tail"] = req.last_frame_url
-            if len(references) > 1:
-                # NO VERIFICADO: `image_list` para multi-referencia de personaje está
-                # documentado para Kling 3.0 en fuentes secundarias, no en la doc oficial
-                # que haya podido leer. El formato de cada entrada podría ser
-                # {"image": url} en vez de la URL suelta.
-                payload["image_list"] = [{"image": url} for url in references[1:5]]
 
         if req.camera_motion:
             # Kling expone control de cámara estructurado solo en la variante

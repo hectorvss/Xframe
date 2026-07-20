@@ -33,9 +33,10 @@ import asyncio
 import enum
 import json
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 from uuid import UUID
 
 import redis.asyncio as aioredis
@@ -48,6 +49,9 @@ EventType = Literal[
     "message_delta",
     "tool_start",
     "tool_progress",
+    # Distinto de tool_progress: progress es "sigo trabajando", result es el valor
+    # devuelto, con su ui_payload. El frontend los pinta de forma distinta.
+    "tool_result",
     "asset_ready",
     "job_status",
     "interrupt_request",
@@ -140,7 +144,7 @@ class EventBus:
         fields = {
             "type": event_type,
             "data": json.dumps(data, ensure_ascii=False, default=str),
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
         }
         try:
             event_id: str = await self._client.xadd(
@@ -148,7 +152,7 @@ class EventBus:
             )
             await self._client.expire(key, STREAM_TTL_S)
             return event_id
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("bus_publish_failed", extra={"conversation_id": str(conversation_id)})
             return ""
 
@@ -174,7 +178,7 @@ class EventBus:
             entries = await self._client.xrevrange(stream_key(conversation_id), count=1)
             if entries:
                 return entries[0][0]
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("bus_latest_id_failed", extra={"conversation_id": str(conversation_id)})
         return FIRST_EVENT_ID
 
@@ -225,7 +229,7 @@ class EventBus:
             reader.cancel()
             try:
                 await reader
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            except (asyncio.CancelledError, Exception):
                 pass
 
     async def _read_into(
@@ -255,14 +259,14 @@ class EventBus:
                         await queue.put(event)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("bus_reader_failed", extra={"error": str(exc)})
             await queue.put(
                 StreamEvent(
                     id=cursor,
                     type="error",
                     data={"message": "El canal de progreso se ha interrumpido. Recarga para continuar."},
-                    ts=datetime.now(timezone.utc).isoformat(),
+                    ts=datetime.now(UTC).isoformat(),
                 )
             )
             await queue.put(_Sentinel.END)
@@ -280,7 +284,7 @@ def _parse(event_id: str, fields: dict[str, str]) -> StreamEvent | None:
             data=json.loads(fields.get("data") or "{}"),
             ts=fields.get("ts", ""),
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("bus_bad_entry", extra={"event_id": event_id})
         return None
 

@@ -38,7 +38,7 @@ services:
 
   worker:
     <<: *app
-    command: python -m app.jobs.worker
+    command: python -m app.jobs
     # Varios workers en local para ejercitar el fan-out de planos: los bugs de
     # concurrencia con un solo worker no aparecen nunca.
     deploy:

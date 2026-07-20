@@ -14,7 +14,8 @@ revienta al importar es una suite que nadie arregla.
 from __future__ import annotations
 
 import os
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import pytest
 

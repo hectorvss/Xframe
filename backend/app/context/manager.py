@@ -31,9 +31,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Iterable, Sequence
+from typing import Any
 from uuid import uuid4
 
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -573,6 +574,51 @@ def _render(
 # --------------------------------------------------------------------------- #
 
 
+def _coerce_tab(value: OpenTab | str) -> OpenTab:
+    """
+    Pestaña abierta, tolerante a basura.
+
+    El valor viene del frontend en cada turno. Con `OpenTab(value)` a secas, una pestaña
+    que el cliente renombre —o un cliente viejo tras un despliegue— lanza `ValueError`
+    dentro del nodo raíz y **tumba el turno entero** por un dato puramente decorativo:
+    `open_tab` solo decide a qué parte del contexto se le da más detalle. Degradar a
+    `ASSETS` y registrar el valor raro es la respuesta proporcionada.
+    """
+    if isinstance(value, OpenTab):
+        return value
+    try:
+        return OpenTab(value)
+    except ValueError:
+        logger.info("xframe_unknown_open_tab", extra={"open_tab": str(value)[:40]})
+        return OpenTab.ASSETS
+
+
+def _flatten_setting(key: str, value: Any) -> Any:
+    """
+    Normaliza un ajuste de generación a lo que `GenSettings` declara.
+
+    El frontend guarda `style` y `camera` como diccionarios anidados —así los escribe
+    `defaultGenSettings` en `src/lib/db.js`: `{"Paleta de color": "Auto", "Iluminación":
+    "Auto"}`— pero el modelo los declara como cadenas. El backend se escribió asumiendo
+    una forma que el frontend nunca produjo, y el resultado era un `ValidationError` de
+    pydantic que reventaba el nodo raíz **en cada turno**, antes de llamar al modelo.
+
+    Se aplana a `"clave: valor · clave: valor"` en vez de serializar a JSON porque el
+    destinatario es un LLM leyendo un bloque de contexto, no un parser.
+    """
+    if key == "duration_s":
+        try:
+            return float(str(value).rstrip("s")) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, dict):
+        parts = [f"{k}: {v}" for k, v in value.items() if v not in (None, "", "Auto")]
+        return " · ".join(parts) if parts else None
+    if isinstance(value, (list, tuple)):
+        return " · ".join(str(v) for v in value) or None
+    return str(value) if value is not None else None
+
+
 class XframeContextManager:
     """
     Carga, serializa e inyecta el contexto del proyecto.
@@ -626,7 +672,7 @@ class XframeContextManager:
         return XframeUIContext(
             project_id=self._project_id,
             project_title=project.get("title", ""),
-            open_tab=OpenTab(open_tab) if not isinstance(open_tab, OpenTab) else open_tab,
+            open_tab=_coerce_tab(open_tab),
             brief=brief,
             timeline=sorted(shots, key=narrative_sort_key),
             elements=elements,
@@ -790,6 +836,7 @@ class XframeContextManager:
                 role=a.role or "",
                 meta=a.meta,
                 sheet=sheets.get(a.id),
+                status=a.status,
             )
             for a in assets
             if a.role
@@ -851,7 +898,7 @@ class XframeContextManager:
                 merged.update(source.get("gen") if isinstance(source.get("gen"), dict) else source)
         known = {"model", "aspect", "resolution", "duration_s", "style", "camera"}
         return GenSettings(
-            **{k: v for k, v in merged.items() if k in known},
+            **{k: _flatten_setting(k, v) for k, v in merged.items() if k in known},
             extra={k: v for k, v in merged.items() if k not in known},
         )
 

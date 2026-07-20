@@ -1,0 +1,42 @@
+# Terminación TLS y proxy hacia la API.
+#
+# Caddy pide y renueva el certificado de Let's Encrypt solo. Lo único que hay que
+# garantizar es que el dominio apunte a la IP pública de la instancia y que los puertos
+# 80 y 443 estén abiertos **en los dos sitios**: la security list de la VCN de Oracle y
+# el iptables de la propia instancia, que en las imágenes de Oracle Linux y Ubuntu viene
+# cerrado por defecto y es la causa habitual de que "el DNS está bien pero no responde".
+
+{$XFRAME_DOMAIN} {
+	encode zstd gzip
+
+	# Los eventos del agente van por SSE: una respuesta que se escribe poco a poco durante
+	# minutos. Sin desactivar el buffer, el proxy la acumula y el usuario ve la respuesta
+	# entera de golpe al final, o nada si el turno es largo. Es el fallo clásico de poner
+	# un proxy delante de un stream, y no da ningún error: solo parece que el agente no
+	# responde.
+	reverse_proxy api:8000 {
+		flush_interval -1
+
+		# Un turno con generación puede tardar minutos. El defecto de Caddy cortaría la
+		# conexión antes de que el agente termine de hablar.
+		transport http {
+			read_timeout 15m
+			write_timeout 15m
+		}
+
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

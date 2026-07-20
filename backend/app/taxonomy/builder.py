@@ -30,7 +30,8 @@ Cuatro consecuencias, y las cuatro son el motivo de que esto exista:
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal, Sequence
+from collections.abc import Sequence
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model
 
@@ -38,6 +39,32 @@ from app.taxonomy.repo import TaxonomySnapshot, load_snapshot
 from app.tools.base import ToolContext, XframeTool
 
 logger = logging.getLogger(__name__)
+
+
+def _reference_path(url: str | None) -> str:
+    """
+    `assets.url` → ruta dentro del bucket, lista para firmarse más tarde.
+
+    Aquí NO se firma, y ese es el punto. La taxonomía se cachea (`PROJECT_TTL_S`) y los
+    `ElementRef` que salen de aquí acaban serializados en `generation_jobs.request`: una
+    URL firmada puesta en este punto caducaría dentro de la caché y, peor, dentro de una
+    fila de base de datos que se rehidrata en cada reintento. La firma es competencia del
+    worker, inmediatamente antes del `submit`.
+
+    Se normaliza en vez de copiar el valor tal cual para que la migración de los datos
+    existentes no tenga que ser atómica: `object_path` acepta las URLs públicas que hoy
+    hay en producción y las rutas que escribe el worker nuevo, y devuelve lo mismo para
+    las dos. Lo que no reconoce —una URL externa que alguien pegó a mano— se deja intacto:
+    romper esa referencia sería peor que dejarla pasar sin firmar.
+    """
+    from app.storage import StorageError, object_path
+
+    if not url:
+        return ""
+    try:
+        return object_path(url)
+    except StorageError:
+        return url
 
 
 # --------------------------------------------------------------------------- #
@@ -58,7 +85,7 @@ class SnapshotTool(XframeTool):
 
     _snap: TaxonomySnapshot | None = None
 
-    def bind_snapshot(self, snap: TaxonomySnapshot) -> "SnapshotTool":
+    def bind_snapshot(self, snap: TaxonomySnapshot) -> SnapshotTool:
         self._snap = snap
         return self
 
@@ -105,7 +132,7 @@ class SnapshotTool(XframeTool):
                     element_id=element.id,
                     name=element.name,
                     role=element.role,
-                    image_url=element.url or "",
+                    image_url=_reference_path(element.url),
                 )
             )
         return refs
@@ -133,7 +160,7 @@ class SnapshotTool(XframeTool):
     @classmethod
     async def create(
         cls, ctx: ToolContext, snap: TaxonomySnapshot
-    ) -> "SnapshotTool | None":
+    ) -> SnapshotTool | None:
         """
         Factoría. Devolver `None` significa "esta tool no se monta en este contexto".
 
@@ -222,7 +249,8 @@ def _tool_classes() -> list[type[SnapshotTool]]:
         generation.GenerateVideoTool,
         generation.GenerateShotBatchTool,
         generation.GenerateLipsyncTool,
-        generation.UpscaleAssetTool,
+        # `UpscaleAssetTool` retirada: no hay modelo de upscale en `gen_models` ni
+        # adaptador que lo sirva. El porqué, en `app/tools/generation.py`.
         generation.AssembleVideoTool,
         # Meta
         meta.FinalizePlanTool,
@@ -260,7 +288,7 @@ async def build_tools_for_mode(
             continue
         try:
             tool = await cls.create(ctx, snap)
-        except Exception:  # noqa: BLE001
+        except Exception:
             # Una tool que no se puede construir no debe tumbar el turno entero: se
             # cae ella sola y el agente sigue con las demás.
             logger.exception("tool_build_failed", extra={"tool": cls.__name__})

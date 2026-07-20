@@ -31,7 +31,21 @@ class ElementRef:
     name: str
     role: str
     image_url: str
-    """URL accesible por el proveedor (firmada y con TTL suficiente para el job)."""
+    """
+    Referencia visual del element. Tiene **dos formas** según dónde se lea, y confundirlas
+    es el fallo que rompe la continuidad de personaje:
+
+    - Desde la taxonomía hasta la cola: la **ruta** del objeto dentro del bucket. Es lo
+      que se persiste en `generation_jobs.request` y lo que entra en la clave de
+      idempotencia, y por eso tiene que ser estable.
+    - Dentro del adaptador: una **URL firmada**, con TTL suficiente para cubrir la cola
+      del proveedor además del render. La sustitución la hace el worker en un solo sitio
+      (`sign_request_references`), justo antes del `submit`.
+
+    El nombre del campo no cambia a propósito: `worker._deserialize` filtra las claves
+    desconocidas, así que renombrarlo dejaría sin referencias a todo job encolado antes
+    del despliegue, y el síntoma sería precisamente "sale con otra cara".
+    """
 
 
 @dataclass(slots=True)
@@ -140,6 +154,34 @@ class GenerationAdapter(ABC):
     #: 1 req/5 s, así que esto es un dato del proveedor, no una preferencia nuestra.
     min_poll_interval_s: float = 5.0
 
+    output_domains: tuple[str, ...] = ()
+    """
+    Dominios desde los que **este** proveedor sirve los binarios de salida.
+
+    Existe aquí y no en una constante global del worker por una razón de mantenimiento:
+    una lista central de hosts permitidos es una lista mágica que nadie actualiza cuando
+    un proveedor cambia de CDN, y que además obliga a tocar el worker para dar de alta un
+    proveedor nuevo. Quien sabe de dónde descarga un proveedor es su adaptador, que es el
+    mismo fichero que hay que abrir cuando esa URL cambia.
+
+    Cada entrada cubre el dominio y sus subdominios (`bfl.ai` vale para
+    `delivery-eu1.bfl.ai`). Una tupla vacía significa "este adaptador no entrega por URL"
+    —el caso de `openai_image`, que devuelve `data:`— y por tanto no abre ningún host.
+
+    No es la defensa principal contra el SSRF: esa es el rechazo de IPs no públicas, que
+    no depende de que esta lista esté al día. Esto es la segunda capa, la que impide que
+    un proveedor comprometido nos use como descargador hacia un tercero cualquiera.
+    """
+
+    webhook_url_field: str | None = None
+    """
+    Nombre del campo del payload de `submit` donde este proveedor acepta una URL de
+    callback, si lo acepta. `None` = solo polling.
+    """
+
+    webhook_secret_field: str | None = None
+    """Campo hermano del anterior para el secreto con el que el proveedor firmará."""
+
     @abstractmethod
     async def submit(self, req: GenerationRequest) -> ProviderJobRef:
         """Encola el trabajo. No espera al resultado."""
@@ -155,6 +197,21 @@ class GenerationAdapter(ABC):
     @abstractmethod
     def estimate_cost(self, req: GenerationRequest, spec: ModelSpec) -> Decimal:
         """Coste en USD. Base sobre la que se calculan los créditos que se cobran."""
+
+    def download_headers(self, url: str) -> dict[str, str]:
+        """
+        Cabeceras con las que descargar **la salida de este proveedor**, si las necesita.
+
+        Vacío por defecto, que es lo correcto para casi todos: entregan el binario en un
+        CDN y mandarles nuestra clave sería regalarla. La excepción es el proveedor cuya
+        salida vive dentro de su propia API autenticada —Sora sirve el vídeo en
+        `GET /v1/videos/{id}/content` y sin la clave devuelve 401—, y por eso la decisión
+        vive en el adaptador, que es quien sabe de dónde descarga.
+
+        `OutputDownloader` solo las manda mientras no se cambie de host: una redirección
+        a otro dominio las suelta.
+        """
+        return {}
 
     def normalize_error(self, exc: Exception) -> Exception:
         """

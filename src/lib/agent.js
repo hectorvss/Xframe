@@ -1,16 +1,22 @@
 /**
  * Cliente del agente de Xframe.
  *
- * El backend (backend/app/main.py) expone dos rutas y las dos hablan SSE:
+ * El backend (backend/app/main.py) expone tres rutas:
  *
- *   POST /chat                          → ejecuta un turno y emite sus eventos
- *   GET  /conversations/{id}/stream     → se reengancha a un turno en curso
+ *   POST /chat                          → ejecuta un turno y emite sus eventos (SSE)
+ *   POST /auth/stream-ticket            → ticket de un solo uso para el reenganche
+ *   GET  /conversations/{id}/stream     → se reengancha a un turno en curso (SSE)
+ *
+ * Autenticación: `Authorization: Bearer <access_token>` de Supabase. La cabecera
+ * `x-user-id` que se mandaba antes ya no la lee nadie — era una declaración de
+ * intenciones del cliente, no autenticación, y con ella cualquiera operaba como
+ * cualquiera. El `user_id` sale ahora del `sub` de un JWT firmado.
  *
  * No se usa `EventSource` a propósito: solo sabe hacer GET y el turno necesita
  * mandar el mensaje y el contexto de UI en el cuerpo. Con `fetch` + el
  * `ReadableStream` de la respuesta se parsea SSE a mano, que son veinte líneas,
- * y a cambio se gana POST, cabeceras propias (`x-user-id`) y cancelación con
- * `AbortController`.
+ * y a cambio se gana POST, cabeceras propias (el Bearer, sin ir más lejos) y
+ * cancelación con `AbortController`.
  *
  * La reconexión es la razón de que el backend tenga un Redis Stream detrás: si
  * se corta el POST, se reengancha por GET con `Last-Event-ID` y no se pierde lo
@@ -31,6 +37,8 @@
  *   done                                       fin del turno (lo pone /chat)
  */
 
+import { supabase } from "./supabase";
+
 export const AGENT_URL = (
   import.meta.env.VITE_AGENT_URL || "http://localhost:8000"
 ).replace(/\/+$/, "");
@@ -41,6 +49,117 @@ export const AGENT_DOWN_MESSAGE =
   "en " +
   AGENT_URL +
   " y vuelve a intentarlo: tus mensajes y tus assets siguen guardados.";
+
+/** Sesión caducada o ausente: hay que volver a entrar, no reintentar en bucle. */
+export const AUTH_REQUIRED_MESSAGE =
+  "Tu sesión ha caducado. Vuelve a iniciar sesión para seguir trabajando con el agente.";
+
+/**
+ * Propiedad. El backend contesta 404 tanto si el recurso no existe como si es de
+ * otro (a propósito: distinguirlos sería un oráculo para enumerar uuids ajenos),
+ * así que aquí tampoco se afina más de lo que nos dicen.
+ */
+export const OWNERSHIP_MESSAGE =
+  "Este proyecto o esta conversación no están disponibles para tu cuenta.";
+
+/** 429. El backend manda `Retry-After` en segundos; se la enseñamos tal cual. */
+export const rateLimitMessage = (seconds) =>
+  seconds > 0
+    ? `Demasiadas peticiones. Espera ${seconds} segundo${seconds === 1 ? "" : "s"} y vuelve a intentarlo.`
+    : "Demasiadas peticiones. Espera unos segundos y vuelve a intentarlo.";
+
+/* ------------------------------------------------------------------ *
+ * Autenticación                                                       *
+ * ------------------------------------------------------------------ */
+
+/**
+ * Error de una respuesta HTTP que no es de red. Se distingue de un fallo de
+ * conexión porque un 401 o un 404 no se arreglan reintentando: reenganchar
+ * cuatro veces contra un 404 solo retrasa el mensaje que el usuario necesita.
+ */
+class AgentHttpError extends Error {
+  constructor(status, retryAfter = 0) {
+    super(`El agente respondió ${status}`);
+    this.status = status;
+    this.retryAfter = retryAfter;
+  }
+}
+
+function httpError(response) {
+  const raw = response.headers.get("Retry-After");
+  const retryAfter = Number.parseInt(raw ?? "", 10);
+  return new AgentHttpError(
+    response.status,
+    Number.isFinite(retryAfter) ? retryAfter : 0,
+  );
+}
+
+/**
+ * Access token de la sesión actual.
+ *
+ * `getSession()` ya renueva por su cuenta cuando el token está caducado, pero
+ * no cuando el backend lo rechaza por otro motivo (rotación de claves, reloj
+ * desfasado). Por eso existe `forceRefresh`: es lo que se usa en el reintento
+ * único tras un 401.
+ */
+async function accessToken({ forceRefresh = false } = {}) {
+  if (!supabase) return null;
+  try {
+    const { data, error } = forceRefresh
+      ? await supabase.auth.refreshSession()
+      : await supabase.auth.getSession();
+    if (error) return null;
+    return data?.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `fetch` con el Bearer puesto y un reintento ante 401.
+ *
+ * El reintento es uno y solo uno: si el token recién refrescado también se
+ * rechaza, el problema no es el token y hay que mandar al usuario a la pantalla
+ * de acceso en vez de girar sobre un 401 eterno.
+ */
+async function authorizedFetch(url, init = {}) {
+  const attempt = async (forceRefresh) => {
+    const token = await accessToken({ forceRefresh });
+    if (!token) return null;
+    return fetch(url, {
+      ...init,
+      headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token}` },
+    });
+  };
+
+  const first = await attempt(false);
+  if (!first) throw new AgentHttpError(401);
+  if (first.status !== 401) return first;
+
+  // El cuerpo del 401 no interesa, pero hay que consumirlo para no dejar la
+  // conexión colgando mientras se renueva la sesión.
+  first.body?.cancel?.().catch(() => {});
+  const second = await attempt(true);
+  if (!second) throw new AgentHttpError(401);
+  return second;
+}
+
+/**
+ * Ticket de un solo uso para el SSE de reenganche.
+ *
+ * Se pide uno **en cada** reconexión: dura unos 60 s y el backend lo consume con
+ * `GETDEL`, así que guardarlo para el siguiente intento garantiza un 401.
+ */
+async function requestStreamTicket(conversationId, signal) {
+  const url =
+    `${AGENT_URL}/auth/stream-ticket` +
+    `?conversation_id=${encodeURIComponent(conversationId)}`;
+  const response = await authorizedFetch(url, { method: "POST", signal });
+  if (!response.ok) throw httpError(response);
+  const { ticket } = await response.json();
+  if (!ticket) throw new AgentHttpError(401);
+  return ticket;
+}
 
 /**
  * Id de conversación por proyecto.
@@ -170,7 +289,6 @@ const RECONNECT_DELAY_MS = 1200;
 export function sendMessage({
   conversationId,
   projectId,
-  userId,
   message,
   uiContext = null,
   resume = null,
@@ -198,39 +316,42 @@ export function sendMessage({
     // reenganches por GET, que no vuelven a ejecutar nada — solo releen.
     for (let attempt = 0; attempt <= RECONNECT_ATTEMPTS; attempt += 1) {
       try {
-        const response =
-          attempt === 0
-            ? await fetch(`${AGENT_URL}/chat`, {
-                method: "POST",
-                signal: abort.signal,
-                headers: {
-                  "Content-Type": "application/json",
-                  Accept: "text/event-stream",
-                  "x-user-id": userId,
-                },
-                body: JSON.stringify({
-                  conversation_id: conversationId,
-                  project_id: projectId,
-                  message,
-                  ui_context: uiContext,
-                  resume,
-                }),
-              })
-            : await fetch(
-                `${AGENT_URL}/conversations/${conversationId}/stream`,
-                {
-                  signal: abort.signal,
-                  headers: {
-                    Accept: "text/event-stream",
-                    "x-user-id": userId,
-                    ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
-                  },
-                },
-              );
-
-        if (!response.ok || !response.body) {
-          throw new Error(`El agente respondió ${response.status}`);
+        let response;
+        if (attempt === 0) {
+          response = await authorizedFetch(`${AGENT_URL}/chat`, {
+            method: "POST",
+            signal: abort.signal,
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "text/event-stream",
+            },
+            body: JSON.stringify({
+              conversation_id: conversationId,
+              project_id: projectId,
+              message,
+              ui_context: uiContext,
+              resume,
+            }),
+          });
+        } else {
+          // Reenganche. El ticket se pide aquí dentro, no fuera del bucle: es de
+          // un solo uso y de vida corta, así que cada reconexión necesita el suyo.
+          const ticket = await requestStreamTicket(conversationId, abort.signal);
+          response = await fetch(
+            `${AGENT_URL}/conversations/${conversationId}/stream` +
+              `?ticket=${encodeURIComponent(ticket)}`,
+            {
+              signal: abort.signal,
+              headers: {
+                Accept: "text/event-stream",
+                ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
+              },
+            },
+          );
         }
+
+        if (!response.ok) throw httpError(response);
+        if (!response.body) throw new Error("respuesta sin cuerpo");
 
         for await (const { id, event } of parseSSE(response.body, abort.signal)) {
           if (id) lastEventId = id;
@@ -243,6 +364,17 @@ export function sendMessage({
         if (abort.signal.aborted) return;
       } catch (error) {
         if (abort.signal.aborted) return;
+
+        // Los errores de credenciales, de propiedad y de límite no se arreglan
+        // reintentando: se explican y se corta el turno. El 401 que sí tenía
+        // arreglo (token caducado) ya se reintentó dentro de `authorizedFetch`.
+        const fatal = fatalMessage(error);
+        if (fatal) {
+          emit({ type: "error", message: fatal, status: error.status });
+          emit({ type: "done", aborted: false });
+          return;
+        }
+
         if (attempt === RECONNECT_ATTEMPTS) {
           emit({ type: "error", message: AGENT_DOWN_MESSAGE, cause: String(error) });
           emit({ type: "done", aborted: false });
@@ -258,6 +390,18 @@ export function sendMessage({
 
     emit({ type: "done", aborted: false });
   }
+}
+
+/**
+ * Mensaje definitivo para los errores que no se reintentan, o `null` si el
+ * error es de red y el bucle de reconexión todavía tiene algo que hacer.
+ */
+function fatalMessage(error) {
+  if (!(error instanceof AgentHttpError)) return null;
+  if (error.status === 401) return AUTH_REQUIRED_MESSAGE;
+  if (error.status === 403 || error.status === 404) return OWNERSHIP_MESSAGE;
+  if (error.status === 429) return rateLimitMessage(error.retryAfter);
+  return null;
 }
 
 /** `message_delta` → `onMessageDelta`. */

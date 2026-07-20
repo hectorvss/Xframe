@@ -5307,11 +5307,19 @@ function Editor({ projectId }) {
       // parchea; si no (el worker lo creó entero), se añade.
       onAssetReady: async (e) => {
         const incoming = e.asset ?? e;
+
+        // El evento trae dos cosas distintas y mezclarlas rompe el proyecto a los
+        // días: `path` es la ruta del objeto (duradera, la que va a la base de
+        // datos) y `url` es una firma de cortesía para pintar la tarjeta ya
+        // mismo (caduca, no se guarda jamás). Todo lo que se persiste usa la
+        // ruta; solo el estado en memoria se queda con la URL.
+        const stored = { ...incoming, url: incoming.path ?? incoming.url };
+
         if (known.has(String(incoming.id))) {
-          patchAsset(incoming.id, { ...incoming, status: "ready" });
+          patchAsset(incoming.id, { ...stored, status: "ready" });
         } else {
           known.add(String(incoming.id));
-          await addAssets([{ ...incoming, status: "ready" }]);
+          await addAssets([{ ...stored, status: "ready" }]);
         }
 
         setStream((s) =>
@@ -5325,9 +5333,11 @@ function Editor({ projectId }) {
             : s,
         );
 
-        // La primera imagen del proyecto también le pone portada.
-        if (project && !project.cover_url && incoming.url) {
-          updateProject(projectId, { cover_url: incoming.url });
+        // La primera imagen del proyecto también le pone portada. La portada
+        // guarda la RUTA por el mismo motivo: una portada firmada se vería bien
+        // hoy y en blanco la semana que viene.
+        if (project && !project.cover_url && stored.url) {
+          updateProject(projectId, { cover_url: stored.url });
         }
       },
 

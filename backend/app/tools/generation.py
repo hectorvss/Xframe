@@ -19,12 +19,13 @@ Bloquear el turno esperando a un render de 90 segundos convierte el chat en un s
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, Field
 
 from app import db
-from app.providers.base import GenerationRequest
+from app.providers.base import GenerationAdapter, GenerationRequest
 from app.taxonomy.builder import (
     SnapshotTool,
     build_args,
@@ -35,6 +36,10 @@ from app.taxonomy.builder import (
 from app.taxonomy.repo import GenModel, TaxonomySnapshot
 from app.tools.base import ToolContext
 from app.tools.errors import InsufficientCreditsError, UnknownEntityError, XframeToolRetryableError
+
+if TYPE_CHECKING:  # pragma: no cover - solo para tipos
+    from app.assembly.ffmpeg import AssemblyResult
+    from app.jobs.queue import EnqueueResult
 
 GENERATION_MODES: tuple[str, ...] = ("production", "edit")
 """
@@ -53,13 +58,31 @@ class _GenerationTool(SnapshotTool):
 
     # -- coste y saldo ------------------------------------------------------ #
 
-    def credits_for(self, model: GenModel, *, duration_s: float | None, count: int = 1) -> int:
-        """Mismo cálculo que `estimate_cost`. Que sea el mismo importa: si estimar y
-        cobrar divergieran, el agente prometería un precio y el usuario pagaría otro."""
-        import math
+    async def quote(self, req: GenerationRequest) -> tuple[GenerationAdapter, int]:
+        """
+        Cotiza una petición **por el mismo camino exacto que la reserva**.
 
-        units = 1 if model.modality == "image" else math.ceil(duration_s or 0)
-        return int(units * model.credits_per_unit * count)
+        Antes había aquí un `credits_for()` propio que multiplicaba
+        `credits_per_unit` de la taxonomía por los segundos pedidos. La reserva, en
+        cambio, la calcula `queue.enqueue` como `usd_to_credits(adapter.estimate_cost(...))`.
+        Los dos números divergían hasta 4x, y siempre en el mismo sentido: el agente
+        anunciaba el barato y el monedero pagaba el caro. Un precio anunciado que no es
+        el precio cobrado no es una imprecisión, es una factura equivocada.
+
+        La única forma de que no vuelvan a separarse es que no haya dos fórmulas. Por eso
+        esto resuelve el adaptador y el `ModelSpec` reales y llama a `estimate_cost`,
+        aunque cueste una resolución de catálogo más: el adaptador es quien conoce las
+        rarezas de facturación de su proveedor (Minimax cobra por clip, no por segundo),
+        y la taxonomía no.
+
+        Devuelve también el adaptador porque `queue.enqueue` lo exige como keyword-only
+        sin defecto, y resolverlo dos veces sería pedirle al catálogo lo mismo dos veces.
+        """
+        from app.jobs.credits import usd_to_credits
+        from app.providers.registry import get_registry
+
+        adapter, spec = await get_registry().resolve(req.model_id)
+        return adapter, usd_to_credits(adapter.estimate_cost(req, spec))
 
     def assert_affordable(self, credits: int) -> None:
         if credits > self.ctx.credits_available:
@@ -110,12 +133,53 @@ class _GenerationTool(SnapshotTool):
 
     # -- encolado ----------------------------------------------------------- #
 
-    async def enqueue(self, req: GenerationRequest, *, shot_id: str | None = None) -> Any:
-        """Delegación a la cola. Import perezoso: el módulo de jobs se carga cuando de
-        verdad se va a generar, no al construir el toolset."""
-        from app.jobs.queue import enqueue as _enqueue
+    async def enqueue(
+        self,
+        req: GenerationRequest,
+        *,
+        adapter: GenerationAdapter,
+        shot_id: str | None = None,
+    ) -> EnqueueResult:
+        """
+        Delegación a la cola. Import perezoso: el módulo de jobs se carga cuando de
+        verdad se va a generar, no al construir el toolset.
 
-        return await _enqueue(req, project_id=self.ctx.project_id, shot_id=shot_id)
+        Dos argumentos que antes no se pasaban y sin los cuales esto no funcionaba:
+
+        - `adapter`: `queue.enqueue` lo exige keyword-only y sin defecto, porque de él
+          salen el `provider_id` que entra en la clave de idempotencia y el coste que se
+          reserva. Sin él la llamada era un `TypeError` en las cuatro tools de generación.
+        - `conversation_id`: es lo que enlaza el job con la conversación que lo pidió. Sin
+          él la columna queda a NULL, `worker._emit` sale por su return temprano y el
+          usuario no ve aparecer ningún plano: el render ocurre, se cobra, y nadie se
+          entera hasta que alguien recarga el proyecto.
+        """
+        from app.jobs.queue import enqueue as _enqueue
+        from app.jobs.resume import mark_awaiting
+
+        job = await _enqueue(
+            req,
+            project_id=self.ctx.project_id,
+            shot_id=shot_id,
+            adapter=adapter,
+            conversation_id=self.ctx.conversation_id or None,
+        )
+
+        # Marca de espera: es la guarda que autoriza al worker a reanudar la conversación
+        # cuando el último job aterrice, y por eso se pone **aquí**, en el único punto que
+        # comparten las cuatro tools de generación. Puesta en cada tool por separado, la
+        # que se olvidara de ponerla generaría planos de los que el agente no se enteraría
+        # nunca, y el síntoma sería "a veces continúa solo y a veces no".
+        #
+        # No se marca un resultado ya cacheado: `is_cached` significa que el asset existe
+        # desde antes y que no va a terminar ningún job, así que la marca se quedaría
+        # puesta esperando un evento que no va a llegar.
+        if self.ctx.conversation_id and not job.is_cached:
+            await mark_awaiting(
+                conversation_id=self.ctx.conversation_id,
+                project_id=self.ctx.project_id,
+            )
+        return job
 
 
 # --------------------------------------------------------------------------- #
@@ -147,29 +211,38 @@ class GenerateImageTool(_GenerationTool):
                 f"{len(refs)} element(s) were passed. Either drop element_refs or choose a "
                 f"model with the 'char_ref' capability (list_available_models requires=['char_ref'])."
             )
-        credits = self.credits_for(model, duration_s=None)
+        # La petición se construye ANTES de cotizar: `estimate_cost` mira sus campos
+        # (duración, resolución, si lleva audio), así que cotizar sobre otra cosa sería
+        # cotizar otra generación.
+        req = GenerationRequest(
+            modality="image",
+            model_id=model.id,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            aspect=self.check_aspect(model, aspect),
+            seed=seed,
+            elements=refs,
+            style=self.style_fragments(styles),
+        )
+        adapter, credits = await self.quote(req)
         self.assert_affordable(credits)
 
-        job = await self.enqueue(
-            GenerationRequest(
-                modality="image",
-                model_id=model.id,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                aspect=self.check_aspect(model, aspect),
-                seed=seed,
-                elements=refs,
-                style=self.style_fragments(styles),
-            )
-        )
+        job = await self.enqueue(req, adapter=adapter)
         return (
-            f"Image queued on {model.id} ({credits} credits). Job {job.id}. It is not "
-            f"ready yet — do not describe the result until check_job_status says it succeeded.",
-            {"job_id": str(job.id), "model_id": model.id, "credits": credits, "kind": "image"},
+            f"Image queued on {model.id} ({job.credits_reserved} credits reserved). "
+            f"Job {job.job_id}. It is not ready yet — do not describe the result until "
+            f"check_job_status says it succeeded.",
+            {
+                "job_id": job.job_id,
+                "model_id": model.id,
+                "credits": job.credits_reserved,
+                "reused": job.reused,
+                "kind": "image",
+            },
         )
 
     @classmethod
-    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> "GenerateImageTool | None":
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> GenerateImageTool | None:
         models = snap.models_for("image")
         if not models:
             return None
@@ -275,37 +348,36 @@ class GenerateVideoTool(_GenerationTool):
             )
 
         refs = self.resolve_elements(element_refs)
-        credits = self.credits_for(model, duration_s=duration)
+        req = GenerationRequest(
+            modality="video",
+            model_id=model.id,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            duration_s=duration,
+            aspect=self.check_aspect(model, aspect),
+            resolution=resolution,
+            seed=seed,
+            init_image_url=init_image_url,
+            last_frame_url=last_frame_url,
+            elements=refs,
+            camera_motion=self.motion_or_none(camera_motion),
+            camera_motion_strength=camera_motion_strength,
+            style=self.style_fragments(styles),
+            audio=audio,
+        )
+        adapter, credits = await self.quote(req)
         self.assert_affordable(credits)
 
-        job = await self.enqueue(
-            GenerationRequest(
-                modality="video",
-                model_id=model.id,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                duration_s=duration,
-                aspect=self.check_aspect(model, aspect),
-                resolution=resolution,
-                seed=seed,
-                init_image_url=init_image_url,
-                last_frame_url=last_frame_url,
-                elements=refs,
-                camera_motion=self.motion_or_none(camera_motion),
-                camera_motion_strength=camera_motion_strength,
-                style=self.style_fragments(styles),
-                audio=audio,
-            ),
-            shot_id=shot_id,
-        )
+        job = await self.enqueue(req, adapter=adapter, shot_id=shot_id)
         return (
-            f"Video queued on {model.id}, {duration:g}s ({credits} credits). Job {job.id}. "
-            f"Rendering takes minutes — do not wait for it in this turn and do not claim "
-            f"it is done.",
+            f"Video queued on {model.id}, {duration:g}s ({job.credits_reserved} credits "
+            f"reserved). Job {job.job_id}. Rendering takes minutes — do not wait for it "
+            f"in this turn and do not claim it is done.",
             {
-                "job_id": str(job.id),
+                "job_id": job.job_id,
                 "model_id": model.id,
-                "credits": credits,
+                "credits": job.credits_reserved,
+                "reused": job.reused,
                 "duration_s": duration,
                 "shot_id": shot_id,
                 "kind": "video",
@@ -313,7 +385,7 @@ class GenerateVideoTool(_GenerationTool):
         )
 
     @classmethod
-    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> "GenerateVideoTool | None":
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> GenerateVideoTool | None:
         models = snap.models_for("video")
         if not models:
             return None
@@ -419,9 +491,29 @@ class GenerateShotBatchTool(_GenerationTool):
     Fan-out sobre la shot list.
 
     Es la tool con más apalancamiento y la más peligrosa del sistema: una llamada puede
-    lanzar veinte renders. Por eso valida el presupuesto **completo antes de encolar
-    nada** — encolar la mitad y quedarse sin créditos deja al usuario con medio corto y
-    la cuenta a cero, que es el peor resultado posible.
+    lanzar veinte renders.
+
+    **Sobre la atomicidad del presupuesto, dicha con precisión.** Se comprueba el total
+    antes de encolar nada, pero esa comprobación **no es la reserva**: la reserva la hace
+    `queue.enqueue` job a job, cada una en su propia transacción y bajo el cerrojo del
+    perfil. Son N+1 transacciones separadas, no una. La consecuencia real, y hay que
+    saberla porque afecta al dinero del usuario: si el saldo cambia entre la comprobación
+    y el último encolado (otra pestaña generando, un reembolso que no llegó, un lote
+    concurrente), los primeros planos se reservan y los últimos fallan por saldo.
+
+    Lo que se garantiza es que ese fallo sea limpio, y eso sí está construido aquí:
+
+    - El chequeo previo descarta el caso normal —pedir un lote que nunca cupo— antes de
+      gastar un solo crédito.
+    - El fallo por saldo de un plano concreto lo captura `fanout._run_one` y se convierte
+      en un `JobResult(ok=False)`, no en una excepción que cancele a sus hermanos.
+    - Se informa de los créditos **realmente reservados**, sumados de cada `EnqueueResult`,
+      y no del total cotizado. Anunciar el total cotizado cuando la mitad falló es
+      exactamente la clase de mentira contable que este backend no debe cometer.
+
+    Una reserva verdaderamente atómica del lote exige una transacción única que abarque
+    las N reservas, y eso es un cambio en `queue.enqueue` (aceptar varias peticiones y
+    una sola conexión), no en esta tool. Queda pendiente y documentado, no disimulado.
     """
 
     name: str = "generate_shot_batch"
@@ -460,29 +552,77 @@ class GenerateShotBatchTool(_GenerationTool):
                 [f"{r['id']} (#{r['position']} {r['title']})" for r in valid],
             )
 
-        per_shot = [
-            self.check_duration(model, duration_s or (r["spec"] or {}).get("duration_s")
-                                or model.min_duration_s)
-            for r in rows
-        ]
-        total = sum(self.credits_for(model, duration_s=d) for d in per_shot)
-        self.assert_affordable(total)
+        from app.agent.state import JobResult
+        from app.jobs.fanout import ShotSpec, run_fanout
 
-        from app.jobs.fanout import run_shots
+        # Una petición por plano, construida antes de cotizar nada: es la petición
+        # concreta la que tiene precio, no el modelo.
+        requests: dict[str, GenerationRequest] = {}
+        for row in rows:
+            spec = dict(row["spec"] or {})
+            duration = self.check_duration(
+                model, duration_s or spec.get("duration_s") or model.min_duration_s
+            )
+            requests[str(row["id"])] = GenerationRequest(
+                modality="video",
+                model_id=model.id,
+                prompt=(row["text"] or row["title"] or "").strip(),
+                duration_s=duration,
+                aspect=self.check_aspect(model, spec.get("aspect")),
+                resolution=spec.get("resolution"),
+                elements=self.resolve_elements(spec.get("elements")),
+                camera_motion=self.motion_or_none(spec.get("camera_motion")),
+                camera_motion_strength=spec.get("camera_motion_strength"),
+                style=self.style_fragments(spec.get("styles")),
+            )
 
-        results = await run_shots(
-            project_id=self.ctx.project_id,
-            shots=[dict(r) | {"id": str(r["id"])} for r in rows],
-            model_id=model.id,
-            duration_s=duration_s,
-            conversation_id=self.ctx.conversation_id,
+        # El adaptador es el mismo para todo el lote (un solo modelo), así que se resuelve
+        # una vez; el precio no, porque las duraciones difieren plano a plano.
+        adapter: GenerationAdapter | None = None
+        quoted = 0
+        for req in requests.values():
+            adapter, price = await self.quote(req)
+            quoted += price
+        self.assert_affordable(quoted)
+
+        async def _run_shot(shot: ShotSpec) -> JobResult:
+            """
+            Lo que `fanout` ejecuta por plano: encolar de verdad.
+
+            `fanout.py` nunca había estado conectado a la cola — su `ShotRunner` no tenía
+            ninguna implementación real. Esta es. Puede lanzar sin miedo: `_run_one` lo
+            captura y lo devuelve como `JobResult(ok=False)`, que es justamente la regla
+            que impide que un plano roto cancele a sus hermanos ya pagados.
+            """
+            job = await self.enqueue(
+                shot.payload, adapter=adapter, shot_id=shot.shot_id  # type: ignore[arg-type]
+            )
+            return JobResult(
+                job_id=job.job_id,
+                shot_id=shot.shot_id,
+                ok=True,
+                asset=job.asset,
+                credits_charged=job.credits_reserved,
+            )
+
+        report = await run_fanout(
+            [ShotSpec(shot_id=sid, payload=req) for sid, req in requests.items()],
+            _run_shot,
+            # Cero umbral: aquí "éxito" significa *encolado*, no renderizado. Abortar el
+            # lote no desharía las reservas ya hechas ni pararía a los proveedores, así
+            # que el aborto sería una mentira cara. El agente informa plano a plano.
+            failed_shots_min_ratio=0.0,
+            # Nada que limpiar: en este punto no existe ningún asset todavía. Borrar
+            # aquí solo podría llevarse por delante assets de un lote anterior.
+            cleanup_partials=False,
         )
 
-        ok = [r for r in results if r.ok]
-        failed = [r for r in results if not r.ok]
+        ok = report.succeeded
+        failed = report.failed
+        reserved = sum(r.credits_charged for r in ok)
         lines = [
-            f"Batch of {len(results)} shots on {model.id}: {len(ok)} queued/succeeded, "
-            f"{len(failed)} failed. Reserved {total} credits."
+            f"Batch of {len(report.results)} shots on {model.id}: {len(ok)} queued, "
+            f"{len(failed)} failed. Reserved {reserved} credits (quoted {quoted})."
         ]
         lines += [f"  FAILED shot {r.shot_id}: {r.error}" for r in failed]
         if failed:
@@ -491,15 +631,16 @@ class GenerateShotBatchTool(_GenerationTool):
                 "whole batch: the successful shots would be charged twice."
             )
         return "\n".join(lines), {
-            "results": [r.model_dump() for r in results],
-            "credits_reserved": total,
+            "results": [r.model_dump() for r in report.results],
+            "credits_reserved": reserved,
+            "credits_quoted": quoted,
             "model_id": model.id,
         }
 
     @classmethod
     async def create(
         cls, ctx: ToolContext, snap: TaxonomySnapshot
-    ) -> "GenerateShotBatchTool | None":
+    ) -> GenerateShotBatchTool | None:
         models = snap.models_for("video")
         if not models:
             return None
@@ -571,29 +712,35 @@ class GenerateLipsyncTool(_GenerationTool):
             )
         model = self.require_model(model_id, "lipsync")
         source = await _asset_or_raise(self.ctx.project_id, asset_id, kind="video")
-        credits = self.credits_for(model, duration_s=source.get("duration_s") or 5)
+        req = GenerationRequest(
+            modality="lipsync",
+            model_id=model.id,
+            prompt=text or "",
+            # La duración va en la petición y no solo en el mensaje: `estimate_cost` la
+            # lee para cotizar, y sin ella el lipsync se cotizaba como si durase cero.
+            duration_s=source.get("duration_s") or 5,
+            init_image_url=source["url"],
+            extra={"audio_url": audio_url, "source_asset_id": asset_id},
+        )
+        adapter, credits = await self.quote(req)
         self.assert_affordable(credits)
 
-        job = await self.enqueue(
-            GenerationRequest(
-                modality="lipsync",
-                model_id=model.id,
-                prompt=text or "",
-                init_image_url=source["url"],
-                extra={"audio_url": audio_url, "source_asset_id": asset_id},
-            ),
-            shot_id=source.get("shot_id"),
-        )
+        job = await self.enqueue(req, adapter=adapter, shot_id=source.get("shot_id"))
         return (
-            f"Lipsync queued on {model.id} over asset {asset_id} ({credits} credits). "
-            f"Job {job.id}.",
-            {"job_id": str(job.id), "credits": credits, "kind": "lipsync"},
+            f"Lipsync queued on {model.id} over asset {asset_id} "
+            f"({job.credits_reserved} credits reserved). Job {job.job_id}.",
+            {
+                "job_id": job.job_id,
+                "credits": job.credits_reserved,
+                "reused": job.reused,
+                "kind": "lipsync",
+            },
         )
 
     @classmethod
     async def create(
         cls, ctx: ToolContext, snap: TaxonomySnapshot
-    ) -> "GenerateLipsyncTool | None":
+    ) -> GenerateLipsyncTool | None:
         models = snap.models_for("lipsync")
         if not models:
             return None
@@ -630,47 +777,24 @@ class GenerateLipsyncTool(_GenerationTool):
         return tool.bind_context(ctx).bind_snapshot(snap)  # type: ignore[return-value]
 
 
-class UpscaleAssetArgs(BaseModel):
-    asset_id: str = Field(..., description="Id of the image or video asset to upscale.")
-    factor: int = Field(2, ge=2, le=4, description="Scale factor. 2 unless the user asked for more.")
-
-
-class UpscaleAssetTool(_GenerationTool):
-    """Reescalado del asset final."""
-
-    name: str = "upscale_asset"
-    args_schema: type[BaseModel] = UpscaleAssetArgs
-
-    description: str = (
-        "Upscale an existing image or video asset to a higher resolution. Costs credits.\n"
-        "\n"
-        "USE THIS at the very end, on the shots the user has already approved, when they "
-        "ask for a deliverable at higher resolution.\n"
-        "\n"
-        "DO NOT upscale drafts, and DO NOT upscale a whole batch on your own initiative: "
-        "it multiplies the cost of work the user may still want to change. Upscaling does "
-        "not fix a bad shot — regenerate it instead."
-    )
-
-    async def _arun_impl(self, asset_id: str, factor: int = 2, **_: Any) -> tuple[str, Any]:
-        source = await _asset_or_raise(self.ctx.project_id, asset_id)
-        from app.jobs.queue import enqueue as _enqueue
-
-        job = await _enqueue(
-            GenerationRequest(
-                modality=source["type"] if source["type"] in ("image", "video") else "image",
-                model_id=f"upscale-{factor}x",
-                prompt="",
-                init_image_url=source["url"],
-                extra={"source_asset_id": asset_id, "factor": factor},
-            ),
-            project_id=self.ctx.project_id,
-            shot_id=source.get("shot_id"),
-        )
-        return (
-            f"Upscale x{factor} queued for asset {asset_id}. Job {job.id}.",
-            {"job_id": str(job.id), "factor": factor, "kind": "upscale"},
-        )
+# `upscale_asset` se ha retirado, y la retirada es la corrección.
+#
+# Apuntaba a `model_id=f"upscale-{factor}x"`, que no existe en `gen_models` ni en la
+# semilla, y no puede existir: la columna `modality` tiene un CHECK sobre
+# ('image','video','audio','lipsync'), y ningún adaptador de los ocho registrados sirve
+# reescalado. Tampoco comprobaba saldo ni calculaba créditos, así que era la única tool
+# de generación que podía gastar sin cotizar.
+#
+# Había dos salidas. Darle "el mismo tratamiento que las demás" la dejaría cotizando y
+# encolando contra un modelo inexistente: `load_model_spec` lanzaría `UnknownEntityError`
+# enumerando modelos válidos, y el agente —que ve la tool montada en su esquema— se
+# pondría a probar ids de modelo hasta agotar el turno. Es un fallo peor que no tenerla,
+# porque parece corregible y no lo es.
+#
+# La otra es no ofrecer lo que no se puede servir, que es la regla que ya sigue el resto
+# del sistema: una taxonomía vacía no monta la tool en vez de fallar de forma críptica.
+# Cuando haya un modelo de upscale real en la semilla, esto vuelve como una tool normal
+# con su `create()` leyendo `snap.models_for(...)`, igual que las otras cuatro.
 
 
 class AssembleVideoArgs(BaseModel):
@@ -737,23 +861,122 @@ class AssembleVideoTool(_GenerationTool):
                 f"assembling. Assembling now would produce a cut with holes in it."
             )
 
-        from app.assembly import concat_shots
+        from app.artifacts.manager import ArtifactManager
+        from app.artifacts.types import AssetRefBlock, CutArtifactContent
+        from app.assembly import AssemblySpec, TimelineClip, assemble_cut
+        from app.assembly.ffmpeg import default_output_path
+        from app.storage import sign_reference
 
-        asset = await concat_shots(
-            project_id=self.ctx.project_id,
-            clips=[str(by_shot[s]["url"]) for s in shot_ids],
-            audio_asset_id=audio_asset_id,
-            title=title,
+        # ffmpeg descarga cada entrada por HTTP, así que aquí también hace falta firmar:
+        # con el bucket privado, un `src` en crudo es un 400 y un montaje vacío. Se firma
+        # justo antes de invocar a ffmpeg y no se guarda en ningún sitio — el corte se
+        # ensambla en segundos y estas URLs mueren con él.
+        audio_track: str | None = None
+        if audio_asset_id:
+            audio_track = await sign_reference(
+                str((await _asset_or_raise(self.ctx.project_id, audio_asset_id, kind="audio"))["url"])
+            )
+
+        manager = ArtifactManager(self.ctx.project_id)
+        # El corte se versiona como el guion y el timeline: regenerarlo es una versión
+        # nueva, no una sobrescritura. La versión entra en la ruta de salida para que dos
+        # montajes concurrentes no se pisen el fichero temporal.
+        version = len(await manager.alist("cut")) + 1
+
+        spec = AssemblySpec(
+            clips=[
+                TimelineClip(
+                    asset_id=str(by_shot[s]["asset_id"]),
+                    src=str(await sign_reference(str(by_shot[s]["url"]))),
+                    shot_id=s,
+                    status="ready",
+                )
+                for s in shot_ids
+            ],
+            output_path=default_output_path(self.ctx.project_id, version),
+            audio_track=audio_track,
+            version=version,
         )
+        result = await assemble_cut(spec)
+
+        # El montaje no estaba persistido en ninguna parte: se renderizaba un mp4 en un
+        # directorio temporal y se le contaba al usuario que existía un asset que nadie
+        # había escrito. Un entregable que solo vive en /tmp no es un entregable.
+        asset_id = await _persist_cut(self.ctx.project_id, result, title=title)
+        artifact = await manager.acreate(
+            CutArtifactContent(
+                title=title,
+                cut_asset_id=asset_id,
+                # Referencias, nunca copias: si un plano se regenera, el artefacto lo
+                # refleja sin propagar nada a mano.
+                blocks=[AssetRefBlock(asset_id=a) for a in result.clip_asset_ids],
+            ),
+            name=title,
+        )
+
+        warnings = "".join(f"\n  WARNING: {w}" for w in result.warnings)
         return (
-            f"Cut '{title}' assembled from {len(shot_ids)} shots. Asset {asset['id']}.",
-            {"asset_id": str(asset["id"]), "shots": shot_ids, "kind": "cut"},
+            f"Cut '{title}' (v{version}) assembled from {len(shot_ids)} shots, "
+            f"{result.duration_s:.1f}s at {result.target}. Asset {asset_id}.{warnings}",
+            {
+                "asset_id": asset_id,
+                "artifact_id": artifact["id"],
+                "shots": shot_ids,
+                "version": version,
+                "duration_s": result.duration_s,
+                "warnings": result.warnings,
+                "kind": "cut",
+            },
         )
 
 
 # --------------------------------------------------------------------------- #
 # Ayudas                                                                       #
 # --------------------------------------------------------------------------- #
+
+
+async def _persist_cut(project_id: str, result: AssemblyResult, *, title: str) -> str:
+    """
+    Sube el mp4 montado al storage y escribe su fila en `assets`. Devuelve el id.
+
+    Se reutiliza `SupabaseStorage` del worker en vez de escribir otra subida: es el mismo
+    bucket, la misma clave de servicio y el mismo `x-upsert`, y tener dos rutas de subida
+    es tener dos sitios donde se puede romper la política del bucket. `job_id` no es un
+    job de proveedor aquí —el montaje es local— sino la carpeta del corte, que es lo que
+    esa función usa el parámetro para construir.
+
+    El asset se marca `ready` directamente porque cuando esto corre el fichero ya existe
+    y ya está verificado por `assemble_cut`. No hay estado intermedio que observar.
+
+    Lo que `put()` devuelve es la **ruta** del objeto, y eso es lo que se escribe en
+    `assets.url`. Igual que los planos: el corte lo pinta el frontend firmando la ruta,
+    nunca leyendo una URL guardada que caducaría.
+    """
+    from pathlib import Path
+
+    from app.jobs.worker import SupabaseStorage
+
+    data = Path(result.output_path).read_bytes()
+    object_path = await SupabaseStorage().put(
+        project_id=project_id,
+        job_id=f"cut-v{result.version}",
+        filename="cut.mp4",
+        data=data,
+        content_type="video/mp4",
+    )
+    row = await db.fetchrow(
+        """
+        insert into public.assets
+            (project_id, name, type, url, status, params)
+        values ($1::uuid, $2, 'cut', $3, 'ready', $4::jsonb)
+        returning id
+        """,
+        project_id,
+        title[:80],
+        object_path,
+        result.to_artifact_content(),
+    )
+    return str(row["id"])
 
 
 async def _asset_or_raise(

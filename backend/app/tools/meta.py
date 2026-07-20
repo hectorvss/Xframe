@@ -23,7 +23,6 @@ from app.taxonomy.repo import TaxonomySnapshot
 from app.tools.base import ToolContext
 from app.tools.errors import XframeToolRetryableError
 
-
 # --------------------------------------------------------------------------- #
 # switch_mode                                                                  #
 # --------------------------------------------------------------------------- #
@@ -60,7 +59,7 @@ class SwitchModeTool(SnapshotTool):
         )
 
     @classmethod
-    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> "SwitchModeTool | None":
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> SwitchModeTool | None:
         catalogue = await modes_with_tools(ctx, snap)
         others = [m for m in catalogue if m != ctx.mode]
         if not others:

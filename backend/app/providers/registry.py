@@ -40,6 +40,7 @@ def _register_defaults() -> None:
     from app.providers.hailuo import HailuoAdapter
     from app.providers.higgsfield import HiggsfieldAdapter
     from app.providers.kling import KlingAdapter
+    from app.providers.openai_image import OpenAIImageAdapter
     from app.providers.seedance import SeedanceAdapter
     from app.providers.sora import SoraAdapter
     from app.providers.veo import VeoAdapter
@@ -54,6 +55,10 @@ def _register_defaults() -> None:
         WanAdapter,
         HiggsfieldAdapter,
         FluxAdapter,
+        # `openai_image` es un provider_id distinto de `openai` (Sora) a propósito: este
+        # dict se indexa por provider_id y compartirlo haría que una familia machacara a
+        # la otra. Comparten la clave OPENAI_API_KEY, que es lo único que se comparte.
+        OpenAIImageAdapter,
     ):
         _FACTORIES[adapter_cls.provider_id] = adapter_cls
 
@@ -153,7 +158,15 @@ class DbAdapterRegistry:
                    supports_i2v, supports_last_frame, supports_char_ref, supports_audio,
                    description_llm
               from public.gen_models
-             where status = 'active'
+             -- `<> 'retired'`, no `= 'active'`, y tiene que coincidir **exactamente** con
+             -- la regla de `taxonomy/repo.py`. Allí un modelo `deprecated` se sigue
+             -- ofreciendo al agente, solo que etiquetado con su fecha de apagado. Aquí se
+             -- excluía, así que el catálogo y el resolutor discrepaban: el agente proponía
+             -- `sora-2`, el usuario lo elegía, se reservaban créditos y el job moría al
+             -- resolver el adaptador con "no existe ese modelo". Un modelo deprecado
+             -- funciona hasta el día de su apagado; ese es justamente el sentido del
+             -- estado intermedio.
+             where status <> 'retired'
              order by sort, id
             """
         )

@@ -37,8 +37,9 @@ import os
 import re
 import statistics
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Generic, Sequence, TypeVar
+from typing import Any, Generic, TypeVar
 
 import structlog
 
@@ -252,7 +253,7 @@ async def run_eval(
         async with sem:
             try:
                 output = await asyncio.wait_for(task(case.input), timeout=timeout_s)
-            except Exception as exc:  # noqa: BLE001 — el error del caso es un dato del informe
+            except Exception as exc:
                 logger.warning("eval case failed", case=case.name, error=str(exc))
                 return CaseResult(case_name=case.name, scores=[], error=f"{type(exc).__name__}: {exc}")
 
@@ -267,7 +268,7 @@ async def run_eval(
                             **case.metadata,
                         )
                     )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     # Un scorer que revienta se abstiene: no se puede distinguir de "no
                     # aplica" desde fuera, y puntuarlo 0.0 sería inventar un veredicto.
                     scored.append(
@@ -281,7 +282,7 @@ async def run_eval(
 
     results = await asyncio.gather(*(_run_case(c) for c in cases))
     report = EvalReport(experiment_name=experiment_name, results=list(results))
-    print(report.render())  # noqa: T201 — pytest corre los evals con -s a propósito
+    print(report.render())
     return report
 
 

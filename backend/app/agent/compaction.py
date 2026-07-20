@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Sequence
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
@@ -465,15 +465,11 @@ async def _default_summarizer(messages: Sequence[BaseMessage]) -> str:
     en la llamada de resumen y la API los rechaza. Import perezoso del proveedor para que
     el módulo se pueda importar sin `langchain_anthropic`.
     """
-    from langchain_anthropic import ChatAnthropic
 
     settings = get_settings()
-    model = ChatAnthropic(
-        model=settings.model_summarize,
-        api_key=settings.anthropic_api_key,
-        max_tokens=8_192,
-        streaming=False,
-    )
+    from app import llm
+
+    model = llm.chat_model("summarize", max_tokens=8_192, streaming=False)
     response = await model.ainvoke(
         [*_strip_cache_control(messages), HumanMessage(content=SUMMARY_PROMPT)]
     )
@@ -504,8 +500,8 @@ def parse_summary(text: str) -> str:
 
 
 __all__ = [
-    "CONVERSATION_WINDOW_SIZE",
     "CONTEXT_MESSAGE_FLAG",
+    "CONVERSATION_WINDOW_SIZE",
     "CompactionReport",
     "ConversationCompactor",
     "OperationalState",

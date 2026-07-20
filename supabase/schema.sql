@@ -108,6 +108,11 @@ create index if not exists brief_project_idx on public.brief_blocks (project_id,
 create table if not exists public.canvas_nodes (
   id          uuid primary key default gen_random_uuid(),
   project_id  uuid    not null references public.projects on delete cascade,
+  -- Identificador estable del nodo dentro del canvas. `canvas_edges.from_node` y
+  -- `to_node` son `text` y apuntan aqui, no al uuid. Estaba en la base de datos
+  -- real y no en este fichero: la deriva hacia que los tests, que aplican este
+  -- esquema, pasaran en verde mientras produccion rechazaba cada insercion.
+  node_key    text    not null,
   type        text    not null default 'concept',
   x           real    not null default 0,
   y           real    not null default 0,

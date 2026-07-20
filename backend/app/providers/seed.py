@@ -24,7 +24,7 @@ import argparse
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from typing import Literal
 
 PriceConfidence = Literal["verified", "secondary", "inferred"]
@@ -39,8 +39,25 @@ class SeedModel:
     label: str
     description_llm: str
     cost_per_second: Decimal
+    """
+    Coste de API por segundo de vídeo. **Derivado** cuando el proveedor factura por clip:
+    en ese caso no se escribe a mano, lo calcula `resolve_cost_per_second()` a partir de
+    `cost_per_clip`. Ver ahí el porqué.
+    """
     price_confidence: PriceConfidence
     cost_per_image: Decimal | None = None
+    cost_per_clip: Decimal | None = None
+    """
+    Tarifa **plana por clip**, para los proveedores que facturan así (MiniMax).
+
+    Existe porque el modelo de precio por segundo no puede representar una tarifa plana
+    sin perder dinero por un lado o cobrar de más por el otro, y hasta ahora se estaba
+    perdiendo. MiniMax cobra lo mismo por un clip de 6 s que por uno de 10 s; el seed lo
+    modeló dividiendo la tarifa entre la duración máxima, así que a 6 s —el mínimo, y la
+    duración que más se pide— se cobraba el 60 % de lo que el proveedor nos factura al
+    100 %. Con el margen de 1.6 aplicado encima, `hailuo-2.3` salía a 0.96x: cada plano
+    de 6 s se generaba **por debajo de coste**, en silencio y sin ningún error.
+    """
     min_duration_s: float | None = None
     max_duration_s: float | None = None
     resolutions: tuple[str, ...] = ()
@@ -91,7 +108,7 @@ class SeedStyle:
 MODELS: tuple[SeedModel, ...] = (
     # --- Google -------------------------------------------------------------
     SeedModel(
-        id="veo-3.1",
+        id="veo-3.1-generate-preview",
         family="Google Veo",
         provider="google",
         modality="video",
@@ -108,6 +125,7 @@ MODELS: tuple[SeedModel, ...] = (
         min_duration_s=4,
         max_duration_s=8,
         resolutions=("720p", "1080p", "4K"),
+        aspects=("16:9", "9:16"),
         supports_i2v=True,
         supports_last_frame=True,
         supports_char_ref=True,
@@ -116,7 +134,7 @@ MODELS: tuple[SeedModel, ...] = (
         sort=10,
     ),
     SeedModel(
-        id="veo-3.1-lite",
+        id="veo-3.1-lite-generate-preview",
         family="Google Veo",
         provider="google",
         modality="video",
@@ -132,6 +150,7 @@ MODELS: tuple[SeedModel, ...] = (
         min_duration_s=4,
         max_duration_s=8,
         resolutions=("720p", "1080p"),
+        aspects=("16:9", "9:16"),
         supports_i2v=True,
         supports_last_frame=True,
         supports_char_ref=True,
@@ -139,11 +158,13 @@ MODELS: tuple[SeedModel, ...] = (
         sort=11,
     ),
     SeedModel(
-        id="veo-3-fast",
+        # Sustituye a `veo-3-fast`, que apuntaba a Veo 3.0: apagado el 30 de junio de
+        # 2026. Ofrecerlo era prometer al usuario un modelo que ya no responde.
+        id="veo-3.1-fast-generate-preview",
         family="Google Veo",
         provider="google",
         modality="video",
-        label="Google Veo 3 Fast",
+        label="Google Veo 3.1 Fast",
         description_llm=(
             "Generacion mas rapida de la familia, pensada para tanteo. Si el usuario "
             "esta explorando ideas y va a descartar la mayoria, esto le da respuesta en "
@@ -153,9 +174,11 @@ MODELS: tuple[SeedModel, ...] = (
         price_confidence="verified",
         min_duration_s=4,
         max_duration_s=8,
-        resolutions=("720p", "1080p"),
+        resolutions=("720p", "1080p", "4K"),
+        aspects=("16:9", "9:16"),
         supports_i2v=True,
         supports_last_frame=True,
+        supports_char_ref=True,
         supports_audio=True,
         sort=12,
     ),
@@ -234,6 +257,112 @@ MODELS: tuple[SeedModel, ...] = (
         status="deprecated",
         sunset_at="2026-09-24",
         sort=21,
+    ),
+    # --- OpenAI (imagen) ----------------------------------------------------
+    #
+    # Es el único bloque de imagen que funciona con la clave que el usuario ya tiene, y
+    # por tanto la puerta de entrada real al producto: los elements (personajes,
+    # localizaciones, objetos) son imágenes, y sin crearlas no hay continuidad que probar.
+    #
+    # PRECIOS: la página oficial ya no publica coste por imagen; solo $/1M tokens y una
+    # calculadora. Las cifras de abajo son de fuentes secundarias de julio de 2026 y son
+    # el precio de calidad MEDIA a 1024x1024. El adaptador ajusta por calidad y tamaño en
+    # `estimate_cost`, así que esto es el punto de referencia, no la tarifa completa.
+    SeedModel(
+        id="gpt-image-2",
+        family="OpenAI GPT Image",
+        provider="openai_image",
+        modality="image",
+        label="OpenAI GPT Image 2",
+        description_llm=(
+            "Empieza por aqui para CREAR un element: la cara de un personaje, una "
+            "localizacion o un objeto que despues va a repetirse en toda la pieza. "
+            "Tambien es el que hay que usar para generar el fotograma de referencia que "
+            "luego se anima con un modelo de video. Entiende instrucciones largas y "
+            "literales mejor que ningun otro del catalogo, asi que es el indicado cuando "
+            "el usuario describe con precision lo que quiere ver. Si le pasas elements "
+            "existentes, los toma como referencia y conserva la identidad en vez de "
+            "inventar una cara nueva, que es lo que da continuidad entre vinetas."
+        ),
+        cost_per_second=Decimal("0.053"),
+        cost_per_image=Decimal("0.053"),
+        price_confidence="secondary",
+        resolutions=("1024x1024", "1536x1024", "1024x1536"),
+        aspects=("1:1", "16:9", "9:16"),
+        supports_char_ref=True,
+        sort=1,
+        note=(
+            "Precio de calidad media a 1024x1024 segun fuentes secundarias (jul 2026): "
+            "low $0.006 / medium $0.053 / high $0.211. OpenAI factura por tokens de "
+            "imagen de salida, no por imagen; ver _PRICE_BY_QUALITY en openai_image.py."
+        ),
+    ),
+    SeedModel(
+        id="gpt-image-1.5",
+        family="OpenAI GPT Image",
+        provider="openai_image",
+        modality="image",
+        label="OpenAI GPT Image 1.5",
+        description_llm=(
+            "Generacion anterior a GPT Image 2, algo mas barata y con el mismo criterio "
+            "de composicion. Sirve como plan B si GPT Image 2 esta saturado, y como "
+            "escalon intermedio cuando el usuario quiere iterar varias veces sobre la "
+            "misma idea antes de fijar el element definitivo. Para el element que se "
+            "queda, sube a GPT Image 2."
+        ),
+        cost_per_second=Decimal("0.042"),
+        cost_per_image=Decimal("0.042"),
+        price_confidence="inferred",
+        resolutions=("1024x1024", "1536x1024", "1024x1536"),
+        aspects=("1:1", "16:9", "9:16"),
+        supports_char_ref=True,
+        sort=2,
+        note="Precio INFERIDO por analogia con gpt-image-2; no hay tarifa por imagen publicada.",
+    ),
+    SeedModel(
+        id="gpt-image-1-mini",
+        family="OpenAI GPT Image",
+        provider="openai_image",
+        modality="image",
+        label="OpenAI GPT Image 1 Mini",
+        description_llm=(
+            "El escalon barato de la familia. Es una herramienta de tanteo: sirve para "
+            "comprobar si una descripcion de personaje o de localizacion produce algo "
+            "parecido a lo que el usuario tiene en la cabeza, antes de gastar en el "
+            "modelo bueno. No lo uses para el element definitivo, porque la cara que "
+            "salga de aqui es la que habra que mantener en todos los planos siguientes."
+        ),
+        cost_per_second=Decimal("0.015"),
+        cost_per_image=Decimal("0.015"),
+        price_confidence="inferred",
+        resolutions=("1024x1024", "1536x1024", "1024x1536"),
+        aspects=("1:1", "16:9", "9:16"),
+        supports_char_ref=True,
+        sort=3,
+        note="Precio INFERIDO. Oficial: $2.50/1M tokens de entrada, frente a $8.00 de los grandes.",
+    ),
+    SeedModel(
+        id="gpt-image-1",
+        family="OpenAI GPT Image",
+        provider="openai_image",
+        modality="image",
+        label="OpenAI GPT Image 1",
+        description_llm=(
+            "RETIRADO POR EL PROVEEDOR el 23 de octubre de 2026. No lo propongas. Si el "
+            "usuario lo pide por nombre, explicale que OpenAI lo apaga y ofrecele "
+            "gpt-image-2, que cubre el mismo caso de uso y ademas conserva mejor la "
+            "identidad de las referencias que se le pasan."
+        ),
+        cost_per_second=Decimal("0.042"),
+        cost_per_image=Decimal("0.042"),
+        price_confidence="secondary",
+        resolutions=("1024x1024", "1536x1024", "1024x1536"),
+        aspects=("1:1", "16:9", "9:16"),
+        supports_char_ref=True,
+        status="deprecated",
+        sunset_at="2026-10-23",
+        sort=4,
+        note="Marcado deprecated en la doc oficial de OpenAI; fecha de apagado 2026-10-23.",
     ),
     # --- Kling --------------------------------------------------------------
     SeedModel(
@@ -361,6 +490,7 @@ MODELS: tuple[SeedModel, ...] = (
             "escenas donde dos caras conocidas comparten cuadro."
         ),
         cost_per_second=Decimal("0.056"),
+        cost_per_clip=Decimal("0.56"),
         price_confidence="secondary",
         min_duration_s=6,
         max_duration_s=10,
@@ -369,7 +499,12 @@ MODELS: tuple[SeedModel, ...] = (
         supports_char_ref=True,
         min_plan="pro",
         sort=40,
-        note="Tarifa por video ($0.19-0.56) dividida entre 10 s. Unidad reconstruida.",
+        note=(
+            "MiniMax factura POR CLIP ($0.19-0.56 segun resolucion), no por segundo. Se "
+            "toma el extremo alto porque es el que aplica a 1080p, que es lo que se pide. "
+            "El cost_per_second declarado (0.056 = 0.56/10s) era el bug: a 6s cobraba "
+            "0.96x del coste, es decir por debajo de coste."
+        ),
     ),
     SeedModel(
         id="hailuo-2.3-fast",
@@ -378,19 +513,26 @@ MODELS: tuple[SeedModel, ...] = (
         modality="video",
         label="Minimax Hailuo 2.3 Fast",
         description_llm=(
-            "La opcion mas rapida y mas barata de todo el catalogo con movimiento "
-            "decente. Es el modelo por defecto para el primer pase de un storyboard "
-            "entero: genera los seis planos aqui, mira cuales funcionan y regenera solo "
-            "esos con algo mejor."
+            "La opcion mas rapida y barata del catalogo que todavia mueve bien. Usalo "
+            "para probar si un plano concreto funciona antes de gastar en un modelo "
+            "caro: encuadre, accion y ritmo se juzgan igual de bien aqui. No admite "
+            "personaje de referencia, asi que en cuanto el plano tenga que respetar una "
+            "cara ya definida hay que subir a 2.3 o a otro modelo. Se factura por clip "
+            "completo, de modo que pedir menos duracion no lo abarata: si vas a generar, "
+            "pide la duracion que necesita el plano."
         ),
         cost_per_second=Decimal("0.019"),
+        cost_per_clip=Decimal("0.19"),
         price_confidence="secondary",
         min_duration_s=6,
         max_duration_s=10,
         resolutions=("720p", "1080p"),
         supports_i2v=True,
         sort=41,
-        note="Tarifa por video dividida entre 10 s. Unidad reconstruida.",
+        note=(
+            "MiniMax factura POR CLIP ($0.19), no por segundo. El cost_per_second "
+            "declarado salia de dividir entre 10s y dejaba el clip de 6s bajo coste."
+        ),
     ),
     SeedModel(
         id="hailuo-02",
@@ -404,6 +546,7 @@ MODELS: tuple[SeedModel, ...] = (
             "demasiado lo que se le pide."
         ),
         cost_per_second=Decimal("0.045"),
+        cost_per_clip=Decimal("0.45"),
         price_confidence="inferred",
         min_duration_s=6,
         max_duration_s=10,
@@ -411,6 +554,7 @@ MODELS: tuple[SeedModel, ...] = (
         supports_i2v=True,
         min_plan="pro",
         sort=42,
+        note="MiniMax factura por clip. Tarifa inferida; re-verificar antes de volumen.",
     ),
     SeedModel(
         id="hailuo-02-fast",
@@ -425,16 +569,26 @@ MODELS: tuple[SeedModel, ...] = (
             "previsualizacion que el usuario vaya a ensenar a alguien."
         ),
         cost_per_second=Decimal("0.015"),
+        cost_per_clip=Decimal("0.15"),
         price_confidence="inferred",
         min_duration_s=6,
         max_duration_s=10,
         resolutions=("512p",),
         supports_i2v=True,
         sort=43,
+        note="MiniMax factura por clip. Tarifa inferida; re-verificar antes de volumen.",
     ),
     # --- ByteDance ----------------------------------------------------------
     SeedModel(
         id="seedance-2.0",
+        status="deprecated",
+        note=(
+            "DESACTIVADO: el esquema de peticion no se ha podido verificar contra la "
+            "doc oficial de BytePlus (docs.byteplus.com sirve el contenido por JS). Es el "
+            "modelo mas caro del catalogo, asi que una llamada sin verificar se factura "
+            "igual aunque no haga lo que se pidio. El adaptador falla con un error claro; "
+            "ver app/providers/seedance.py para reactivarlo."
+        ),
         family="Seedance",
         provider="bytedance",
         modality="video",
@@ -455,10 +609,17 @@ MODELS: tuple[SeedModel, ...] = (
         supports_char_ref=True,
         min_plan="business",
         sort=50,
-        note="Precio via Runway (36-150 creditos/s). No hay tarifa directa de ByteDance.",
     ),
     SeedModel(
         id="seedance-2.0-fast",
+        status="deprecated",
+        note=(
+            "DESACTIVADO: el esquema de peticion no se ha podido verificar contra la "
+            "doc oficial de BytePlus (docs.byteplus.com sirve el contenido por JS). Es el "
+            "modelo mas caro del catalogo, asi que una llamada sin verificar se factura "
+            "igual aunque no haga lo que se pidio. El adaptador falla con un error claro; "
+            "ver app/providers/seedance.py para reactivarlo."
+        ),
         family="Seedance",
         provider="bytedance",
         modality="video",
@@ -480,6 +641,14 @@ MODELS: tuple[SeedModel, ...] = (
     ),
     SeedModel(
         id="seedance-2.0-mini",
+        status="deprecated",
+        note=(
+            "DESACTIVADO: el esquema de peticion no se ha podido verificar contra la "
+            "doc oficial de BytePlus (docs.byteplus.com sirve el contenido por JS). Es el "
+            "modelo mas caro del catalogo, asi que una llamada sin verificar se factura "
+            "igual aunque no haga lo que se pidio. El adaptador falla con un error claro; "
+            "ver app/providers/seedance.py para reactivarlo."
+        ),
         family="Seedance",
         provider="bytedance",
         modality="video",
@@ -499,6 +668,14 @@ MODELS: tuple[SeedModel, ...] = (
     ),
     SeedModel(
         id="seedance-1.0-pro",
+        status="deprecated",
+        note=(
+            "DESACTIVADO: el esquema de peticion no se ha podido verificar contra la "
+            "doc oficial de BytePlus (docs.byteplus.com sirve el contenido por JS). Es el "
+            "modelo mas caro del catalogo, asi que una llamada sin verificar se factura "
+            "igual aunque no haga lo que se pidio. El adaptador falla con un error claro; "
+            "ver app/providers/seedance.py para reactivarlo."
+        ),
         family="Seedance",
         provider="bytedance",
         modality="video",
@@ -561,11 +738,11 @@ MODELS: tuple[SeedModel, ...] = (
         sort=61,
     ),
     SeedModel(
-        id="wan-2.2-turbo",
+        id="wan-2.2-plus",
         family="Wan",
         provider="wan",
         modality="video",
-        label="Wan 2.2 Turbo",
+        label="Wan 2.2 Plus",
         description_llm=(
             "Clips cortos, rapidos y sin audio, con duracion fija. Es una herramienta "
             "de tanteo: sirve para comprobar si un encuadre funciona antes de gastar en "
@@ -760,7 +937,7 @@ MODELS: tuple[SeedModel, ...] = (
         label="Runway Gen-4",
         description_llm=(
             "RETIRADO POR EL PROVEEDOR el 30 de julio de 2026. No lo propongas. "
-            "Alternativa equivalente en calidad: kling-3.0 o veo-3.1."
+            "Alternativa equivalente en calidad: kling-3.0 o veo-3.1-generate-preview."
         ),
         cost_per_second=Decimal("0.12"),
         price_confidence="verified",
@@ -1185,6 +1362,44 @@ STYLES: tuple[SeedStyle, ...] = (
 # =========================================================================== #
 
 
+def resolve_cost_per_second(model: SeedModel) -> Decimal:
+    """
+    Coste por segundo que se siembra en `gen_models`, ya sea declarado o derivado.
+
+    Para los modelos con tarifa plana por clip la conversión se hace **con la duración
+    mínima facturable**, no con la máxima. Es la única elección que no pierde dinero:
+
+    - Dividir por la duración máxima (lo que había) hace que el clip corto se cobre por
+      debajo de coste, y el clip corto es el caso mayoritario — es el que pide el agente
+      cuando explora un storyboard.
+    - Dividir por la mínima hace que el clip largo se cobre por encima de coste. Se
+      recauda de más, nunca de menos.
+
+    Se elige la segunda porque el fallo de la primera es una pérdida silenciosa y
+    creciente con el volumen, mientras que el de la segunda es un sobreprecio acotado
+    (aquí, como mucho 10/6 en el clip más largo) y visible: el usuario ve el precio antes
+    de lanzar.
+
+    Esto es un apaño honesto, no la solución. La solución es que `gen_models` tenga una
+    columna `cost_per_clip` y que `estimate_cost()` de la capa de proveedores facture
+    plano cuando exista — hoy `_http.py` hace `cost_per_second * duración` y no hay forma
+    de expresarle una tarifa plana. Mientras esa columna no exista, derivar por la
+    duración mínima es lo máximo que se puede hacer desde la semilla, y deja el valor
+    real registrado en `cost_per_clip` para cuando se pueda usar de verdad.
+    """
+    if model.cost_per_clip is None:
+        return model.cost_per_second
+
+    billable = Decimal(str(model.min_duration_s or model.max_duration_s or 1))
+    if billable <= 0:
+        return model.cost_per_second
+    # Cuatro decimales y **hacia arriba**, que es la precisión de `gen_models.cost_per_second`
+    # (numeric(10,4)). Sin cuantizar aquí, la división da un periódico que Postgres trunca
+    # al insertar, y truncar hacia abajo un precio de coste devuelve por la puerta de atrás
+    # justo la pérdida que esta función existe para evitar.
+    return (model.cost_per_clip / billable).quantize(Decimal("0.0001"), rounding=ROUND_CEILING)
+
+
 def credits_per_unit(
     unit_cost_usd: Decimal, *, credits_per_usd: int, credit_margin: float
 ) -> int:
@@ -1259,11 +1474,21 @@ def emit_sql() -> str:
     ]
 
     for model in MODELS:
-        unit = model.cost_per_image if model.modality == "image" else model.cost_per_second
+        per_second = resolve_cost_per_second(model)
+        unit = model.cost_per_image if model.modality == "image" else per_second
         credits = credits_per_unit(unit, credits_per_usd=credits_usd, credit_margin=margin)
         unit_name = "imagen" if model.modality == "image" else "segundo"
 
         out.append(f"-- {model.label} · ${unit}/{unit_name} · {_CONFIDENCE_LABEL[model.price_confidence]}")
+        if model.cost_per_clip is not None:
+            # La tarifa real queda escrita en el SQL aunque la columna no exista todavía:
+            # es el dato que hay que recuperar cuando se añada `cost_per_clip`.
+            out.append(
+                f"-- TARIFA PLANA POR CLIP: ${model.cost_per_clip}/clip. El coste por "
+                f"segundo de arriba está derivado dividiendo entre la duración mínima "
+                f"facturable ({model.min_duration_s} s) para no vender por debajo de "
+                f"coste en el clip corto. Ver resolve_cost_per_second() en seed.py."
+            )
         if model.note:
             out.append(f"-- NOTA: {model.note}")
         out.append(
@@ -1282,7 +1507,7 @@ def emit_sql() -> str:
             f"  {_sql_array(model.resolutions)}, {_sql_array(model.aspects)},\n"
             f"  {str(model.supports_i2v).lower()}, {str(model.supports_last_frame).lower()}, "
             f"{str(model.supports_char_ref).lower()}, {str(model.supports_audio).lower()},\n"
-            f"  {model.cost_per_second}, {_sql_opt(model.cost_per_image)}, {credits},\n"
+            f"  {per_second}, {_sql_opt(model.cost_per_image)}, {credits},\n"
             f"  {_sql_str(model.min_plan)}, {_sql_str(model.status)}, "
             f"{_sql_str(model.sunset_at) + '::timestamptz' if model.sunset_at else 'null'}, "
             f"{model.sort}\n"

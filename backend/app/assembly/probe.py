@@ -27,6 +27,7 @@ import math
 import shutil
 from dataclasses import dataclass
 from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -206,8 +207,21 @@ def _ffprobe_path() -> str:
     añadir otra variable de entorno que alguien olvidará poner.
     """
     ffmpeg = get_settings().ffmpeg_path
-    candidate = ffmpeg[: -len("ffmpeg")] + "ffprobe" if ffmpeg.endswith("ffmpeg") else "ffprobe"
-    return candidate if shutil.which(candidate) else "ffprobe"
+
+    # Se sustituye **solo el nombre del ejecutable**, no la cadena "ffmpeg" allá donde
+    # aparezca. En una instalación normal de Windows la ruta la contiene dos veces
+    # —`...\ffmpeg-8.1.2-full_build\bin\ffmpeg.exe`— y un `replace` global produce un
+    # directorio que no existe. La versión anterior solo contemplaba rutas terminadas en
+    # `ffmpeg` sin extensión, así que con `.exe` caía a un `ffprobe` pelado que no está en
+    # el PATH del proceso, y el montaje moría con "ffprobe binary not found" aunque
+    # ffprobe estuviera instalado justo al lado.
+    path = Path(ffmpeg)
+    if "ffmpeg" in path.stem:
+        sibling = path.with_name(path.name.replace("ffmpeg", "ffprobe", 1))
+        if sibling.exists():
+            return str(sibling)
+
+    return shutil.which("ffprobe") or "ffprobe"
 
 
 async def _run_ffprobe(src: str, *, timeout_s: float) -> dict[str, Any]:
@@ -220,24 +234,18 @@ async def _run_ffprobe(src: str, *, timeout_s: float) -> dict[str, Any]:
         src,
     ]
 
+    from app.runtime import run_process
+
     try:
-        proc = await asyncio.create_subprocess_exec(
-            _ffprobe_path(),
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        returncode, stdout, stderr = await run_process(
+            [_ffprobe_path(), *args], timeout_s=timeout_s, capture_stdout=True
         )
     except FileNotFoundError as exc:
         raise ProbeError(src, f"ffprobe binary not found ({exc})") from exc
-
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
     except TimeoutError:
-        proc.kill()
-        await proc.wait()
         raise ProbeError(src, f"ffprobe timed out after {timeout_s:.0f}s") from None
 
-    if proc.returncode != 0:
+    if returncode != 0:
         raise ProbeError(src, _tail(stderr.decode("utf-8", "replace")))
 
     try:

@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Awaitable, Callable, TypeVar
+from typing import Any, TypeVar
 
 from app import db
 from app.providers.base import Modality

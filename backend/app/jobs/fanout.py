@@ -35,8 +35,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Awaitable, Callable, Sequence
+from typing import Any
 from uuid import UUID
 
 from app.agent.state import JobResult
@@ -99,7 +100,7 @@ async def _run_one(runner: ShotRunner, shot: ShotSpec) -> JobResult:
     except XframeToolError as exc:
         logger.info("fanout_shot_failed", extra={"shot_id": shot.shot_id, "err": exc.to_summary()})
         return JobResult(job_id="", shot_id=shot.shot_id, ok=False, error=exc.to_summary())
-    except BaseException as exc:  # noqa: BLE001
+    except BaseException as exc:
         logger.exception("fanout_shot_crashed", extra={"shot_id": shot.shot_id})
         return JobResult(
             job_id="",
@@ -153,7 +154,7 @@ async def stream_fanout(
                     # seguridad cubre un fallo del propio TaskGroup, no del hijo.
                     try:
                         result = task.result()
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         logger.exception("fanout_task_broken")
                         result = JobResult(job_id="", ok=False, error=str(exc))
                     results.append(result)

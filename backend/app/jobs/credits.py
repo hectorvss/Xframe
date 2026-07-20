@@ -21,6 +21,13 @@ Cómo se traduce eso a filas, que es la parte que hay que entender antes de toca
   confirmó. Si el proveedor cobró menos, el delta es positivo y devuelve la diferencia.
 - `refund` escribe `+reservado`, dejando el neto del job en 0.
 
+Y fuera del ciclo de un job, en el lado de las entradas:
+
+- `grant` es **el único** camino por el que sube el saldo: compras, planes, promociones y
+  ajustes de soporte. `profiles.credits` es un espejo derivado que se sobrescribe con la
+  suma del libro en cada movimiento, así que una recarga aplicada directamente sobre esa
+  columna se borra sola en el siguiente gasto del usuario. Los pagos pasan por `grant`.
+
 Invariante que se deduce de lo anterior: la suma de las filas de un job es exactamente
 `-coste_final`, y es 0 si el job no llegó a producir nada. Es comprobable con una sola
 consulta, y por eso los tests lo comprueban.
@@ -115,6 +122,77 @@ async def job_net(job_id: str | UUID, *, conn: asyncpg.Connection | None = None)
 # --------------------------------------------------------------------------- #
 # Escritura                                                                    #
 # --------------------------------------------------------------------------- #
+
+
+async def grant(
+    profile_id: str | UUID,
+    amount: int,
+    note: str,
+    *,
+    conn: asyncpg.Connection | None = None,
+) -> int:
+    """
+    Abona `amount` créditos a un perfil. Es **el único** camino de recarga. Devuelve el
+    saldo resultante.
+
+    Por qué tiene que existir y por qué tiene que ser este. `profiles.credits` es un
+    espejo derivado del libro: cada `_append` lo reescribe con la suma acumulada. Una
+    recarga hecha por fuera —el `update profiles set credits = credits + 500` que sale
+    natural desde una consola o desde un webhook de pago— sobrevive exactamente hasta el
+    siguiente movimiento del usuario, y entonces el espejo la borra sin dejar rastro. No
+    hay error, no hay log: el usuario pagó y su saldo vuelve solo al valor que dice el
+    libro. Escribiendo en el libro, la recarga **es** el saldo.
+
+    De ahí la regla, que vale para compras, planes, promociones, ajustes de soporte y
+    cualquier cosa que suba el saldo: **todo pago pasa por aquí**. Nada escribe
+    `profiles.credits` a mano.
+
+    `note` es obligatorio y no tiene defecto a propósito. Es la única columna que
+    explicará dentro de seis meses de dónde salió un abono, y un `grant` sin procedencia
+    es indistinguible de un error de contabilidad. Lo suyo es dejar ahí el identificador
+    del cobro ("stripe pi_3Q...", "plan pro julio 2026", "compensación job ...").
+
+    Se toma el cerrojo del perfil como cualquier otro movimiento: una recarga que entra a
+    la vez que una reserva tiene que serializarse igual, o el `balance_after` que se
+    escribe deja de cuadrar con la suma.
+
+    Idempotencia: no la hay, y es deliberado. Dos abonos legítimos del mismo importe al
+    mismo perfil son un caso normal, así que no se pueden deduplicar aquí sin inventarse
+    una clave. Quien procese pagos debe traer su propia idempotencia (el id del evento de
+    Stripe) y llamar a `grant` una sola vez por evento.
+    """
+    if amount <= 0:
+        raise ValueError("grant() solo abona; para cobrar usa reserve()/charge()")
+    if not note or not note.strip():
+        raise ValueError("grant() exige una nota: un abono sin procedencia no es auditable")
+
+    if conn is not None:
+        return await _grant_locked(conn, profile_id, amount, note)
+    async with transaction() as tx:
+        return await _grant_locked(tx, profile_id, amount, note)
+
+
+async def _grant_locked(
+    conn: asyncpg.Connection, profile_id: str | UUID, amount: int, note: str
+) -> int:
+    pid = _uuid(profile_id)
+    await _lock_profile(conn, pid)
+    # Se siembra antes de abonar: si el perfil es anterior al libro, primero se registra
+    # su saldo heredado y luego la recarga encima. Al revés, la siembra vería filas ya
+    # escritas, se saltaría el saldo legado y el usuario lo perdería al recargar.
+    before = await _balance_bootstrapped(conn, pid)
+    after = await _append(
+        conn,
+        profile_id=pid,
+        project_id=None,
+        job_id=None,
+        kind="grant",
+        amount=amount,
+        balance_before=before,
+        note=note,
+    )
+    logger.info("credits_granted", extra={"profile_id": str(pid), "amount": amount})
+    return after
 
 
 async def reserve(
@@ -401,9 +479,20 @@ async def _mirror_profile_credits(conn: asyncpg.Connection, profile_id: UUID, va
     """
     Espejo en `profiles.credits` para el frontend, que aún lee esa columna.
 
-    Es derivado, nunca autoritativo. Se hace dentro de la misma transacción para que no
-    pueda divergir, y se satura a 0 porque la columna tiene un `check (credits >= 0)`:
-    un espejo que reviente la transacción sería mucho peor que un espejo impreciso.
+    Es derivado, nunca autoritativo: se **sobrescribe** con la suma del libro en cada
+    movimiento. Se hace dentro de la misma transacción para que no pueda divergir, y se
+    satura a 0 porque la columna tiene un `check (credits >= 0)`: un espejo que reviente
+    la transacción sería mucho peor que un espejo impreciso.
+
+    Consecuencia que hay que tener presente antes de tocar el saldo de nadie: como esto
+    sobrescribe, **cualquier escritura directa sobre `profiles.credits` se pierde** en el
+    siguiente movimiento del usuario. Un `update profiles set credits = credits + 500`
+    para acreditar una compra parece funcionar —el frontend enseña el saldo nuevo— y se
+    evapora en cuanto el usuario encola algo, porque el libro nunca supo de esos 500.
+    Silencioso y con dinero real de por medio.
+
+    Las recargas van por `grant()`, que escribe en el libro y deja que el espejo se
+    actualice solo. Esta función no es un punto de entrada; es el final de `_append`.
     """
     await conn.execute(
         "update public.profiles set credits = $2 where id = $1", profile_id, max(0, value)

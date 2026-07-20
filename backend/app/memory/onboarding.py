@@ -140,7 +140,7 @@ class MemoryOnboarding:
 
         try:
             memory = await self._generate(prompt, config)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("memory_onboarding_failed", extra={"project_id": self._project_id})
             return OnboardingResult(ran=False, reason="generation_failed")
 
@@ -257,12 +257,11 @@ class MemoryOnboarding:
     def _get_model(self) -> Any:
         if self._model is not None:
             return self._model
-        from langchain_anthropic import ChatAnthropic
+        from app import llm
 
         settings = get_settings()
-        self._model = ChatAnthropic(
-            model=settings.model_fast,
-            api_key=settings.anthropic_api_key,
+        self._model = llm.chat_model(
+            "fast",
             max_tokens=4_096,
             temperature=0.3,
             streaming=False,

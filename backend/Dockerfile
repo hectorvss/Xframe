@@ -22,6 +22,8 @@ COPY pyproject.toml ./
 RUN pip install --upgrade pip && pip install .
 
 COPY app ./app
+COPY run_api.py ./
+COPY scripts ./scripts
 
 # Usuario sin privilegios. ffmpeg procesa ficheros que vienen de fuera; no hay razón
 # para que lo haga como root.
@@ -31,8 +33,13 @@ USER xframe
 
 EXPOSE 8000
 
-# Por defecto la API. El worker sobreescribe el comando en docker-compose.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Por defecto la API. El worker sobreescribe el comando (docker-compose, fly.toml).
+#
+# `run_api.py` y no `uvicorn app.main:app`: en Linux son equivalentes, pero el entrypoint
+# es el único que funciona **también** en Windows —uvicorn instala allí un bucle que el
+# driver de Postgres no soporta—. Un solo comando para las dos plataformas evita la clase
+# de fallo que solo aparece en una de ellas.
+CMD ["python", "run_api.py", "--host", "0.0.0.0", "--port", "8000"]
 
 
 # --- variante de desarrollo: evals y tests ---------------------------------
@@ -42,6 +49,7 @@ USER root
 COPY pyproject.toml ./
 RUN pip install ".[dev]"
 COPY evals ./evals
+COPY tests ./tests
 USER xframe
 
 CMD ["pytest", "-m", "not evals"]

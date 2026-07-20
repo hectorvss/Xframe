@@ -30,7 +30,6 @@ from app.taxonomy.repo import GenModel, TaxonomySnapshot
 from app.tools.base import ToolContext
 from app.tools.errors import UnknownEntityError, XframeToolRetryableError
 
-
 # --------------------------------------------------------------------------- #
 # read_project                                                                 #
 # --------------------------------------------------------------------------- #
@@ -275,7 +274,7 @@ class ListAvailableModelsTool(SnapshotTool):
     @classmethod
     async def create(
         cls, ctx: ToolContext, snap: TaxonomySnapshot
-    ) -> "ListAvailableModelsTool | None":
+    ) -> ListAvailableModelsTool | None:
         modalities = sorted({m.modality for m in snap.models})
         if not modalities:
             return None

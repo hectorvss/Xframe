@@ -31,9 +31,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.agent.state import AgentMode  # noqa: E402
-from app.artifacts.manager import ArtifactManager, EnrichmentContext, _resolve_blocks  # noqa: E402
-from app.artifacts.types import (  # noqa: E402
+from app.agent.state import AgentMode
+from app.artifacts.manager import ArtifactManager, EnrichmentContext, _resolve_blocks
+from app.artifacts.types import (
     AssetRefBlock,
     ErrorBlock,
     PlanArtifactContent,
@@ -41,11 +41,17 @@ from app.artifacts.types import (  # noqa: E402
     ShotRefBlock,
     TextBlock,
 )
-from app.taxonomy import repo  # noqa: E402
-from app.taxonomy.builder import build_tools_for_mode  # noqa: E402
-from app.taxonomy.repo import CameraMotion, Element, GenModel, TaxonomySnapshot, VisualStyle  # noqa: E402
-from app.tools.base import ToolContext  # noqa: E402
-from app.tools.errors import UnknownEntityError  # noqa: E402
+from app.taxonomy import repo
+from app.taxonomy.builder import build_tools_for_mode
+from app.taxonomy.repo import (
+    CameraMotion,
+    Element,
+    GenModel,
+    TaxonomySnapshot,
+    VisualStyle,
+)
+from app.tools.base import ToolContext
+from app.tools.errors import UnknownEntityError
 
 pytestmark = pytest.mark.asyncio
 

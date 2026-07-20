@@ -135,7 +135,7 @@ class UpdateBriefBlockTool(SnapshotTool):
         self,
         block_id: str,
         text: str | None = None,
-        type: str | None = None,  # noqa: A002 — el nombre lo fija el esquema del bloque
+        type: str | None = None,
         checked: bool | None = None,
         **_: Any,
     ) -> tuple[str, Any]:
