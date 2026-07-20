@@ -17,7 +17,6 @@ import {
   Globe,
   Plus,
   ChevronDown,
-  Command,
   Mic,
   ArrowUp,
   MoreHorizontal,
@@ -27,7 +26,6 @@ import {
   PanelLeft,
   Monitor,
   Share2,
-  Eye,
   Undo2,
   Redo2,
   Paperclip,
@@ -58,7 +56,6 @@ import {
   ThumbsUp,
   ThumbsDown,
   Bookmark,
-  LineChart,
   Play,
   Image as ImageIcon,
   Video,
@@ -71,7 +68,6 @@ import {
   MessageCircle,
   Frame,
   Maximize2,
-  Map as MapIcon,
   GripVertical,
   Heading1,
   Heading2,
@@ -113,10 +109,16 @@ import {
   DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import {
+  StudioProvider,
+  useStudio,
+  useProjectData,
+  creditCost,
+  titleFromPrompt,
+} from "@/lib/studio";
 import "./index.css";
 import "./styles.css";
 
-const PROJECT = "/projects/77199122-f79d-49b5-b6b4-c3d86b6565da";
 const go = (p) => {
   history.pushState({}, "", p);
   dispatchEvent(new PopStateEvent("popstate"));
@@ -659,28 +661,26 @@ function ModelPicker({ value, onChange }) {
   );
 }
 
-function GenSettingsBar({ trailing }) {
-  const [mode, setMode] = useState("video");
-  const [model, setModel] = useState("Cinema Studio 3.5");
-  const [aspect, setAspect] = useState("Auto");
-  const [res, setRes] = useState("1080p");
-  const [dur, setDur] = useState("8s");
-  const [count, setCount] = useState(1);
-  const [sound, setSound] = useState(true);
-  const [genre, setGenre] = useState("General");
+/**
+ * Ajustes de generación. El estado vive en la cuenta (useStudio), así que lo
+ * que elijas en el panel se mantiene al entrar en el editor y se persiste.
+ * `onMention` engancha el botón @ con el compositor que lo aloja.
+ */
+function GenSettingsBar({ trailing, onMention, onAttach }) {
+  const { genSettings: s, setGenSettings } = useStudio();
+  const { mode, model, aspect, res, dur, count, sound, genre, style, camera } = s;
+  const setMode = (v) => setGenSettings({ mode: v });
+  const setModel = (v) => setGenSettings({ model: v });
+  const setAspect = (v) => setGenSettings({ aspect: v });
+  const setRes = (v) => setGenSettings({ res: v });
+  const setDur = (v) => setGenSettings({ dur: v });
+  const setCount = (v) => setGenSettings({ count: v });
+  const setSound = (v) => setGenSettings({ sound: v });
+  const setGenre = (v) => setGenSettings({ genre: v });
+  const setStyle = (v) => setGenSettings({ style: v });
+  const setCamera = (v) => setGenSettings({ camera: v });
   const [open, setOpen] = useState(false);
   const [flyout, setFlyout] = useState(null);
-  const [style, setStyle] = useState({
-    "Paleta de color": "Auto",
-    Iluminación: "Auto",
-    "Movimiento de cámara": "Auto",
-  });
-  const [camera, setCamera] = useState({
-    Cámara: "Auto",
-    Lente: "Extreme Macro",
-    Focal: "50mm",
-    Apertura: "f/11 Deep Focus",
-  });
   const summarize = (o) =>
     Object.values(o).every((v) => v === "Auto")
       ? "Auto"
@@ -689,10 +689,24 @@ function GenSettingsBar({ trailing }) {
   return (
     <>
       <div className="flex items-center gap-0.5 px-1 pb-1">
-        <UIButton variant="ghost" size="icon" className="size-8" aria-label="Añadir">
+        <UIButton
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="Adjuntar archivo"
+          disabled={!onAttach}
+          onClick={onAttach}
+        >
           <Plus />
         </UIButton>
-        <UIButton variant="ghost" size="icon" className="size-8" aria-label="Mencionar">
+        <UIButton
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="Mencionar un element"
+          disabled={!onMention}
+          onClick={onMention}
+        >
           <span className="text-sm">@</span>
         </UIButton>
         <div className="flex items-center rounded-md border p-0.5">
@@ -831,20 +845,51 @@ function GenSettingsBar({ trailing }) {
   );
 }
 
+/**
+ * Caja de prompt del panel. Mínima fricción: al generar se crea el proyecto
+ * con esa idea y el usuario entra directamente en su editor, con el prompt
+ * ya encolado para que el agente lo ejecute al llegar.
+ */
 function PromptBox() {
   const [t, setT] = useState("");
+  const [creating, setCreating] = useState(false);
+  const { createProject, genSettings, ready } = useStudio();
+
+  const generate = async () => {
+    const prompt = t.trim();
+    if (!prompt || creating || !ready) return;
+    setCreating(true);
+    const project = await createProject({
+      title: titleFromPrompt(prompt),
+      prompt,
+      settings: genSettings,
+    });
+    go(`/projects/${project.id}?run=1`);
+  };
+
   return (
     <Card className="w-full max-w-2xl p-2 text-left shadow-lg">
       <Textarea
         value={t}
         onChange={(e) => setT(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            generate();
+          }
+        }}
         placeholder="Describe tu escena — usa @ para añadir personajes y localizaciones"
         className="min-h-[76px] resize-none border-0 text-base shadow-none focus-visible:ring-0"
       />
       <GenSettingsBar
         trailing={
-          <UIButton size="sm" onClick={() => go("/dashboard")}>
-            Generar
+          <UIButton
+            size="sm"
+            disabled={!t.trim() || creating}
+            onClick={generate}
+          >
+            {creating ? <RefreshCw className="animate-spin" /> : null}
+            {creating ? "Creando…" : "Generar"}
           </UIButton>
         }
       />
@@ -1429,7 +1474,7 @@ function Pricing() {
             <UIButton
               variant="outline"
               className="mt-4"
-              onClick={() => go(`${PROJECT}/settings/privacy-security`)}
+              onClick={() => go("/settings/privacy-security")}
             >
               Más información
             </UIButton>
@@ -1524,7 +1569,7 @@ function UserMenu() {
         <DropdownMenuItem>
           <User /> Perfil
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => go(`${PROJECT}/settings/account`)}>
+        <DropdownMenuItem onClick={() => go("/settings/account")}>
           <Settings /> Configuración
           <DropdownMenuShortcut>Ctrl .</DropdownMenuShortcut>
         </DropdownMenuItem>
@@ -1571,6 +1616,8 @@ function UserMenu() {
   );
 }
 function DashboardSide({ width, onResize }) {
+  const { projects, profile } = useStudio();
+  const recentProjects = projects.slice(0, 5);
   const openOverlay = (name) => go(`${location.pathname}?${name}=1`);
   const collapsed = width < 160;
   const navCls = (active) =>
@@ -1678,14 +1725,17 @@ function DashboardSide({ width, onResize }) {
           RECIENTES
         </p>
       )}
-      <button
-        title="Tráiler — Proyecto Neón"
-        className={navCls(false)}
-        onClick={() => go(PROJECT)}
-      >
-        <span className="size-2 shrink-0 rounded-full bg-green-500" />
-        {!collapsed && "Tráiler — Proyecto Neón"}
-      </button>
+      {recentProjects.map((project) => (
+        <button
+          key={project.id}
+          title={project.title}
+          className={navCls(false)}
+          onClick={() => go(`/projects/${project.id}`)}
+        >
+          <span className="size-2 shrink-0 rounded-full bg-green-500" />
+          {!collapsed && <span className="truncate">{project.title}</span>}
+        </button>
+      ))}
 
       <div
         className={cn(
@@ -1703,7 +1753,7 @@ function DashboardSide({ width, onResize }) {
             </button>
             <button
               onClick={() => go("/es/pricing")}
-              title="Cambia a Pro"
+              title={profile ? `${profile.credits} créditos · plan ${profile.plan}` : "Plan"}
               className="flex size-9 items-center justify-center rounded-full bg-secondary hover:bg-accent"
             >
               <Zap className="size-4" />
@@ -1727,9 +1777,11 @@ function DashboardSide({ width, onResize }) {
               className="flex items-center gap-2.5 rounded-xl border bg-card p-3 text-left shadow-sm transition-colors hover:bg-accent"
             >
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">Cambia a Pro</p>
+                <p className="text-sm font-medium">
+                  {profile?.plan === "free" ? "Cambia a Pro" : "Plan " + profile?.plan}
+                </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  Desbloquear más funciones
+                  {profile ? `${profile.credits} créditos disponibles` : "Cargando…"}
                 </p>
               </div>
               <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary">
@@ -1773,7 +1825,7 @@ const cmdRecent = [
 ];
 const cmdNavigate = [
   [LayoutDashboard, "Dashboard", "/dashboard"],
-  [Plus, "Create new project", PROJECT],
+  [Plus, "Crear un proyecto", "/dashboard"],
   [BookOpen, "Documentation", "/dashboard/resources"],
 ];
 const cmdSettingsItems = [
@@ -1786,6 +1838,7 @@ const cmdSettingsItems = [
   [Sparkles, "Habilidades", "skills"],
 ];
 function CommandPalette({ close }) {
+  const { projects } = useStudio();
   React.useEffect(() => {
     const el = document.documentElement;
     const prevHtml = el.style.overflow;
@@ -1824,14 +1877,14 @@ function CommandPalette({ close }) {
           <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
             Recent projects
           </p>
-          {cmdRecent.map((x) => (
+          {projects.slice(0, 5).map((project) => (
             <button
-              key={x}
-              onClick={() => go(PROJECT)}
+              key={project.id}
+              onClick={() => go(`/projects/${project.id}`)}
               className={cn(cmdItemClass, "hover:bg-accent")}
             >
               <FolderKanban />
-              {x}
+              {project.title}
             </button>
           ))}
           <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
@@ -1858,7 +1911,7 @@ function CommandPalette({ close }) {
           {cmdSettingsItems.map(([I, l, pg]) => (
             <button
               key={l}
-              onClick={() => go(`${PROJECT}/settings/${pg}`)}
+              onClick={() => go(`/settings/${pg}`)}
               className={cn(cmdItemClass, "hover:bg-accent")}
             >
               <I />
@@ -1888,6 +1941,97 @@ const projectTabs = [
   ["shared", "Compartidos conmigo"],
   ["templates", "Plantillas de Xframe"],
 ];
+
+const relativeDate = (iso) => {
+  const days = Math.floor((Date.now() - new Date(iso)) / 86400000);
+  if (days <= 0) return "Editado hoy";
+  if (days === 1) return "Editado ayer";
+  return `Editado hace ${days} días`;
+};
+
+/** Rejilla de proyectos de la cuenta. */
+function ProjectGrid({ view }) {
+  const { projects, deleteProject } = useStudio();
+
+  if (view === "shared" || view === "templates") {
+    return (
+      <div className="mt-6 rounded-xl border border-dashed p-10 text-center">
+        <FolderKanban className="mx-auto size-7 text-muted-foreground" />
+        <p className="mt-3 font-medium">
+          {view === "shared"
+            ? "Nadie ha compartido proyectos contigo todavía"
+            : "Las plantillas de Xframe llegan pronto"}
+        </p>
+      </div>
+    );
+  }
+
+  if (projects.length === 0) {
+    return (
+      <div className="mt-6 rounded-xl border border-dashed p-10 text-center">
+        <Sparkles className="mx-auto size-7 text-muted-foreground" />
+        <p className="mt-3 font-medium">Aún no tienes proyectos</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Escribe tu idea arriba y Xframe creará el proyecto por ti.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-6 grid grid-cols-2 gap-x-5 gap-y-6 md:grid-cols-4">
+      {projects.map((project) => (
+        <div key={project.id} className="group relative cursor-pointer">
+          <div
+            onClick={() => go(`/projects/${project.id}`)}
+            className="aspect-video overflow-hidden rounded-xl border bg-muted bg-cover bg-center transition-shadow group-hover:shadow-md"
+            style={{
+              backgroundImage: project.cover_url
+                ? `url(${project.cover_url})`
+                : undefined,
+            }}
+          />
+          <div className="mt-3 flex items-center gap-2">
+            <span className="flex size-7 items-center justify-center rounded-full bg-green-100 text-xs font-semibold text-green-700">
+              H
+            </span>
+            <div
+              className="min-w-0 flex-1"
+              onClick={() => go(`/projects/${project.id}`)}
+            >
+              <p className="truncate text-sm font-medium">{project.title}</p>
+              <p className="text-xs text-muted-foreground">
+                {relativeDate(project.updated_at)}
+              </p>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  aria-label="Acciones del proyecto"
+                  className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                >
+                  <MoreHorizontal className="size-4" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => go(`/projects/${project.id}`)}>
+                  <ExternalLink className="mr-2 size-3.5" /> Abrir
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => deleteProject(project.id)}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="mr-2 size-3.5" /> Eliminar
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 function Dashboard({ kind = "home" }) {
   const [projectView, setProjectView] = useState("mine");
   const [sidebarW, resizeSidebar] = useResizableWidth("xf-dash-sidebar", 240, 60, 420);
@@ -1952,32 +2096,7 @@ function Dashboard({ kind = "home" }) {
                     Explorar todo <ArrowRight />
                   </UIButton>
                 </div>
-                <div className="mt-6 grid grid-cols-2 gap-x-5 gap-y-6 md:grid-cols-4">
-                  {projects.map((p, i) => (
-                    <div
-                      key={p}
-                      className="group cursor-pointer"
-                      onClick={() => go(PROJECT)}
-                    >
-                      <div
-                        className="aspect-video overflow-hidden rounded-xl border bg-muted bg-cover bg-center transition-shadow group-hover:shadow-md"
-                        style={{ backgroundImage: `url(${projectThumbs[i]})` }}
-                      />
-                      <div className="mt-3 flex items-center gap-2">
-                        <span className="flex size-7 items-center justify-center rounded-full bg-green-100 text-xs font-semibold text-green-700">
-                          H
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">{p}</p>
-                          <p className="text-xs text-muted-foreground">
-                            Editado {i + 1} días atrás
-                          </p>
-                        </div>
-                        <MoreHorizontal className="size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <ProjectGrid view={projectView} />
                 <div className="mt-16">
                   <div className="mb-4 flex items-end justify-between">
                     <div>
@@ -2032,7 +2151,7 @@ function Resources() {
           <div
             key={`${x[0]}-${i}`}
             className="group cursor-pointer"
-            onClick={() => go(PROJECT)}
+            onClick={() => go("/dashboard")}
           >
             <div
               className="aspect-[4/3] overflow-hidden rounded-xl border bg-muted bg-cover bg-center transition-shadow group-hover:shadow-md"
@@ -2460,12 +2579,6 @@ const editorTabs = [
   ["canvas", Frame, "Canvas"],
   ["chat", MessageCircle, "Chat"],
 ];
-const editorChips = [
-  "Alargar el plano 2",
-  "Añadir voz en off",
-  "Cambiar a iluminación nocturna",
-  "Generar…",
-];
 const assetFilters = [
   "Todos",
   "Vídeos",
@@ -2517,15 +2630,30 @@ const teamMessages = [
   ["H", "Héctor", "Sí, y alarguemos el plano 2 a 8 s para que respire.", "10:33", true],
   ["M", "Marco", "Hecho. Regenerando planos 2 y 4 con Cinema Studio 3.5.", "10:40", false],
 ];
-function ShareMenu() {
+function ShareMenu({ projectId }) {
   const [open, setOpen] = useState(false);
+  const [invite, setInvite] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [invited, setInvited] = useState([]);
+  const link = `https://xframe.app/join/${projectId ?? "proyecto"}`;
+  const copyLink = () => {
+    navigator.clipboard?.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  const sendInvite = () => {
+    const email = invite.trim();
+    if (!email) return;
+    setInvited((list) => [...list, email]);
+    setInvite("");
+  };
   return (
     <div className="relative">
       <UIButton variant="outline" size="sm" onClick={() => setOpen(!open)}>
         <span className="flex size-5 items-center justify-center rounded-full bg-green-600 text-[10px] font-semibold text-white">
           H
         </span>
-        Share
+        Compartir
       </UIButton>
       {open && (
         <>
@@ -2533,18 +2661,29 @@ function ShareMenu() {
           <div className="absolute right-0 top-full z-50 mt-2 w-[480px] rounded-xl border bg-background p-5 text-left shadow-2xl">
             <div className="flex items-center justify-between gap-4">
               <h3 className="font-semibold">Compartir proyecto</h3>
-              <button className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
-                <Link className="size-4" />
-                Copiar enlace de invitación
+              <button
+                onClick={copyLink}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {copied ? <Check className="size-4" /> : <Link className="size-4" />}
+                {copied ? "Enlace copiado" : "Copiar enlace de invitación"}
               </button>
             </div>
 
             <div className="mt-4 flex gap-2">
               <Input
+                value={invite}
+                onChange={(e) => setInvite(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendInvite()}
+                type="email"
                 placeholder="Invitar por correo electrónico"
                 className="flex-1"
               />
-              <UIButton className="bg-blue-500 text-white hover:bg-blue-600">
+              <UIButton
+                disabled={!invite.trim()}
+                onClick={sendInvite}
+                className="bg-blue-500 text-white hover:bg-blue-600"
+              >
                 Invitar
               </UIButton>
             </div>
@@ -2600,8 +2739,21 @@ function ShareMenu() {
               </button>
             </div>
 
-            <UIButton variant="outline" className="mt-5 w-full">
-              Compartir vista previa
+            {invited.map((email) => (
+              <div key={email} className="mt-3 flex items-center gap-2.5">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold uppercase">
+                  {email[0]}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{email}</p>
+                  <p className="text-xs text-muted-foreground">Invitación enviada</p>
+                </div>
+              </div>
+            ))}
+
+            <UIButton variant="outline" className="mt-5 w-full" onClick={copyLink}>
+              {copied ? <Check /> : <Link />}
+              {copied ? "Enlace copiado" : "Compartir vista previa"}
             </UIButton>
           </div>
         </>
@@ -2678,10 +2830,55 @@ const assetTypeFor = (text) => {
   return "Imágenes";
 };
 
-function EditorChat({ width, onResize, tab, log, onSend, busy }) {
+function EditorChat({
+  width,
+  onResize,
+  tab,
+  log,
+  onSend,
+  busy,
+  elements = [],
+  onUpload,
+}) {
   const [draft, setDraft] = useState("");
+  const [mentionAt, setMentionAt] = useState(null);
   const ctx = chatContext[tab] ?? chatContext.assets;
   const endRef = useRef(null);
+  const areaRef = useRef(null);
+  const fileRef = useRef(null);
+
+  // Menciones @: se abren al escribir "@" y filtran por lo que sigue.
+  const mentionQuery =
+    mentionAt === null ? null : draft.slice(mentionAt + 1).toLowerCase();
+  const matches =
+    mentionQuery === null
+      ? []
+      : elements.filter((e) => e.name.toLowerCase().includes(mentionQuery));
+
+  const insertMention = (element) => {
+    const before = draft.slice(0, mentionAt);
+    setDraft(`${before}@${element.name} `);
+    setMentionAt(null);
+    areaRef.current?.focus();
+  };
+
+  const openMention = () => {
+    const next = draft.endsWith(" ") || !draft ? `${draft}@` : `${draft} @`;
+    setMentionAt(next.length - 1);
+    setDraft(next);
+    areaRef.current?.focus();
+  };
+
+  const onDraftChange = (value) => {
+    setDraft(value);
+    const at = value.lastIndexOf("@");
+    // Solo es mención si el @ abre palabra y no hay espacio después.
+    const open =
+      at >= 0 &&
+      (at === 0 || /\s/.test(value[at - 1])) &&
+      !/\s/.test(value.slice(at + 1));
+    setMentionAt(open ? at : null);
+  };
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -2692,6 +2889,7 @@ function EditorChat({ width, onResize, tab, log, onSend, busy }) {
     if (!value || busy) return;
     onSend(value);
     setDraft("");
+    setMentionAt(null);
   };
 
   return (
@@ -2755,12 +2953,62 @@ function EditorChat({ width, onResize, tab, log, onSend, busy }) {
         </div>
       )}
 
-      <div className="p-3">
+      <div className="relative p-3">
+        {mentionAt !== null && matches.length > 0 && (
+          <div className="absolute bottom-full left-3 right-3 z-30 mb-1 max-h-56 overflow-y-auto rounded-xl border bg-background p-1 shadow-2xl">
+            <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Elements del proyecto
+            </p>
+            {matches.map((element) => (
+              <button
+                key={element.id}
+                onMouseDown={(e) => (e.preventDefault(), insertMention(element))}
+                className="flex w-full items-center gap-2 rounded-md p-1 text-left transition-colors hover:bg-accent"
+              >
+                <div
+                  className="size-7 shrink-0 rounded bg-muted bg-cover bg-center"
+                  style={{
+                    backgroundImage: element.url ? `url(${element.url})` : undefined,
+                  }}
+                />
+                <div className="min-w-0">
+                  <p className="truncate text-sm">{element.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {element.role}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+        {mentionAt !== null && matches.length === 0 && elements.length === 0 && (
+          <div className="absolute bottom-full left-3 right-3 z-30 mb-1 rounded-xl border bg-background p-3 text-xs text-muted-foreground shadow-2xl">
+            Aún no hay elements. Genera assets y asígnalos desde All assets.
+          </div>
+        )}
+
         <Card className="p-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*,video/*,audio/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              onUpload?.(e.target.files);
+              e.target.value = "";
+            }}
+          />
           <Textarea
+            ref={areaRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => onDraftChange(e.target.value)}
             onKeyDown={(e) => {
+              if (mentionAt !== null && matches.length && e.key === "Enter") {
+                e.preventDefault();
+                return insertMention(matches[0]);
+              }
+              if (e.key === "Escape") return setMentionAt(null);
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 send();
@@ -2770,6 +3018,8 @@ function EditorChat({ width, onResize, tab, log, onSend, busy }) {
             className="min-h-[52px] resize-none border-0 text-sm shadow-none focus-visible:ring-0"
           />
           <GenSettingsBar
+            onMention={openMention}
+            onAttach={() => fileRef.current?.click()}
             trailing={
               <>
                 <EditorIconBtn>
@@ -2792,88 +3042,89 @@ function EditorChat({ width, onResize, tab, log, onSend, busy }) {
   );
 }
 
-function EditorChatLegacy({ width, onResize }) {
+
+
+/** Exportación del montaje: formato, resolución y progreso. */
+function ExportDialog({ onClose }) {
+  const [format, setFormat] = useState("MP4");
+  const [quality, setQuality] = useState("1080p");
+  const [progress, setProgress] = useState(null);
+
+  const start = () => {
+    setProgress(0);
+    const id = setInterval(
+      () =>
+        setProgress((p) => {
+          if (p === null) return p;
+          if (p >= 100) {
+            clearInterval(id);
+            return 100;
+          }
+          return p + 10;
+        }),
+      220,
+    );
+  };
+
   return (
-    <aside
-      style={{ width }}
-      className="relative flex shrink-0 flex-col border-r bg-background"
-    >
-      <ResizeHandle onResize={onResize} />
-      <div className="flex-1 space-y-4 overflow-y-auto p-4 text-sm">
-        <div className="ml-8 rounded-2xl bg-muted p-3">
-          Hazme un tráiler cinematográfico para mi marca de café
-        </div>
-        <p className="text-muted-foreground">Thought for 12s</p>
-        <p className="leading-relaxed">
-          Voy a preparar 3 propuestas de dirección visual para tu tráiler para
-          que elijas el look antes de generar los planos.
-        </p>
-        <Card className="p-3">
-          <div className="flex items-center justify-between">
-            <p className="font-medium">Preparó propuestas de estilo</p>
-            <Bookmark className="size-4 text-muted-foreground" />
-          </div>
-          <div
-            className="mt-3 aspect-[16/10] rounded-lg border bg-neutral-900 bg-cover bg-center"
-            style={{ backgroundImage: "url(/assets/prompt-frame.webp)" }}
-          />
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <UIButton variant="outline" size="sm">
-              Detalles
-            </UIButton>
-            <UIButton variant="secondary" size="sm">
-              Preview
-            </UIButton>
-          </div>
-        </Card>
-        <p className="leading-relaxed">
-          Tu tráiler ya está listo con la dirección <b>Noir cálido</b>: luz
-          lateral dura, grano fino, paleta ámbar sobre negro, lente 35 mm y
-          cámara lenta en los insertos del producto. 6 planos generados y
-          montados; la vista previa se ve correcta.
-        </p>
-        <div className="flex items-center gap-1 text-muted-foreground">
-          {[Undo2, ThumbsUp, ThumbsDown, Copy, MoreHorizontal].map((I, i) => (
-            <EditorIconBtn key={i}>
-              <I />
-            </EditorIconBtn>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {editorChips.map((c) => (
-            <button
-              key={c}
-              className="rounded-full border px-3 py-1.5 text-xs transition-colors hover:bg-accent"
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="p-3">
-        <Card className="p-2">
-          <Textarea
-            placeholder="Describe tu escena — usa @ para añadir personajes y localizaciones"
-            className="min-h-[52px] resize-none border-0 text-sm shadow-none focus-visible:ring-0"
-          />
-          <GenSettingsBar
-            trailing={
-              <>
-                <EditorIconBtn>
-                  <Mic />
-                </EditorIconBtn>
-                <UIButton size="icon" className="size-8">
-                  <ArrowUp />
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>Exportar vídeo</DialogTitle>
+          <DialogDescription>
+            Se renderiza el montaje completo con el audio del proyecto.
+          </DialogDescription>
+        </DialogHeader>
+
+        {progress === null ? (
+          <>
+            <SettingsSlider
+              label="Formato"
+              value={format}
+              options={["MP4", "MOV", "WebM", "GIF"]}
+              onChange={setFormat}
+            />
+            <SettingsSlider
+              label="Resolución"
+              value={quality}
+              options={resolutionList}
+              onChange={setQuality}
+            />
+            <div className="flex justify-end gap-2">
+              <UIButton variant="outline" onClick={onClose}>
+                Cancelar
+              </UIButton>
+              <UIButton onClick={start}>
+                <Download /> Exportar
+              </UIButton>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-3 py-2">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {progress >= 100
+                ? `Listo · ${format} ${quality}`
+                : `Renderizando… ${progress}%`}
+            </p>
+            {progress >= 100 && (
+              <div className="flex justify-end">
+                <UIButton onClick={onClose}>
+                  <Check /> Hecho
                 </UIButton>
-              </>
-            }
-          />
-        </Card>
-      </div>
-    </aside>
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
-
 
 const previewAspects = [
   ["16:9", "aspect-video"],
@@ -2885,7 +3136,17 @@ const fmt = (s) =>
     ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
     : "0:00";
 
-function EditorPreview() {
+function EditorPreview({ assets = [] }) {
+  const [exporting, setExporting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  // Los planos del montaje salen de los assets del proyecto; si aún no hay,
+  // se usa el guion de ejemplo para que la vista previa nunca quede vacía.
+  const shots = assets.filter((a) => a.url && a.status === "ready").length
+    ? assets
+        .filter((a) => a.url && a.status === "ready")
+        .slice(0, 8)
+        .map((a) => [a.name, a.meta, a.url])
+    : canvasShots;
   const videoRef = useRef(null);
   const barRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -2895,8 +3156,8 @@ function EditorPreview() {
   const [dur, setDur] = useState(0);
   const [aspect, setAspect] = useState("16:9");
 
-  const shotLen = dur ? dur / canvasShots.length : 0;
-  const active = shotLen ? Math.min(canvasShots.length - 1, Math.floor(time / shotLen)) : 0;
+  const shotLen = dur ? dur / shots.length : 0;
+  const active = shotLen ? Math.min(shots.length - 1, Math.floor(time / shotLen)) : 0;
 
   const seek = (t) => {
     const v = videoRef.current;
@@ -2953,13 +3214,21 @@ function EditorPreview() {
           ))}
         </div>
         <Badge variant="secondary" className="font-normal">
-          1080p · {canvasShots.length} planos
+          1080p · {shots.length} planos
         </Badge>
         <div className="flex-1" />
-        <UIButton variant="ghost" size="sm">
-          <Share2 /> Compartir
+        <UIButton
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            navigator.clipboard?.writeText(location.href);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          }}
+        >
+          {copied ? <Check /> : <Share2 />} {copied ? "Copiado" : "Compartir"}
         </UIButton>
-        <UIButton variant="outline" size="sm">
+        <UIButton variant="outline" size="sm" onClick={() => setExporting(true)}>
           <Download /> Exportar
         </UIButton>
       </div>
@@ -2996,12 +3265,12 @@ function EditorPreview() {
               className="absolute top-1.5 h-1 rounded-full bg-primary"
               style={{ width: `${dur ? (time / dur) * 100 : 0}%` }}
             />
-            {canvasShots.map((_, i) =>
+            {shots.map((_, i) =>
               i ? (
                 <span
                   key={i}
                   className="absolute top-1.5 h-1 w-px bg-background"
-                  style={{ left: `${(i / canvasShots.length) * 100}%` }}
+                  style={{ left: `${(i / shots.length) * 100}%` }}
                 />
               ) : null,
             )}
@@ -3065,9 +3334,11 @@ function EditorPreview() {
         </div>
       </div>
 
+      {exporting && <ExportDialog onClose={() => setExporting(false)} />}
+
       <div className="shrink-0 rounded-xl border bg-background p-2">
         <div className="flex gap-2 overflow-x-auto">
-          {canvasShots.map(([title, text, thumb], i) => (
+          {shots.map(([title, text, thumb], i) => (
             <button
               key={title}
               onClick={() => seek(i * shotLen)}
@@ -3118,9 +3389,9 @@ function AssetLightbox({ asset, onClose, onAssign, onRegenerate, onDuplicate }) 
           </DialogDescription>
         </DialogHeader>
 
-        {asset.thumb ? (
+        {asset.url ? (
           <img
-            src={asset.thumb}
+            src={asset.url}
             alt={asset.name}
             className="max-h-[65vh] w-full rounded-lg bg-muted object-contain"
           />
@@ -3138,7 +3409,7 @@ function AssetLightbox({ asset, onClose, onAssign, onRegenerate, onDuplicate }) 
             <Copy /> Duplicar
           </UIButton>
           <UIButton variant="outline" size="sm" asChild>
-            <a href={asset.thumb ?? "#"} download>
+            <a href={asset.url ?? "#"} download>
               <Download /> Descargar
             </a>
           </UIButton>
@@ -3280,7 +3551,7 @@ function AssetMenu({
             Duplicar
           </DropdownMenuItem>
           <DropdownMenuItem asChild>
-            <a href={asset.thumb ?? "#"} download>
+            <a href={asset.url ?? "#"} download>
               <Download className="mr-2 size-3.5" />
               Descargar
             </a>
@@ -3299,7 +3570,15 @@ function AssetMenu({
   );
 }
 
-function EditorAssets({ assets, onAssign, onDuplicate, onRemove, onRegenerate }) {
+function EditorAssets({
+  assets,
+  onAssign,
+  onDuplicate,
+  onRemove,
+  onRegenerate,
+  onUpload,
+}) {
+  const fileRef = useRef(null);
   const [filter, setFilter] = useState("Todos");
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState(null);
@@ -3343,7 +3622,18 @@ function EditorAssets({ assets, onAssign, onDuplicate, onRemove, onRegenerate })
           <span className="text-xs text-muted-foreground">
             {list.length} elementos
           </span>
-          <UIButton size="sm">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*,video/*,audio/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              onUpload?.(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <UIButton size="sm" onClick={() => fileRef.current?.click()}>
             <Plus /> Subir
           </UIButton>
         </div>
@@ -3364,10 +3654,10 @@ function EditorAssets({ assets, onAssign, onDuplicate, onRemove, onRegenerate })
                 <div className="flex aspect-video animate-pulse items-center justify-center bg-muted">
                   <RefreshCw className="size-6 animate-spin text-muted-foreground" />
                 </div>
-              ) : a.thumb ? (
+              ) : a.url ? (
                 <div
                   className="aspect-video bg-muted bg-cover bg-center"
-                  style={{ backgroundImage: `url(${a.thumb})` }}
+                  style={{ backgroundImage: `url(${a.url})` }}
                 />
               ) : (
                 <div className="flex aspect-video items-center justify-center bg-muted">
@@ -3629,8 +3919,14 @@ function BriefBlock({ block, focus, update, onEnter, onBackspace, onRemove, drag
   );
 }
 
-function EditorBrief() {
-  const [blocks, setBlocks] = useState(initialBrief);
+function EditorBrief({ data, title = "", onRename }) {
+  const [blocks, setBlocksLocal] = useState(() => data.brief ?? initialBrief());
+  const setBlocks = (next) =>
+    setBlocksLocal((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      data.saveBrief(value);
+      return value;
+    });
   const [focusId, setFocusId] = useState(null);
   const [dragIdx, setDragIdx] = useState(null);
 
@@ -3673,8 +3969,10 @@ function EditorBrief() {
     >
       <div className="mx-auto max-w-3xl px-8 py-10 pl-20">
         <input
-          defaultValue="Tráiler — Proyecto Neón"
-          className="w-full bg-transparent text-4xl font-bold tracking-tight outline-none"
+          value={title}
+          onChange={(e) => onRename?.(e.target.value)}
+          placeholder="Título del proyecto"
+          className="w-full bg-transparent text-4xl font-bold tracking-tight outline-none placeholder:text-muted-foreground/40"
         />
         <p className="mt-1 text-sm text-muted-foreground">
           Escribe <span className="font-medium text-foreground">/</span> para
@@ -3765,7 +4063,7 @@ function EditorElements({ assets, onGoToAssets }) {
   const byRole = (role) =>
     elements
       .filter((a) => a.role === role)
-      .map((a) => [a.name, a.meta, a.thumb]);
+      .map((a) => [a.name, a.meta, a.url]);
 
   return (
     <div className="h-full overflow-y-auto rounded-xl border bg-background">
@@ -3851,21 +4149,33 @@ const buildCanvasEdges = () =>
 
 const PICKER_W = 288;
 const PICKER_H = 380;
-const mediaSources = [
-  ["assets", "Assets", () => assetItems.filter(([, , , t]) => t).map(([n, c, , t]) => [n, c, t])],
-  ["chars", "Personajes", () => elementChars.map(([n, d, t]) => [n, d, t])],
-  ["locs", "Localizaciones", () => elementLocations.map(([n, d, t]) => [n, d, t])],
-  ["shots", "Planos", () => canvasShots.map(([n, d, t]) => [n, d, t])],
+/**
+ * Fuentes del selector, derivadas de los assets vivos del proyecto: lo que
+ * generes o subas en All assets aparece aquí al momento.
+ */
+const mediaSourcesFor = (assets) => [
+  [
+    "elements",
+    "Elements",
+    assets.filter((a) => a.role && a.url).map((a) => [a.name, a.role, a.url]),
+  ],
+  [
+    "assets",
+    "Assets",
+    assets.filter((a) => !a.role && a.url).map((a) => [a.name, a.type, a.url]),
+  ],
+  ["shots", "Planos", canvasShots.map(([n, d, t]) => [n, d, t])],
 ];
 
-function CanvasMediaPicker({ onPick, onClose, at }) {
+function CanvasMediaPicker({ onPick, onClose, at, assets = [] }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
-  const groups = mediaSources
+  const sources = mediaSourcesFor(assets);
+  const groups = sources
     .filter(([id]) => cat === "all" || cat === id)
-    .map(([, title, get]) => [
+    .map(([, title, items]) => [
       title,
-      get().filter(([n]) => n.toLowerCase().includes(q.toLowerCase())),
+      items.filter(([n]) => n.toLowerCase().includes(q.toLowerCase())),
     ])
     .filter(([, items]) => items.length);
 
@@ -3894,7 +4204,7 @@ function CanvasMediaPicker({ onPick, onClose, at }) {
       </div>
 
       <div className="flex flex-wrap gap-1 border-b px-2 py-1.5">
-        {[["all", "Todo"], ...mediaSources.map(([id, l]) => [id, l])].map(
+        {[["all", "Todo"], ...sources.map(([id, l]) => [id, l])].map(
           ([id, label]) => (
             <button
               key={id}
@@ -3960,9 +4270,28 @@ function CanvasMediaPicker({ onPick, onClose, at }) {
   );
 }
 
-function EditorCanvas() {
-  const [nodes, setNodes] = useState(buildCanvasNodes);
-  const [edges, setEdges] = useState(buildCanvasEdges);
+function EditorCanvas({ data, assets = [] }) {
+  const [nodes, setNodesLocal] = useState(
+    () => data?.canvas?.nodes ?? buildCanvasNodes(),
+  );
+  const [edges, setEdgesLocal] = useState(
+    () => data?.canvas?.edges ?? buildCanvasEdges(),
+  );
+  // Cada cambio se guarda en el proyecto: el layout sobrevive al cambio de pestaña.
+  const persist = (nextNodes, nextEdges) =>
+    data?.saveCanvas({ nodes: nextNodes, edges: nextEdges });
+  const setNodes = (next) =>
+    setNodesLocal((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      persist(value, edges);
+      return value;
+    });
+  const setEdges = (next) =>
+    setEdgesLocal((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      persist(nodes, value);
+      return value;
+    });
   const [zoom, setZoom] = useState(0.7);
   const [pan, setPan] = useState({ x: 20, y: 0 });
   const [selected, setSelected] = useState(null);
@@ -4363,6 +4692,7 @@ function EditorCanvas() {
       {picking && nodes.some((n) => n.id === picking) && (
         <CanvasMediaPicker
           key={picking}
+          assets={assets}
           at={pickerPos(picking)}
           onClose={() => setPicking(null)}
           onPick={(thumb, media) => attach(picking, { thumb, media })}
@@ -4453,114 +4783,213 @@ const generatedPool = [
   "/assets/pulse.webp",
   "/assets/lovable-slides.webp",
 ];
-let uid = 0;
-const seedAssets = () =>
-  assetItems.map(([name, type, meta, thumb]) => ({
-    id: `a${++uid}`,
-    name,
-    type,
-    meta,
-    thumb,
-    status: "ready",
-    role: null,
-  }));
+/** Saldo de créditos en la cabecera del editor. */
+function CreditsBadge() {
+  const { profile } = useStudio();
+  if (!profile) return null;
+  const low = profile.credits < 30;
+  return (
+    <button
+      onClick={() => go("/es/pricing")}
+      title={`${profile.credits} créditos · plan ${profile.plan}`}
+      className={cn(
+        "flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors hover:bg-accent",
+        low && "border-destructive/40 text-destructive",
+      )}
+    >
+      <Zap className="size-3.5" />
+      <span className="tabular-nums">{profile.credits}</span>
+    </button>
+  );
+}
 
-function Editor() {
+function CreditsDialog({ credits, onClose }) {
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>Te has quedado sin créditos</DialogTitle>
+          <DialogDescription>
+            Te quedan {credits} créditos. Mejora el plan para seguir generando
+            sin límites.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex justify-end gap-2">
+          <UIButton variant="outline" onClick={onClose}>
+            Ahora no
+          </UIButton>
+          <UIButton onClick={() => go("/es/pricing")}>
+            <Zap /> Ver planes
+          </UIButton>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PublishDialog({ project, onClose }) {
+  const url = `https://xframe.app/v/${project.id}`;
+  const [copied, setCopied] = useState(false);
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[460px]">
+        <DialogHeader>
+          <DialogTitle>Publicar «{project.title}»</DialogTitle>
+          <DialogDescription>
+            Se creará una página pública con el vídeo final. Cualquiera con el
+            enlace podrá verlo.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center gap-2 rounded-lg border bg-muted/40 p-2">
+          <Globe className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-sm">{url}</span>
+          <UIButton
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              navigator.clipboard?.writeText(url);
+              setCopied(true);
+            }}
+          >
+            {copied ? <Check /> : <Copy />}
+            {copied ? "Copiado" : "Copiar"}
+          </UIButton>
+        </div>
+        <div className="flex justify-end gap-2">
+          <UIButton variant="outline" onClick={onClose}>
+            Cancelar
+          </UIButton>
+          <UIButton onClick={onClose}>Publicar</UIButton>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Editor({ projectId }) {
+  const { projects, profile, genSettings, spendCredits, updateProject, ready } =
+    useStudio();
+  const project = projects.find((p) => p.id === projectId);
+  const data = useProjectData(projectId);
+  const {
+    assets,
+    addAssets,
+    patchAsset,
+    removeAsset,
+    messages,
+    addMessage,
+    loaded,
+  } = data;
+
   const [tab, setTab] = useState("preview");
   const [chatW, resizeChat] = useResizableWidth("xf-editor-chat", 380, 300, 720);
-  const [assets, setAssets] = useState(seedAssets);
-  const [log, setLog] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [noCredits, setNoCredits] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const ranInitial = useRef(false);
 
-  const say = (role, text) =>
-    setLog((l) => [...l, { id: `m${++uid}`, role, text, actions: role === "agent" }]);
+  const elements = assets.filter((a) => a.role);
 
-  const assign = (id, role) =>
-    setAssets((as) => as.map((a) => (a.id === id ? { ...a, role } : a)));
+  /** Sube archivos del usuario al proyecto como assets listos. */
+  const uploadFiles = (files) => {
+    const rows = [...files]
+      .filter((f) => /^(image|video|audio)\//.test(f.type))
+      .map((f) => ({
+        name: f.name.replace(/\.[^.]+$/, ""),
+        type: f.type.startsWith("video")
+          ? "Vídeos"
+          : f.type.startsWith("audio")
+            ? "Audio"
+            : "Imágenes",
+        meta: `${Math.round(f.size / 1024)} KB`,
+        url: f.type.startsWith("audio") ? null : URL.createObjectURL(f),
+        status: "ready",
+      }));
+    if (rows.length) addAssets(rows);
+    return rows.length;
+  };
 
-  const duplicateAsset = (id) =>
-    setAssets((as) => {
-      const i = as.findIndex((a) => a.id === id);
-      if (i < 0) return as;
-      const copy = { ...as[i], id: `a${++uid}`, name: `${as[i].name} (copia)`, role: null };
-      return [...as.slice(0, i + 1), copy, ...as.slice(i + 1)];
-    });
-
-  const removeAsset = (id) => setAssets((as) => as.filter((a) => a.id !== id));
-
-  const regenerateAsset = (id) => {
-    setAssets((as) =>
-      as.map((a) => (a.id === id ? { ...a, status: "generating", thumb: null } : a)),
+  /** Marca los assets del lote como listos, escalonados como una cola real. */
+  const resolveBatch = (rows) =>
+    rows.forEach((row, i) =>
+      setTimeout(
+        () =>
+          patchAsset(row.id, {
+            status: "ready",
+            meta: "2048 × 1152",
+            url: generatedPool[(Date.now() + i) % generatedPool.length],
+          }),
+        900 + i * 700,
+      ),
     );
+
+  const generateAssets = async (prompt) => {
+    const cost = creditCost(genSettings);
+    if (!(await spendCredits(cost))) {
+      setBusy(false);
+      setNoCredits(true);
+      addMessage(
+        "agent",
+        `Te quedan ${profile.credits} créditos y esta generación cuesta ${cost}. Mejora el plan para seguir generando.`,
+      );
+      return;
+    }
+
+    const count = genSettings.count || 1;
+    const type = assetTypeFor(prompt);
+    const rows = addAssets(
+      Array.from({ length: Math.max(3, count) }, (_, i) => ({
+        name: `${prompt.slice(0, 38)}${prompt.length > 38 ? "…" : ""} · v${i + 1}`,
+        type,
+        meta: "Generando",
+        status: "generating",
+      })),
+    );
+    resolveBatch(rows);
+
+    // La primera generación del proyecto también le pone portada.
+    if (project && !project.cover_url) {
+      setTimeout(
+        () => updateProject(projectId, { cover_url: generatedPool[0] }),
+        1000,
+      );
+    }
+
+    setTimeout(() => {
+      setBusy(false);
+      addMessage(
+        "agent",
+        `Listo: ${rows.length} variantes en All assets (−${cost} créditos). Pulsa la que te guste para asignarla como element — son los que tendré en cuenta al montar el vídeo.`,
+      );
+    }, 900 + rows.length * 700);
+  };
+
+  const regenerateAsset = async (id) => {
+    const cost = creditCost(genSettings);
+    if (!(await spendCredits(cost))) return setNoCredits(true);
+    patchAsset(id, { status: "generating", url: null });
     setTimeout(
       () =>
-        setAssets((as) =>
-          as.map((a) =>
-            a.id === id
-              ? {
-                  ...a,
-                  status: "ready",
-                  meta: "2048 × 1152",
-                  thumb: generatedPool[++uid % generatedPool.length],
-                }
-              : a,
-          ),
-        ),
+        patchAsset(id, {
+          status: "ready",
+          meta: "2048 × 1152",
+          url: generatedPool[Date.now() % generatedPool.length],
+        }),
       1200,
     );
   };
 
-  // Genera 3 assets en el proyecto: aparecen al instante en estado "generando"
-  // y se van resolviendo de uno en uno, como haría una cola real.
-  const generateAssets = (prompt) => {
-    const type = assetTypeFor(prompt);
-    const batch = Array.from({ length: 3 }, (_, i) => ({
-      id: `a${++uid}`,
-      name: `${prompt.slice(0, 38)}${prompt.length > 38 ? "…" : ""} · v${i + 1}`,
-      type,
-      meta: "Generando",
-      thumb: null,
-      status: "generating",
-      role: null,
-    }));
-    setAssets((as) => [...batch, ...as]);
-
-    batch.forEach((asset, i) => {
-      setTimeout(
-        () =>
-          setAssets((as) =>
-            as.map((a) =>
-              a.id === asset.id
-                ? {
-                    ...a,
-                    status: "ready",
-                    meta: "2048 × 1152",
-                    thumb: generatedPool[(uid + i) % generatedPool.length],
-                  }
-                : a,
-            ),
-          ),
-        900 + i * 700,
-      );
-    });
-
-    setTimeout(() => {
-      setBusy(false);
-      say(
-        "agent",
-        `He generado 3 variantes en All assets. Pulsa la que te guste para asignarla como elemento — los elements son los que tendré en cuenta al montar el vídeo.`,
-      );
-    }, 900 + batch.length * 700);
+  const duplicateAsset = (id) => {
+    const source = assets.find((a) => a.id === id);
+    if (!source) return;
+    addAssets([{ ...source, name: `${source.name} (copia)`, role: null }]);
   };
 
   const handleSend = (text) => {
-    say("user", text);
+    addMessage("user", text);
     setBusy(true);
 
-    if (tab === "assets") {
-      generateAssets(text);
-      return;
-    }
+    if (tab === "assets") return generateAssets(text);
 
     const replies = {
       preview:
@@ -4570,22 +4999,67 @@ function Editor() {
       canvas:
         "Reorganizo los nodos del canvas y agrupo los que pertenecen a la misma escena.",
       elements: `Tienes ${assets.filter((a) => a.role).length} elements asignados. Genera más assets en All assets para ampliarlos.`,
-      chat: "Esta pestaña es el chat con tu equipo. Cambia de sección para que trabaje sobre el proyecto.",
     };
     setTimeout(() => {
       setBusy(false);
-      say("agent", replies[tab] ?? replies.preview);
+      addMessage("agent", replies[tab] ?? replies.preview);
     }, 700);
   };
+
+  // ?run=1 → el prompt con el que se creó el proyecto se ejecuta al entrar.
+  useEffect(() => {
+    if (!loaded || !project || ranInitial.current) return;
+    if (!new URLSearchParams(location.search).has("run")) return;
+    ranInitial.current = true;
+    history.replaceState({}, "", `/projects/${projectId}`);
+    setTab("assets");
+    if (project.prompt) {
+      // Directo a generateAssets: setTab aún no se ha aplicado en este render,
+      // así que handleSend leería el tab anterior y contestaría en vez de generar.
+      addMessage("user", project.prompt);
+      setBusy(true);
+      generateAssets(project.prompt);
+    }
+  }, [loaded, project]);
+
+  if (!ready || !loaded) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-muted/30 text-sm text-muted-foreground">
+        Cargando proyecto…
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-muted/30">
+        <FolderKanban className="size-8 text-muted-foreground" />
+        <p className="font-medium">Este proyecto ya no existe</p>
+        <UIButton onClick={() => go("/dashboard")}>
+          <Home /> Volver al panel
+        </UIButton>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen flex-col bg-muted/30">
+      {noCredits && (
+        <CreditsDialog
+          credits={profile.credits}
+          onClose={() => setNoCredits(false)}
+        />
+      )}
+      {publishing && (
+        <PublishDialog project={project} onClose={() => setPublishing(false)} />
+      )}
       <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3">
         <button
           className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm font-medium transition-colors hover:bg-accent"
           onClick={() => go("/dashboard")}
         >
           <img src="/lovable-logo.svg" alt="" className="size-6" />
-          Tráiler — Proyecto Neón
+          <span className="max-w-[240px] truncate">{project.title}</span>
           <ChevronDown className="size-3.5 text-muted-foreground" />
         </button>
         <div className="flex items-center">
@@ -4615,17 +5089,20 @@ function Editor() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <EditorIconBtn>
-            <RefreshCw />
-          </EditorIconBtn>
-          <ShareMenu />
+          <CreditsBadge />
+          <ShareMenu projectId={projectId} />
           <UIButton
             size="sm"
             className="bg-violet-600 text-white hover:bg-violet-700"
+            onClick={() => go("/es/pricing")}
           >
             <Zap /> Mejorar plan
           </UIButton>
-          <UIButton size="sm" className="bg-blue-600 text-white hover:bg-blue-700">
+          <UIButton
+            size="sm"
+            className="bg-blue-600 text-white hover:bg-blue-700"
+            onClick={() => setPublishing(true)}
+          >
             Publicar
           </UIButton>
         </div>
@@ -4637,27 +5114,36 @@ function Editor() {
             width={chatW}
             onResize={resizeChat}
             tab={tab}
-            log={log}
+            log={messages}
             busy={busy}
             onSend={handleSend}
+            elements={elements}
+            onUpload={(files) => uploadFiles(files)}
           />
         )}
         <main className="flex-1 overflow-hidden p-2">
-          {tab === "preview" && <EditorPreview />}
+          {tab === "preview" && <EditorPreview assets={assets} />}
           {tab === "assets" && (
             <EditorAssets
               assets={assets}
-              onAssign={assign}
+              onAssign={(id, role) => patchAsset(id, { role })}
               onDuplicate={duplicateAsset}
               onRemove={removeAsset}
               onRegenerate={regenerateAsset}
+              onUpload={uploadFiles}
             />
           )}
-          {tab === "brief" && <EditorBrief />}
+          {tab === "brief" && (
+            <EditorBrief
+              data={data}
+              title={project.title}
+              onRename={(t) => updateProject(projectId, { title: t })}
+            />
+          )}
           {tab === "elements" && (
             <EditorElements assets={assets} onGoToAssets={() => setTab("assets")} />
           )}
-          {tab === "canvas" && <EditorCanvas />}
+          {tab === "canvas" && <EditorCanvas data={data} assets={assets} />}
           {tab === "chat" && <EditorTeamChat />}
         </main>
       </div>
@@ -4723,7 +5209,7 @@ function SettingsSide({ page, width, onResize }) {
     >
       <ResizeHandle onResize={onResize} />
       <button
-        onClick={() => go(PROJECT)}
+        onClick={() => go("/dashboard")}
         className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft className="size-4" />
@@ -4744,7 +5230,7 @@ function SettingsSide({ page, width, onResize }) {
           {group.items.map(([id, label, Icon, badge, external]) => (
             <button
               key={id}
-              onClick={() => go(`${PROJECT}/settings/${id}`)}
+              onClick={() => go(`/settings/${id}`)}
               className={cn(
                 "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors [&>svg]:size-4 [&>svg]:text-muted-foreground",
                 page === id
@@ -6253,14 +6739,16 @@ function App() {
   const showConnectors = params.has("connectors");
   const showSearch = params.has("search");
 
+  const projectMatch = p.match(/^\/projects\/([^/]+)$/);
+  const settingsMatch = p.match(/^\/settings\/([^/]+)$/);
+
   let page;
   if (p === "/es/pricing") page = <Pricing />;
   else if (p === "/es" || p === "/") page = <Landing />;
   else if (p === "/dashboard/resources") page = <Dashboard kind="resources" />;
   else if (p === "/dashboard") page = <Dashboard kind="home" />;
-  else if (p === PROJECT) page = <Editor />;
-  else if (p.startsWith(PROJECT + "/settings/"))
-    page = <SettingsPage page={p.split("/").pop()} />;
+  else if (settingsMatch) page = <SettingsPage page={settingsMatch[1]} />;
+  else if (projectMatch) page = <Editor projectId={projectMatch[1]} />;
   else page = <Landing />;
 
   const closeOverlay = () => go(p);
@@ -6276,4 +6764,8 @@ function App() {
 // raíces sobre el mismo contenedor y deja la UI en un estado inconsistente.
 const container = document.getElementById("root");
 const root = (window.__xframeRoot ??= createRoot(container));
-root.render(<App />);
+root.render(
+  <StudioProvider>
+    <App />
+  </StudioProvider>,
+);
