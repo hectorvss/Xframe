@@ -1,9 +1,13 @@
 -- Xframe · esquema de Supabase
 --
--- Refleja exactamente el modelo que usa src/lib/db.js, de modo que activar
--- Supabase consista en escribir el driver y cambiar la constante DRIVER.
+-- Ya aplicado en el proyecto Xframe (mlawipfdsbzqtryjkeiv) mediante migraciones.
+-- Este fichero es la referencia completa: sirve para levantar un entorno nuevo
+-- de cero ejecutándolo en el SQL editor.
 --
--- Ejecutar en el SQL editor del proyecto de Supabase.
+-- Además del SQL, el proyecto necesita:
+--   · bucket "assets" (público, 50 MB, imagen/vídeo/audio) — ver más abajo
+--   · edge functions generate-assets y resolve-asset (carpeta supabase/functions)
+--   · Auth → desactivar "Confirm email" o configurar SMTP propio
 
 -- ---------------------------------------------------------------- perfiles
 -- Extiende auth.users con lo que la app necesita: plan, créditos y ajustes.
@@ -203,3 +207,43 @@ begin
   return remaining;
 end;
 $$;
+
+
+-- ------------------------------------------------------------ storage
+-- Bucket del material del proyecto. Las rutas son <user>/<proyecto>/<archivo>
+-- y las políticas exigen que la primera carpeta sea la del propio usuario.
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'assets', 'assets', true, 52428800,
+  array['image/png','image/jpeg','image/webp','image/gif','video/mp4','video/webm','video/quicktime','audio/mpeg','audio/wav','audio/ogg']
+)
+on conflict (id) do update
+  set public = excluded.public,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+
+-- Público para servir las URLs, pero cada usuario solo lista su carpeta.
+create policy "assets listado propio" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'assets' and (storage.foldername(name))[1] = (select auth.uid())::text);
+
+create policy "assets subida propia" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'assets' and (storage.foldername(name))[1] = (select auth.uid())::text);
+
+create policy "assets actualizacion propia" on storage.objects
+  for update to authenticated
+  using (bucket_id = 'assets' and (storage.foldername(name))[1] = (select auth.uid())::text);
+
+create policy "assets borrado propio" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'assets' and (storage.foldername(name))[1] = (select auth.uid())::text);
+
+-- ------------------------------------------------------- endurecimiento
+-- handle_new_user() solo la invoca el trigger; spend_credits() solo el usuario
+-- autenticado. Ninguna debe quedar expuesta en /rest/v1/rpc para anon.
+
+revoke all on function public.handle_new_user() from public, anon, authenticated;
+revoke all on function public.spend_credits(integer) from public, anon;
+grant execute on function public.spend_credits(integer) to authenticated;

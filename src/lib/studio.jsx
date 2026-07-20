@@ -13,7 +13,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { db, defaultGenSettings, uid } from "./db";
+import { db, defaultGenSettings, isRemote, uid } from "./db";
 
 const StudioContext = createContext(null);
 
@@ -31,19 +31,60 @@ export function StudioProvider({ children }) {
   const [projects, setProjects] = useState([]);
   const [ready, setReady] = useState(false);
 
+  /** Carga perfil y proyectos de la sesión actual (o los limpia al salir). */
+  const load = useCallback(async () => {
+    const loadedProfile = await db.getProfile();
+    if (!loadedProfile) {
+      setProfile(null);
+      setProjects([]);
+      setReady(true);
+      return null;
+    }
+    setProfile(loadedProfile);
+    setProjects(await db.listProjects(loadedProfile.id));
+    setReady(true);
+    return loadedProfile;
+  }, []);
+
   useEffect(() => {
     let alive = true;
-    (async () => {
-      const loadedProfile = await db.getProfile();
-      const loadedProjects = await db.listProjects(loadedProfile.id);
-      if (!alive) return;
-      setProfile(loadedProfile);
-      setProjects(loadedProjects);
-      setReady(true);
-    })();
+    load();
+    // El trigger de Supabase crea el perfil justo después del alta, así que
+    // recargamos en cada cambio de sesión (login, logout, refresh de token).
+    const unsubscribe = db.onAuthChange(() => alive && load());
     return () => {
       alive = false;
+      unsubscribe();
     };
+  }, [load]);
+
+  const signUp = useCallback(
+    async ({ email, password, name }) => {
+      const result = await db.signUp({ email, password, name });
+      await load();
+      return result;
+    },
+    [load],
+  );
+
+  const signIn = useCallback(
+    async ({ email, password }) => {
+      const result = await db.signIn({ email, password });
+      await load();
+      return result;
+    },
+    [load],
+  );
+
+  const signInWithProvider = useCallback(
+    (provider) => db.signInWithProvider(provider),
+    [],
+  );
+
+  const signOut = useCallback(async () => {
+    await db.signOut();
+    setProfile(null);
+    setProjects([]);
   }, []);
 
   /* ------------------------------------------------------------ cuenta */
@@ -134,6 +175,11 @@ export function StudioProvider({ children }) {
       updateProject,
       deleteProject,
       refreshProjects,
+      signUp,
+      signIn,
+      signInWithProvider,
+      signOut,
+      isRemote,
     }),
     [
       ready,
@@ -147,6 +193,10 @@ export function StudioProvider({ children }) {
       updateProject,
       deleteProject,
       refreshProjects,
+      signUp,
+      signIn,
+      signInWithProvider,
+      signOut,
     ],
   );
 
@@ -206,21 +256,15 @@ export function useProjectData(projectId) {
 
   /* ------------------------------------------------------------ assets */
 
+  /**
+   * Inserta assets y devuelve las filas guardadas. Es asíncrono porque con
+   * Supabase el id lo genera Postgres, y quien llama lo necesita para seguir
+   * el progreso de la generación.
+   */
   const addAssets = useCallback(
-    (drafts) => {
-      const rows = drafts.map((draft) => ({
-        id: uid(),
-        project_id: projectId,
-        name: draft.name,
-        type: draft.type,
-        meta: draft.meta ?? "",
-        url: draft.url ?? null,
-        status: draft.status ?? "ready",
-        role: draft.role ?? null,
-        created_at: new Date().toISOString(),
-      }));
+    async (drafts) => {
+      const rows = await db.createAssets(projectId, drafts);
       setAssets((list) => [...rows, ...list]);
-      db.createAssets(projectId, rows);
       return rows;
     },
     [projectId],

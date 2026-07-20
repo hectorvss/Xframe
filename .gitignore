@@ -5,3 +5,7 @@ dist/
 .vite-localhost.err.log
 .vite-localhost.out.log
 .DS_Store
+
+# Variables de entorno locales (nunca al repo)
+.env
+.env.local

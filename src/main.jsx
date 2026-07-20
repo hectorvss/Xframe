@@ -109,6 +109,7 @@ import {
   DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { uploadAsset } from "@/lib/supabase";
 import {
   StudioProvider,
   useStudio,
@@ -898,32 +899,74 @@ function PromptBox() {
 }
 
 const authProviders = [
-  ["Continuar con Google", "google.com"],
-  ["Continuar con GitHub", "github.com"],
-  ["Continuar con Apple", "apple.com"],
+  ["Continuar con Google", "google.com", "google"],
+  ["Continuar con GitHub", "github.com", "github"],
 ];
 
+/**
+ * Alta e inicio de sesión contra Supabase. Al registrarse, el trigger
+ * on_auth_user_created crea el perfil con sus 200 créditos de bienvenida.
+ */
 function AuthModal() {
+  const { signUp, signIn, signInWithProvider, isRemote } = useStudio();
+  const [mode, setMode] = useState("signin");
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+
+  const submit = async (e) => {
+    e?.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      if (!isRemote) return go("/dashboard");
+      if (mode === "signup") {
+        const result = await signUp(form);
+        // Si el proyecto exige confirmar el correo, aún no hay sesión.
+        if (!result?.session) {
+          setStatus({
+            kind: "info",
+            text: "Te hemos enviado un correo para confirmar la cuenta.",
+          });
+          return;
+        }
+      } else {
+        await signIn(form);
+      }
+      go("/dashboard");
+    } catch (error) {
+      setStatus({ kind: "error", text: translateAuthError(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <Dialog
-      open
-      onOpenChange={(o) => {
-        if (!o) go("/es");
-      }}
-    >
+    <Dialog open onOpenChange={(o) => !o && go("/es")}>
       <DialogContent className="sm:max-w-[400px]">
         <DialogHeader className="items-center">
           <XframeHeart size={36} />
           <DialogTitle className="text-2xl">Empieza a crear.</DialogTitle>
-          <DialogDescription>Inicia sesión en tu cuenta</DialogDescription>
+          <DialogDescription>
+            {mode === "signup"
+              ? "Crea tu cuenta — 200 créditos de regalo"
+              : "Inicia sesión en tu cuenta"}
+          </DialogDescription>
         </DialogHeader>
+
         <div className="flex flex-col gap-3">
-          {authProviders.map(([label, domain]) => (
+          {authProviders.map(([label, domain, provider]) => (
             <UIButton
               key={label}
               variant="outline"
               className="w-full"
-              onClick={() => go("/dashboard")}
+              disabled={busy}
+              onClick={() =>
+                isRemote ? signInWithProvider(provider) : go("/dashboard")
+              }
             >
               <img
                 src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
@@ -933,13 +976,70 @@ function AuthModal() {
               {label}
             </UIButton>
           ))}
+
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <Separator className="flex-1" />O<Separator className="flex-1" />
           </div>
-          <Input type="email" placeholder="Correo electrónico" />
-          <UIButton className="w-full" onClick={() => go("/dashboard")}>
-            Continuar
-          </UIButton>
+
+          <form onSubmit={submit} className="flex flex-col gap-3">
+            {mode === "signup" && (
+              <Input
+                value={form.name}
+                onChange={set("name")}
+                placeholder="Tu nombre"
+                autoComplete="name"
+              />
+            )}
+            <Input
+              type="email"
+              required
+              value={form.email}
+              onChange={set("email")}
+              placeholder="Correo electrónico"
+              autoComplete="email"
+            />
+            <Input
+              type="password"
+              required
+              minLength={6}
+              value={form.password}
+              onChange={set("password")}
+              placeholder="Contraseña"
+              autoComplete={
+                mode === "signup" ? "new-password" : "current-password"
+              }
+            />
+            {status && (
+              <p
+                className={cn(
+                  "text-xs",
+                  status.kind === "error"
+                    ? "text-destructive"
+                    : "text-muted-foreground",
+                )}
+              >
+                {status.text}
+              </p>
+            )}
+            <UIButton type="submit" className="w-full" disabled={busy}>
+              {busy && <RefreshCw className="animate-spin" />}
+              {mode === "signup" ? "Crear cuenta" : "Continuar"}
+            </UIButton>
+          </form>
+
+          <button
+            type="button"
+            onClick={() => {
+              setMode(mode === "signup" ? "signin" : "signup");
+              setStatus(null);
+            }}
+            className="text-center text-xs text-muted-foreground hover:text-foreground"
+          >
+            {mode === "signup"
+              ? "¿Ya tienes cuenta? Inicia sesión"
+              : "¿No tienes cuenta? Créala gratis"}
+          </button>
+
           <Separator />
           <p className="flex items-center justify-center gap-2 text-center text-xs text-muted-foreground">
             <Shield className="size-4 shrink-0" />
@@ -950,6 +1050,23 @@ function AuthModal() {
     </Dialog>
   );
 }
+
+/** Mensajes de Supabase Auth en castellano. */
+function translateAuthError(error) {
+  const message = String(error?.message ?? error);
+  if (/Invalid login credentials/i.test(message))
+    return "Correo o contraseña incorrectos.";
+  if (/User already registered/i.test(message))
+    return "Ya existe una cuenta con ese correo. Inicia sesión.";
+  if (/Password should be at least/i.test(message))
+    return "La contraseña debe tener al menos 6 caracteres.";
+  if (/Email not confirmed/i.test(message))
+    return "Confirma tu correo antes de iniciar sesión.";
+  if (/rate limit|too many/i.test(message))
+    return "Demasiados intentos. Espera un momento.";
+  return message;
+}
+
 function CookieConsent() {
   const [open, setOpen] = useState(true);
   if (!open) return null;
@@ -1543,6 +1660,8 @@ const sideNavClass = (active) =>
       : "text-muted-foreground hover:bg-accent hover:text-foreground",
   );
 function UserMenu() {
+  const { profile, signOut } = useStudio();
+  const initial = (profile?.name ?? "?").charAt(0).toUpperCase();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -1550,18 +1669,21 @@ function UserMenu() {
           className="flex size-8 items-center justify-center rounded-full bg-green-600 text-sm font-semibold text-white outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
           aria-label="Cuenta"
         >
-          H
+          {initial}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="w-64">
         <div className="flex items-center gap-2.5 p-2">
           <span className="flex size-9 items-center justify-center rounded-full bg-green-600 text-sm font-semibold text-white">
-            H
+            {initial}
           </span>
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium">Héctor Vidal Sánchez</p>
+            <p className="truncate text-sm font-medium">{profile?.name}</p>
             <p className="truncate text-xs text-muted-foreground">
-              hectorvidal0411@gmail.com
+              {profile?.email}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {profile?.credits} créditos · plan {profile?.plan}
             </p>
           </div>
         </div>
@@ -1608,7 +1730,12 @@ function UserMenu() {
           <Home /> Inicio
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => go("/es")}>
+        <DropdownMenuItem
+          onClick={async () => {
+            await signOut();
+            go("/es");
+          }}
+        >
           <LogOut /> Cerrar sesión
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -4890,22 +5017,28 @@ function Editor({ projectId }) {
 
   const elements = assets.filter((a) => a.role);
 
-  /** Sube archivos del usuario al proyecto como assets listos. */
-  const uploadFiles = (files) => {
-    const rows = [...files]
-      .filter((f) => /^(image|video|audio)\//.test(f.type))
-      .map((f) => ({
-        name: f.name.replace(/\.[^.]+$/, ""),
-        type: f.type.startsWith("video")
+  /**
+   * Sube archivos del usuario al bucket `assets` de Supabase y los registra
+   * como assets del proyecto. Sin backend cae a una URL local temporal.
+   */
+  const uploadFiles = async (files) => {
+    const accepted = [...files].filter((f) => /^(image|video|audio)\//.test(f.type));
+    if (!accepted.length) return 0;
+
+    const rows = await Promise.all(
+      accepted.map(async (file) => ({
+        name: file.name.replace(/\.[^.]+$/, ""),
+        type: file.type.startsWith("video")
           ? "Vídeos"
-          : f.type.startsWith("audio")
+          : file.type.startsWith("audio")
             ? "Audio"
             : "Imágenes",
-        meta: `${Math.round(f.size / 1024)} KB`,
-        url: f.type.startsWith("audio") ? null : URL.createObjectURL(f),
+        meta: `${Math.round(file.size / 1024)} KB`,
+        url: await uploadAsset({ userId: profile.id, projectId, file }),
         status: "ready",
-      }));
-    if (rows.length) addAssets(rows);
+      })),
+    );
+    await addAssets(rows);
     return rows.length;
   };
 
@@ -4937,7 +5070,7 @@ function Editor({ projectId }) {
 
     const count = genSettings.count || 1;
     const type = assetTypeFor(prompt);
-    const rows = addAssets(
+    const rows = await addAssets(
       Array.from({ length: Math.max(3, count) }, (_, i) => ({
         name: `${prompt.slice(0, 38)}${prompt.length > 38 ? "…" : ""} · v${i + 1}`,
         type,
@@ -4982,7 +5115,8 @@ function Editor({ projectId }) {
   const duplicateAsset = (id) => {
     const source = assets.find((a) => a.id === id);
     if (!source) return;
-    addAssets([{ ...source, name: `${source.name} (copia)`, role: null }]);
+    const { id: _id, project_id, created_at, ...rest } = source;
+    addAssets([{ ...rest, name: `${source.name} (copia)`, role: null }]);
   };
 
   const handleSend = (text) => {
@@ -6729,6 +6863,7 @@ function SettingsPage({ page }) {
 
 function App() {
   const [, rerender] = useState(0);
+  const { ready, profile, isRemote } = useStudio();
   React.useEffect(() => {
     const f = () => rerender((x) => x + 1);
     addEventListener("popstate", f);
@@ -6738,6 +6873,28 @@ function App() {
   const params = new URLSearchParams(location.search);
   const showConnectors = params.has("connectors");
   const showSearch = params.has("search");
+
+  // Rutas privadas: sin sesión se muestra la landing con el modal de acceso.
+  const isPrivate =
+    p.startsWith("/dashboard") ||
+    p.startsWith("/projects/") ||
+    p.startsWith("/settings/");
+
+  if (isRemote && isPrivate && !profile) {
+    if (!ready) {
+      return (
+        <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">
+          Cargando…
+        </div>
+      );
+    }
+    return (
+      <>
+        <Landing />
+        <AuthModal />
+      </>
+    );
+  }
 
   const projectMatch = p.match(/^\/projects\/([^/]+)$/);
   const settingsMatch = p.match(/^\/settings\/([^/]+)$/);

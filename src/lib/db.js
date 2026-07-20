@@ -20,6 +20,8 @@
  * obliga a reescribir los llamantes.
  */
 
+import { supabase, hasSupabase } from "./supabase";
+
 const STORAGE_KEY = "xframe.db.v1";
 
 export const uid = () =>
@@ -142,38 +144,82 @@ function createLocalDriver() {
 }
 
 /* ------------------------------------------------------------------ *
- * Driver Supabase — pendiente                                         *
+ * Driver Supabase                                                     *
  * ------------------------------------------------------------------ *
- *
- * import { createClient } from "@supabase/supabase-js";
- *
- * function createSupabaseDriver() {
- *   const sb = createClient(
- *     import.meta.env.VITE_SUPABASE_URL,
- *     import.meta.env.VITE_SUPABASE_ANON_KEY,
- *   );
- *   return {
- *     async select(table, where = {}) {
- *       let q = sb.from(table).select("*");
- *       for (const [k, v] of Object.entries(where)) q = q.eq(k, v);
- *       const { data, error } = await q;
- *       if (error) throw error;
- *       return data;
- *     },
- *     async insert(table, row) {
- *       const { data, error } = await sb.from(table).insert(row).select().single();
- *       if (error) throw error;
- *       return data;
- *     },
- *     ...
- *   };
- * }
- *
- * Las políticas RLS del schema ya garantizan que cada usuario solo ve lo suyo,
- * así que los métodos de abajo no necesitan filtrar por owner_id a mano.
+ * Las políticas RLS ya garantizan que cada usuario solo ve lo suyo, así
+ * que la API de dominio no filtra por owner_id a mano.
  */
 
-const DRIVER = createLocalDriver();
+function createSupabaseDriver() {
+  return {
+    async select(table, where = {}) {
+      let query = supabase.from(table).select("*");
+      for (const [column, value] of Object.entries(where)) {
+        query = query.eq(column, value);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      return data ?? [];
+    },
+    async insert(table, row) {
+      const { data, error } = await supabase
+        .from(table)
+        .insert(row)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    async insertMany(table, rows) {
+      if (!rows.length) return [];
+      const { data, error } = await supabase.from(table).insert(rows).select();
+      if (error) throw error;
+      return data;
+    },
+    async update(table, id, patch) {
+      const { data, error } = await supabase
+        .from(table)
+        .update(patch)
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    async remove(table, where) {
+      let query = supabase.from(table).delete();
+      for (const [column, value] of Object.entries(where)) {
+        query = query.eq(column, value);
+      }
+      const { error } = await query;
+      if (error) throw error;
+    },
+    async replaceFor(table, projectId, rows) {
+      const { error: deleteError } = await supabase
+        .from(table)
+        .delete()
+        .eq("project_id", projectId);
+      if (deleteError) throw deleteError;
+      if (!rows.length) return [];
+      // Los ids locales no son uuid: dejamos que los genere Postgres.
+      const { data, error } = await supabase
+        .from(table)
+        .insert(rows.map(({ id, ...rest }) => rest))
+        .select();
+      if (error) throw error;
+      return data;
+    },
+    async reset() {
+      await supabase.auth.signOut();
+    },
+  };
+}
+
+// Con credenciales configuradas manda Supabase; si no, el driver local
+// mantiene la app usable sin backend.
+const DRIVER = hasSupabase ? createSupabaseDriver() : createLocalDriver();
+
+export const isRemote = hasSupabase;
 
 /* ------------------------------------------------------------------ *
  * API de dominio                                                      *
@@ -182,15 +228,34 @@ const DRIVER = createLocalDriver();
 export const db = {
   /* --- perfil y créditos --- */
 
+  /**
+   * Perfil de la sesión actual. Con Supabase lo crea el trigger al registrarse;
+   * si el usuario aún no tiene ajustes guardados, se le ponen los de fábrica.
+   * Devuelve null si no hay sesión iniciada.
+   */
   async getProfile() {
+    if (hasSupabase) {
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth?.user) return null;
+
+      const [profile] = await DRIVER.select("profiles", { id: auth.user.id });
+      if (!profile) return null;
+
+      if (!profile.settings || !Object.keys(profile.settings).length) {
+        return DRIVER.update("profiles", profile.id, {
+          settings: { ...defaultGenSettings },
+        });
+      }
+      return profile;
+    }
+
     const [profile] = await DRIVER.select("profiles");
     if (profile) return profile;
 
-    // Cuenta de arranque. Con Supabase esto lo crea el trigger on_auth_user_created.
     const fresh = {
       id: uid(),
-      email: "hectorvidal0411@gmail.com",
-      name: "Héctor",
+      email: "invitado@xframe.app",
+      name: "Invitado",
       plan: "free",
       credits: 200,
       settings: { ...defaultGenSettings },
@@ -200,12 +265,62 @@ export const db = {
     return fresh;
   },
 
+  /* --- sesión --- */
+
+  async signUp({ email, password, name }) {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { name } },
+    });
+    if (error) throw error;
+    return data;
+  },
+
+  async signIn({ email, password }) {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) throw error;
+    return data;
+  },
+
+  async signInWithProvider(provider) {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: `${location.origin}/dashboard` },
+    });
+    if (error) throw error;
+  },
+
+  async signOut() {
+    if (hasSupabase) await supabase.auth.signOut();
+  },
+
+  onAuthChange(callback) {
+    if (!hasSupabase) return () => {};
+    const { data } = supabase.auth.onAuthStateChange((_event, session) =>
+      callback(session),
+    );
+    return () => data.subscription.unsubscribe();
+  },
+
   async updateProfile(id, patch) {
     return DRIVER.update("profiles", id, patch);
   },
 
-  /** Descuenta créditos. Devuelve null si no hay saldo suficiente. */
+  /**
+   * Descuenta créditos. En Supabase usa la función atómica spend_credits(),
+   * de modo que dos generaciones simultáneas no puedan dejar saldo negativo.
+   * Devuelve null si no hay saldo suficiente.
+   */
   async spendCredits(profile, amount) {
+    if (hasSupabase) {
+      const { data, error } = await supabase.rpc("spend_credits", { amount });
+      if (error) return null;
+      return { ...profile, credits: data };
+    }
     if (profile.credits < amount) return null;
     return DRIVER.update("profiles", profile.id, {
       credits: profile.credits - amount,
@@ -226,14 +341,12 @@ export const db = {
 
   async createProject({ ownerId, title, prompt = "", settings = {} }) {
     const project = {
-      id: uid(),
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO(), updated_at: nowISO() }),
       owner_id: ownerId,
       title,
       prompt,
       cover_url: null,
       settings,
-      created_at: nowISO(),
-      updated_at: nowISO(),
     };
     return DRIVER.insert("projects", project);
   },
@@ -261,11 +374,14 @@ export const db = {
     return DRIVER.select("assets", { project_id: projectId });
   },
 
+  /**
+   * Inserta assets y devuelve las filas guardadas. Respeta el id que traiga el
+   * llamante en local (la UI lo usa para seguir el progreso); con Supabase los
+   * uuid los pone Postgres, así que el llamante debe usar el id devuelto.
+   */
   async createAssets(projectId, assets) {
-    // Respeta el id que traiga el llamante: la UI ya lo usa para seguir el
-    // progreso de la generación, así que no puede cambiar al guardar.
     const rows = assets.map((asset) => ({
-      id: asset.id ?? uid(),
+      ...(hasSupabase ? {} : { id: asset.id ?? uid(), created_at: nowISO() }),
       project_id: projectId,
       name: asset.name,
       type: asset.type,
@@ -273,10 +389,9 @@ export const db = {
       url: asset.url ?? null,
       status: asset.status ?? "ready",
       role: asset.role ?? null,
-      created_at: nowISO(),
     }));
-    await DRIVER.insertMany("assets", rows);
-    return rows;
+    const saved = await DRIVER.insertMany("assets", rows);
+    return saved?.length ? saved : rows;
   },
 
   async updateAsset(id, patch) {
@@ -329,11 +444,10 @@ export const db = {
 
   async addMessage(projectId, { role, text }) {
     return DRIVER.insert("messages", {
-      id: uid(),
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
       project_id: projectId,
       role,
       text,
-      created_at: nowISO(),
     });
   },
 
