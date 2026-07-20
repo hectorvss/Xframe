@@ -2796,6 +2796,7 @@ const teamMessages = [
   ["M", "Marco", "Hecho. Regenerando planos 2 y 4 con Cinema Studio 3.5.", "10:40", false],
 ];
 function ShareMenu({ projectId }) {
+  const { profile } = useStudio();
   const [open, setOpen] = useState(false);
   const [invite, setInvite] = useState("");
   const [copied, setCopied] = useState(false);
@@ -2806,11 +2807,23 @@ function ShareMenu({ projectId }) {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-  const sendInvite = () => {
-    const email = invite.trim();
-    if (!email) return;
-    setInvited((list) => [...list, email]);
-    setInvite("");
+  // Compartir un proyecto crea un colaborador: acceso a ese proyecto y solo a
+  // ese, sin ocupar plaza en el espacio de trabajo.
+  const sendInvite = async () => {
+    const email = invite.trim().toLowerCase();
+    if (!email || !projectId) return;
+    try {
+      await db.addCollaborator(projectId, {
+        email,
+        role: "editor",
+        invitedBy: profile?.id,
+      });
+      setInvited((list) => [...list, email]);
+      setInvite("");
+    } catch (error) {
+      setInvited((list) => [...list, `${email} — ya tenía acceso`]);
+      setInvite("");
+    }
   };
   return (
     <div className="relative">
@@ -7737,7 +7750,14 @@ function BillingSettings() {
 const peopleTabs = [
   ["all", "Todos"],
   ["invites", "Invitaciones"],
+  ["collaborators", "Colaboradores"],
   ["requests", "Solicitudes"],
+];
+// Los colaboradores entran a un proyecto suelto, no al espacio de trabajo.
+const collaboratorRoles = [
+  ["editor", "Puede editar"],
+  ["commenter", "Puede comentar"],
+  ["viewer", "Puede ver"],
 ];
 const memberRoles = [
   ["admin", "Administrador"],
@@ -7753,11 +7773,12 @@ const roleLabel = (role) =>
 const canInvite = (plan) => plan === "business" || plan === "enterprise";
 
 function PeopleSettings() {
-  const { profile, workspace } = useStudio();
+  const { profile, workspace, projects } = useStudio();
   const [tab, setTab] = useState("all");
   const [members, setMembers] = useState([]);
   const [invites, setInvites] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [collaborators, setCollaborators] = useState([]);
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [inviting, setInviting] = useState(false);
@@ -7771,19 +7792,21 @@ function PeopleSettings() {
 
   const reload = async () => {
     if (!workspace) return;
-    const [m, i, r] = await Promise.all([
+    const [m, i, r, c] = await Promise.all([
       db.listMembers(workspace.id).catch(() => []),
       db.listInvites(workspace.id).catch(() => []),
       db.listJoinRequests(workspace.id).catch(() => []),
+      db.listCollaborators(projects.map((p) => p.id)).catch(() => []),
     ]);
     setMembers(m);
     setInvites(i);
     setRequests(r);
+    setCollaborators(c);
   };
 
   useEffect(() => {
     reload();
-  }, [workspace?.id]);
+  }, [workspace?.id, projects.length]);
 
   if (!profile || !workspace) return null;
 
@@ -7872,7 +7895,9 @@ function PeopleSettings() {
               ? pendingInvites.length
               : id === "requests"
                 ? pendingRequests.length
-                : 0;
+                : id === "collaborators"
+                  ? collaborators.length
+                  : 0;
           return (
             <button
               key={id}
@@ -8115,6 +8140,103 @@ function PeopleSettings() {
               ))}
             </div>
           )}
+        </Card>
+      )}
+
+      {tab === "collaborators" && (
+        <Card className="mt-4 overflow-hidden p-0">
+          {(() => {
+            const visible = collaborators.filter(
+              (c) => matches(c.email) || matches(c.profile?.name ?? ""),
+            );
+            if (visible.length === 0)
+              return (
+                <div className="p-10 text-center">
+                  <Share2 className="mx-auto size-7 text-muted-foreground" />
+                  <p className="mt-3 font-medium">Todavía no hay colaboradores</p>
+                  <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                    Los colaboradores acceden a un proyecto concreto sin ocupar
+                    plaza en el espacio. Se añaden desde el botón Compartir de
+                    cada proyecto.
+                  </p>
+                </div>
+              );
+
+            // Agrupados por proyecto: es su unidad de acceso.
+            const byProject = projects
+              .map((project) => ({
+                project,
+                people: visible.filter((c) => c.project_id === project.id),
+              }))
+              .filter(({ people }) => people.length);
+
+            return byProject.map(({ project, people }) => (
+              <div key={project.id} className="border-b last:border-b-0">
+                <button
+                  onClick={() => go(`/projects/${project.id}`)}
+                  className="flex w-full items-center gap-2 bg-muted/30 px-5 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <FolderKanban className="size-3.5" />
+                  {project.title}
+                  <span className="ml-auto">
+                    {people.length}{" "}
+                    {people.length === 1 ? "colaborador" : "colaboradores"}
+                  </span>
+                </button>
+                <div className="divide-y">
+                  {people.map((person) => (
+                    <div
+                      key={person.id}
+                      className="flex items-center gap-3 px-5 py-4"
+                    >
+                      <span className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-semibold">
+                        {person.profile?.avatar_url ? (
+                          <img
+                            src={person.profile.avatar_url}
+                            alt=""
+                            className="size-full object-cover"
+                          />
+                        ) : (
+                          person.email.charAt(0).toUpperCase()
+                        )}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">
+                          {person.profile?.name ?? person.email}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {person.email}
+                          {person.status === "pending" && " · Invitación pendiente"}
+                        </p>
+                      </div>
+                      <SettingSelect
+                        value={person.role}
+                        options={collaboratorRoles}
+                        onChange={async (role) => {
+                          await db.updateCollaborator(person.id, { role });
+                          await reload();
+                          notify("Permiso actualizado");
+                        }}
+                        className="h-8 w-[160px]"
+                      />
+                      <UIButton
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={async () => {
+                          await db.removeCollaborator(person.id);
+                          await reload();
+                          notify("Colaborador retirado del proyecto");
+                        }}
+                      >
+                        Quitar
+                      </UIButton>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ));
+          })()}
         </Card>
       )}
 

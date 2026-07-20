@@ -503,6 +503,42 @@ export const db = {
     });
   },
 
+  /** Colaboradores de todos los proyectos indicados, con su perfil. */
+  async listCollaborators(projectIds) {
+    if (!projectIds.length) return [];
+    if (!hasSupabase) {
+      const rows = await DRIVER.select("project_collaborators");
+      return rows.filter((row) => projectIds.includes(row.project_id));
+    }
+    const { data, error } = await supabase
+      .from("project_collaborators")
+      .select(
+        "*, profile:profiles!project_collaborators_user_id_fkey(id, name, email, avatar_url)",
+      )
+      .in("project_id", projectIds)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data ?? [];
+  },
+
+  async addCollaborator(projectId, { email, role, invitedBy }) {
+    return DRIVER.insert("project_collaborators", {
+      ...(hasSupabase ? {} : { id: uid(), status: "pending", created_at: nowISO() }),
+      project_id: projectId,
+      email: email.trim().toLowerCase(),
+      role,
+      invited_by: invitedBy,
+    });
+  },
+
+  async updateCollaborator(id, patch) {
+    return DRIVER.update("project_collaborators", id, patch);
+  },
+
+  async removeCollaborator(id) {
+    return DRIVER.remove("project_collaborators", { id });
+  },
+
   /* --- dispositivos y claves de API --- */
 
   /** Sesiones abiertas del usuario, con navegador, sistema e IP. */

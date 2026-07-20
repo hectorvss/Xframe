@@ -469,3 +469,44 @@ revoke all on function public.handle_new_workspace() from public, anon, authenti
 create trigger on_workspace_created
   after insert on public.workspaces
   for each row execute function public.handle_new_workspace();
+
+-- ------------------------------------------------------ colaboradores
+-- Acceso a un proyecto suelto, sin ocupar plaza en el espacio de trabajo.
+-- Es lo que reparte el botón Compartir de cada proyecto.
+
+create table if not exists public.project_collaborators (
+  id          uuid primary key default gen_random_uuid(),
+  project_id  uuid        not null references public.projects on delete cascade,
+  user_id     uuid        references public.profiles on delete cascade,
+  email       text        not null,
+  role        text        not null default 'editor'
+                check (role in ('editor', 'commenter', 'viewer')),
+  status      text        not null default 'pending'
+                check (status in ('pending', 'active')),
+  invited_by  uuid        references public.profiles on delete set null,
+  created_at  timestamptz not null default now(),
+  unique (project_id, email)
+);
+
+alter table public.project_collaborators enable row level security;
+
+create or replace function public.owns_project(pid uuid)
+returns boolean language sql stable security definer set search_path = public
+as $fn$
+  select exists (
+    select 1 from public.projects p
+    where p.id = pid and p.owner_id = auth.uid()
+  );
+$fn$;
+
+revoke all on function public.owns_project(uuid) from public, anon;
+grant execute on function public.owns_project(uuid) to authenticated;
+
+create policy "colaboradores del proyecto" on public.project_collaborators
+  for all to authenticated
+  using (public.owns_project(project_id) or user_id = (select auth.uid()))
+  with check (public.owns_project(project_id));
+
+-- Ojo al consultar: hay dos claves ajenas a profiles (user_id e invited_by),
+-- así que el embed debe nombrar la relación:
+--   select=*,profile:profiles!project_collaborators_user_id_fkey(...)
