@@ -97,10 +97,14 @@ _DEFAULT_QUALITY = "medium"
 #: imagen (solo $/1M tokens y remite a una calculadora). Estas cifras salen de fuentes
 #: secundarias de julio de 2026 para gpt-image-2. Se usan como estimación previa; el
 #: importe real lo mide OpenAI en tokens de salida.
-_PRICE_BY_QUALITY: dict[str, Decimal] = {
-    "low": Decimal("0.006"),
-    "medium": Decimal("0.053"),
-    "high": Decimal("0.211"),
+_QUALITY_RATIO: dict[str, Decimal] = {
+    # Proporciones respecto a `medium`, NO dólares. El precio absoluto sale de
+    # `gen_models.cost_per_image` del modelo concreto, que es lo que distingue a
+    # `gpt-image-1-mini` de `gpt-image-2`. Los ratios se derivan de la tarifa publicada
+    # del buque insignia (0.006 / 0.053 / 0.211 por imagen en low / medium / high).
+    "low": Decimal("0.113"),
+    "medium": Decimal("1"),
+    "high": Decimal("3.981"),
 }
 
 #: NO VERIFICADO: los tamaños no cuadrados consumen ~1.5x los tokens de salida del
@@ -199,10 +203,15 @@ class OpenAIImageAdapter(HttpAdapter):
             "size": body.get("size"),
             "quality": body.get("quality"),
             "usage": body.get("usage"),
-            # Lo lee `JobWorker._final_credits` para cobrar el importe medido en vez de la
-            # reserva. Es una estimación de tarifa, no una factura: OpenAI no devuelve el
-            # coste en dólares, solo tokens.
-            "cost_usd": str(self._price_for(req)),
+            # Aquí NO se publica `cost_usd`, y es deliberado. `_final_credits` lo usaría
+            # para cobrar el importe medido en vez de la reserva, pero el precio depende
+            # del modelo (`gen_models.cost_per_image`) y `submit` solo recibe la petición,
+            # no el `ModelSpec`. Calcularlo sin esa referencia daba la misma cifra para
+            # `gpt-image-1-mini` y para `gpt-image-2`, que cuestan más del triple uno que
+            # otro. Sin este campo, el cierre cobra la reserva —que sí se calculó con el
+            # spec— y eso es correcto; con un `cost_usd` mal calculado, no lo sería.
+            # Para cobrar lo medido de verdad hay que derivarlo de `usage` en tokens con
+            # la tarifa del modelo, y eso necesita el spec en esta capa.
         }
 
         # No hay id de trabajo porque no hay trabajo: se sintetiza uno estable a partir de
@@ -360,12 +369,17 @@ class OpenAIImageAdapter(HttpAdapter):
         `spec.cost_per_image` de la semilla se usa como suelo: si un día la tabla local se
         queda vieja y baja de la tarifa sembrada, se cobra la sembrada.
         """
-        price = self._price_for(req)
-        seeded = getattr(spec, "cost_per_image", None) or spec.cost_per_second
-        return _money(max(price, Decimal(seeded)))
+        return self._price_for(req, spec)
 
-    def _price_for(self, req: GenerationRequest) -> Decimal:
-        base = _PRICE_BY_QUALITY.get(self._quality_for(req), _PRICE_BY_QUALITY["medium"])
+    def _price_for(self, req: GenerationRequest, spec: ModelSpec) -> Decimal:
+        # El ancla es el precio del MODELO, no una tarifa global. La tabla de calidad son
+        # ahora proporciones respecto a `medium`, no dólares: sus valores absolutos
+        # estaban calibrados sobre el buque insignia, así que `gpt-image-1-mini` —que
+        # cuesta un tercio— se cobraba exactamente igual que `gpt-image-2`. Se detectó
+        # ejecutando una generación de verdad: catálogo 0.015, cobrado 0.0795.
+        anchor = Decimal(getattr(spec, "cost_per_image", None) or spec.cost_per_second)
+        ratio = _QUALITY_RATIO.get(self._quality_for(req), Decimal("1"))
+        base = anchor * ratio
         multiplier = _SIZE_MULTIPLIER.get(self._size_for(req), Decimal("1.5"))
         references = len(self._ref_urls(req)[:_MAX_REFERENCES])
         cost = base * multiplier

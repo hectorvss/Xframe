@@ -274,6 +274,26 @@ class JobWorker:
     async def stop(self) -> None:
         self._stop.set()
 
+    async def run_once(self) -> bool:
+        """
+        Reclama y procesa **un** job, esperando a que termine. Devuelve si había alguno.
+
+        No es una variante de `run_forever` para producción: allí lo correcto es no
+        esperar, porque hacerlo serializa el fan-out. Existe para los guiones de prueba y
+        los tests, donde lo que se quiere es exactamente lo contrario — procesar un
+        trabajo concreto de principio a fin y poder afirmar algo sobre el resultado.
+
+        Vive aquí y no en el guion para que la prueba de humo no tenga que llamar a
+        `_claim` y `_guarded`: un script que usa métodos privados deja de compilar en
+        silencio en cuanto alguien los renombra, que es justo el fallo que este proyecto
+        ya ha pagado una vez.
+        """
+        job = await self._claim()
+        if job is None:
+            return False
+        await self._guarded(job)
+        return True
+
     async def _guarded(self, job: ClaimedJob) -> None:
         """
         Procesa bajo los dos semáforos y garantiza que el job **nunca** queda en un estado
