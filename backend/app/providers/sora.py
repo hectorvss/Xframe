@@ -23,8 +23,8 @@ from app.config import get_settings
 from app.providers._http import UPLOAD_TIMEOUT, HttpAdapter, _money, job_ref
 from app.providers.base import (
     GenerationRequest,
-    ModelSpec,
     Modality,
+    ModelSpec,
     ProviderJobRef,
     ProviderJobStatus,
 )
@@ -58,7 +58,7 @@ class SoraAdapter(HttpAdapter):
     supported_modalities: tuple[Modality, ...] = ("video",)
     base_url = "https://api.openai.com"
 
-    #: OpenAI publica límites por tier (25–375 req/min). 5 s deja margen incluso en
+    #: OpenAI publica límites por tier (25-375 req/min). 5 s deja margen incluso en
     #: tier 1 con varios planos en vuelo.
     min_poll_interval_s = 5.0
 
@@ -159,7 +159,7 @@ class SoraAdapter(HttpAdapter):
             await self.request(
                 "DELETE", f"/v1/videos/{ref.external_id}", expected=(200, 202, 204)
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
 
     # -- coste -------------------------------------------------------------- #

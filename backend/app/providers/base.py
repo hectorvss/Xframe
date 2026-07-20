@@ -107,6 +107,12 @@ class ModelSpec:
     provider: str
     modality: Modality
     cost_per_second: Decimal
+    cost_per_image: Decimal | None = None
+    """
+    Precio por unidad en los modelos de imagen, donde cobrar por segundo no significa
+    nada. Sin este campo el registry caía a `cost_per_second` y facturaba una imagen
+    como si durase un segundo, que es una cifra inventada.
+    """
     max_duration_s: float | None = None
     min_duration_s: float | None = None
     resolutions: tuple[str, ...] = ()

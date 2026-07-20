@@ -64,13 +64,22 @@ class XframeTool(BaseTool):
 
     registry: ClassVar[dict[str, type["XframeTool"]]] = {}
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Registro por herencia.
+
+        Tiene que ser `__pydantic_init_subclass__` y no `__init_subclass__`: en pydantic v2
+        el segundo se ejecuta ANTES de que se construya `model_fields`, así que leer de ahí
+        el nombre de la tool devuelve siempre vacío y el registro queda mudo. Pydantic
+        expone este gancho justo para esto — corre una vez el modelo ya está completo.
+        """
+        super().__pydantic_init_subclass__(**kwargs)
         if getattr(cls, "__abstract__", False):
             return
-        name = getattr(cls, "model_fields", {}).get("name")
-        default = name.default if name is not None else None
-        if default:
+        field = cls.model_fields.get("name")
+        default = getattr(field, "default", None) if field is not None else None
+        if default and isinstance(default, str):
             XframeTool.registry[default] = cls
 
     # -- ejecución --------------------------------------------------------- #

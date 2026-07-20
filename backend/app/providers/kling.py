@@ -24,10 +24,11 @@ from decimal import Decimal
 from typing import Any
 
 from app.config import get_settings
-from app.providers._http import UPLOAD_TIMEOUT, HttpAdapter, job_ref
+from app.providers._http import UPLOAD_TIMEOUT, HttpAdapter, _money, job_ref
 from app.providers.base import (
     GenerationRequest,
     Modality,
+    ModelSpec,
     ProviderJobRef,
     ProviderJobStatus,
 )
@@ -112,7 +113,7 @@ class KlingAdapter(HttpAdapter):
             "model_name": _MODEL_NAME.get(req.model_id, req.model_id),
             "prompt": self._styled_prompt(req),
             "mode": self._mode_for(req),
-            "duration": str(int(round(req.duration_s or 5))),
+            "duration": str(round(req.duration_s or 5)),
         }
         if req.negative_prompt:
             payload["negative_prompt"] = req.negative_prompt
@@ -199,9 +200,7 @@ class KlingAdapter(HttpAdapter):
 
     # -- coste -------------------------------------------------------------- #
 
-    def estimate_cost(self, req: GenerationRequest, spec: Any) -> Decimal:
-        from app.providers._http import _money
-
+    def estimate_cost(self, req: GenerationRequest, spec: ModelSpec) -> Decimal:
         seconds = Decimal(str(req.duration_s or spec.min_duration_s or 5))
         multiplier = _MODE_MULTIPLIER[self._mode_for(req)]
         return _money(Decimal(spec.cost_per_second) * seconds * multiplier)

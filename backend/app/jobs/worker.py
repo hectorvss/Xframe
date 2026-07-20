@@ -28,7 +28,6 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -661,7 +660,3 @@ def _extension(content_type: str) -> str:
         "audio/mpeg": ".mp3",
         "audio/wav": ".wav",
     }.get(content_type.split(";")[0].strip(), ".bin")
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)

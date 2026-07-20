@@ -1747,7 +1747,7 @@ function UserMenu() {
   );
 }
 function DashboardSide({ width, onResize }) {
-  const { projects, profile } = useStudio();
+  const { projects, profile, workspace } = useStudio();
   const recentProjects = projects.slice(0, 5);
   const openOverlay = (name) => go(`${location.pathname}?${name}=1`);
   const collapsed = width < 160;
@@ -1784,7 +1784,7 @@ function DashboardSide({ width, onResize }) {
       )}
 
       <button
-        title="Héctor's Xframe"
+        title={workspace?.name ?? "Espacio de trabajo"}
         className={cn(
           "mt-2 flex items-center rounded-md text-sm transition-colors hover:bg-accent",
           collapsed ? "size-9 justify-center" : "gap-2 p-2",
@@ -1795,7 +1795,9 @@ function DashboardSide({ width, onResize }) {
         </span>
         {!collapsed && (
           <>
-            <span className="flex-1 text-left font-medium">Héctor's Xframe</span>
+            <span className="flex-1 truncate text-left font-medium">
+              {workspace?.name ?? "Espacio de trabajo"}
+            </span>
             <ChevronDown className="size-4 text-muted-foreground" />
           </>
         )}
@@ -5294,14 +5296,14 @@ const settingsGroups = [
   {
     title: "CUENTA",
     items: [
-      ["account", "Héctor Vidal Sánchez", User],
+      ["account", "__PROFILE_NAME__", User],
       ["apps", "Dispositivos y apps", Monitor],
     ],
   },
   {
     title: "ESPACIO DE TRABAJO",
     items: [
-      ["workspace", "Héctor's Xframe", "H"],
+      ["workspace", "__WORKSPACE_NAME__", "H"],
       ["billing", "Planes y uso de créditos", CreditCard],
     ],
   },
@@ -5341,6 +5343,14 @@ const settingsGroups = [
   },
 ];
 function SettingsSide({ page, width, onResize }) {
+  const { profile, workspace } = useStudio();
+  // Los dos primeros apartados llevan el nombre real de la persona y su espacio.
+  const resolveLabel = (label) =>
+    label === "__PROFILE_NAME__"
+      ? (profile?.name ?? "Tu cuenta")
+      : label === "__WORKSPACE_NAME__"
+        ? (workspace?.name ?? "Espacio de trabajo")
+        : label;
   return (
     <aside
       style={{ width }}
@@ -5366,7 +5376,9 @@ function SettingsSide({ page, width, onResize }) {
           <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">
             {group.title}
           </p>
-          {group.items.map(([id, label, Icon, badge, external]) => (
+          {group.items.map(([id, rawLabel, Icon, badge, external]) => {
+            const label = resolveLabel(rawLabel);
+            return (
             <button
               key={id}
               onClick={() => go(`/settings/${id}`)}
@@ -5401,7 +5413,8 @@ function SettingsSide({ page, width, onResize }) {
                 <ExternalLink className="size-3.5 text-muted-foreground" />
               )}
             </button>
-          ))}
+            );
+          })}
         </div>
       ))}
     </aside>
@@ -6311,6 +6324,286 @@ function DeleteAccountDialog({ onClose }) {
   );
 }
 
+/** Lee navegador, sistema y tipo de aparato del user-agent. */
+function describeDevice(userAgent = "") {
+  const ua = userAgent;
+  const browser =
+    /Edg\//.test(ua) ? "Edge"
+    : /OPR\/|Opera/.test(ua) ? "Opera"
+    : /Chrome\//.test(ua) ? "Chrome"
+    : /Safari\//.test(ua) ? "Safari"
+    : /Firefox\//.test(ua) ? "Firefox"
+    : "Navegador desconocido";
+
+  const os =
+    /Windows NT 10/.test(ua) ? "Windows"
+    : /Windows/.test(ua) ? "Windows"
+    : /iPhone|iPad/.test(ua) ? "iOS"
+    : /Android/.test(ua) ? "Android"
+    : /Mac OS X/.test(ua) ? "macOS"
+    : /Linux/.test(ua) ? "Linux"
+    : "Sistema desconocido";
+
+  const mobile = /iPhone|Android|Mobile/.test(ua);
+  return { browser, os, icon: mobile ? Smartphone : Monitor };
+}
+
+/** "hace 5 minutos", "ayer", "12 mar 2026". */
+function timeAgo(value) {
+  if (!value) return "—";
+  // Postgres devuelve unas columnas con zona («…+00:00») y otras sin ella
+  // (timestamp without time zone). A las segundas hay que marcarlas como UTC.
+  const hasZone = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(value);
+  const then = new Date(hasZone ? value : `${value.replace(" ", "T")}Z`);
+  const minutes = Math.round((Date.now() - then) / 60000);
+  if (Number.isNaN(minutes)) return "—";
+  if (minutes < 2) return "ahora mismo";
+  if (minutes < 60) return `hace ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return "ayer";
+  if (days < 30) return `hace ${days} días`;
+  return then.toLocaleDateString("es-ES", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function AppsSettings() {
+  const { profile, isRemote } = useStudio();
+  const [sessions, setSessions] = useState([]);
+  const [currentId, setCurrentId] = useState(null);
+  const [keys, setKeys] = useState([]);
+  const [newKey, setNewKey] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [keyName, setKeyName] = useState("");
+  const [toast, setToast] = useState(null);
+
+  const notify = (text, kind = "ok") => {
+    setToast({ text, kind });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const reload = async () => {
+    if (!profile) return;
+    const [s, id, k] = await Promise.all([
+      db.listSessions().catch(() => []),
+      db.currentSessionId().catch(() => null),
+      db.listApiKeys(profile.id).catch(() => []),
+    ]);
+    setSessions(s);
+    setCurrentId(id);
+    setKeys(k);
+  };
+
+  useEffect(() => {
+    reload();
+  }, [profile?.id]);
+
+  if (!profile) return null;
+
+  return (
+    <div className="mx-auto max-w-3xl px-8 py-10">
+      <h1 className="text-2xl font-bold tracking-tight">Dispositivos y apps</h1>
+      <p className="mt-1 text-muted-foreground">
+        Dónde tienes la sesión abierta y qué aplicaciones acceden a tu cuenta.
+      </p>
+
+      {toast && (
+        <div
+          className={cn(
+            "mt-4 flex items-center gap-2 rounded-lg border p-3 text-sm",
+            toast.kind === "error"
+              ? "border-destructive/40 text-destructive"
+              : "text-muted-foreground",
+          )}
+        >
+          <Check className="size-4 shrink-0" />
+          {toast.text}
+        </div>
+      )}
+
+      <SettingsSection
+        title="Sesiones activas"
+        desc="Dispositivos con la sesión iniciada en tu cuenta."
+      >
+        {sessions.length === 0 && (
+          <div className="px-5 py-4 text-sm text-muted-foreground">
+            {isRemote
+              ? "No hay más sesiones abiertas."
+              : "Las sesiones se muestran al conectar Supabase."}
+          </div>
+        )}
+        {sessions.map((session) => {
+          const device = describeDevice(session.user_agent);
+          const isCurrent = session.id === currentId;
+          return (
+            <div key={session.id} className="flex items-center gap-3 px-5 py-4">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border">
+                <device.icon className="size-4 text-muted-foreground" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  {device.browser} · {device.os}
+                  {isCurrent && (
+                    <Badge variant="secondary" className="rounded">
+                      Este dispositivo
+                    </Badge>
+                  )}
+                </p>
+                <p className="truncate text-sm text-muted-foreground">
+                  {session.ip ?? "IP desconocida"} · Actividad{" "}
+                  {timeAgo(session.refreshed_at ?? session.created_at)}
+                </p>
+              </div>
+              {!isCurrent && (
+                <UIButton
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={async () => {
+                    await db.revokeSession(session.id);
+                    await reload();
+                    notify("Sesión cerrada en ese dispositivo");
+                  }}
+                >
+                  Cerrar sesión
+                </UIButton>
+              )}
+            </div>
+          );
+        })}
+        <SettingsRow
+          title="Cerrar todas las sesiones"
+          desc="Se cerrará también la de este dispositivo y tendrás que volver a entrar."
+        >
+          <UIButton
+            variant="outline"
+            onClick={async () => {
+              await db.signOutEverywhere();
+              go("/es");
+            }}
+          >
+            Cerrar todas
+          </UIButton>
+        </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Claves de API"
+        desc="Para usar Xframe desde tus propias herramientas o scripts."
+      >
+        {keys.length === 0 && (
+          <div className="px-5 py-4 text-sm text-muted-foreground">
+            Todavía no has creado ninguna clave.
+          </div>
+        )}
+        {keys.map((key) => (
+          <div key={key.id} className="flex items-center gap-3 px-5 py-4">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border">
+              <Code2 className="size-4 text-muted-foreground" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{key.name}</p>
+              <p className="truncate font-mono text-xs text-muted-foreground">
+                {key.prefix}··········· · Creada {timeAgo(key.created_at)} ·{" "}
+                {key.last_used_at ? `Usada ${timeAgo(key.last_used_at)}` : "Sin usar"}
+              </p>
+            </div>
+            <UIButton
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={async () => {
+                await db.revokeApiKey(key.id);
+                await reload();
+                notify("Clave revocada");
+              }}
+            >
+              Revocar
+            </UIButton>
+          </div>
+        ))}
+        <div className="flex items-center gap-2 px-5 py-4">
+          <Input
+            value={keyName}
+            onChange={(e) => setKeyName(e.target.value)}
+            placeholder="Nombre de la clave — por ejemplo, «Mi script»"
+            className="h-9 flex-1"
+          />
+          <UIButton
+            disabled={creating || !isRemote}
+            onClick={async () => {
+              setCreating(true);
+              try {
+                const { token } = await db.createApiKey(profile.id, keyName.trim());
+                setNewKey(token);
+                setKeyName("");
+                await reload();
+              } catch (error) {
+                notify(String(error?.message ?? error), "error");
+              } finally {
+                setCreating(false);
+              }
+            }}
+          >
+            {creating ? <RefreshCw className="animate-spin" /> : <Plus />}
+            Crear clave
+          </UIButton>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Aplicaciones conectadas"
+        desc="Servicios de terceros con acceso a tus proyectos."
+      >
+        <SettingsRow
+          title="Conectores"
+          desc="Gestiona las integraciones activas de tu espacio de trabajo."
+        >
+          <UIButton variant="outline" onClick={() => go("/dashboard?connectors=1")}>
+            Ver conectores <ArrowRight />
+          </UIButton>
+        </SettingsRow>
+      </SettingsSection>
+
+      {newKey && (
+        <Dialog open onOpenChange={(o) => !o && setNewKey(null)}>
+          <DialogContent className="sm:max-w-[460px]">
+            <DialogHeader>
+              <DialogTitle>Guarda tu clave ahora</DialogTitle>
+              <DialogDescription>
+                Es la única vez que se muestra completa. Después solo verás sus
+                primeros caracteres.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex items-center gap-2 rounded-lg border bg-muted/40 p-2">
+              <code className="min-w-0 flex-1 truncate font-mono text-xs">
+                {newKey}
+              </code>
+              <UIButton
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard?.writeText(newKey);
+                  notify("Clave copiada");
+                }}
+              >
+                <Copy /> Copiar
+              </UIButton>
+            </div>
+            <div className="flex justify-end">
+              <UIButton onClick={() => setNewKey(null)}>Hecho</UIButton>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
 function GenericSettings({ page }) {
   const navItem = settingsGroups
     .flatMap((group) => group.items)
@@ -6356,7 +6649,52 @@ function GenericSettings({ page }) {
     </div>
   );
 }
+
+const workspaceColors = [
+  ["pink", "bg-pink-600"],
+  ["violet", "bg-violet-600"],
+  ["blue", "bg-blue-600"],
+  ["green", "bg-green-600"],
+  ["amber", "bg-amber-500"],
+  ["neutral", "bg-neutral-800"],
+];
+
 function WorkspaceSettings() {
+  const { profile, projects, isRemote } = useStudio();
+  const [workspace, setWorkspace] = useState(null);
+  const [name, setName] = useState("");
+  const [limit, setLimit] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const notify = (text) => {
+    setToast(text);
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  useEffect(() => {
+    if (!profile) return;
+    db.getWorkspace(profile.id).then((w) => {
+      setWorkspace(w);
+      setName(w?.name ?? "");
+      setLimit(w?.member_credit_limit == null ? "" : String(w.member_credit_limit));
+    });
+  }, [profile?.id]);
+
+  const save = async (patch, message) => {
+    const next = await db.updateWorkspace(workspace.id, patch);
+    setWorkspace(next);
+    if (message) notify(message);
+    return next;
+  };
+
+  if (!profile || !workspace) return null;
+  const initial = (workspace.name || "?").charAt(0).toUpperCase();
+  const colorClass =
+    workspaceColors.find(([id]) => id === workspace.avatar_color)?.[1] ??
+    "bg-pink-600";
+
   return (
     <div className="mx-auto max-w-3xl px-8 py-10">
       <div className="flex items-start justify-between gap-4">
@@ -6369,23 +6707,47 @@ function WorkspaceSettings() {
             real.
           </p>
         </div>
-        <UIButton variant="ghost" className="shrink-0 text-muted-foreground">
-          Abrir docs <ExternalLink />
-        </UIButton>
       </div>
+
+      {toast && (
+        <div className="mt-4 flex items-center gap-2 rounded-lg border p-3 text-sm text-muted-foreground">
+          <Check className="size-4 shrink-0" />
+          {toast}
+        </div>
+      )}
 
       <SettingsSection
         title="Perfil del espacio de trabajo"
         desc="Controla cómo aparece este espacio de trabajo en Xframe."
       >
-        <SettingsRow
-          title="Avatar"
-          desc="Configura un avatar para tu espacio de trabajo."
-        >
-          <span className="flex size-9 items-center justify-center rounded-lg bg-pink-600 text-sm font-semibold text-white">
-            H
-          </span>
+        <SettingsRow title="Avatar" desc="El color con el que se identifica.">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "flex size-9 items-center justify-center rounded-lg text-sm font-semibold text-white",
+                colorClass,
+              )}
+            >
+              {initial}
+            </span>
+            <div className="flex gap-1">
+              {workspaceColors.map(([id, cls]) => (
+                <button
+                  key={id}
+                  onClick={() => save({ avatar_color: id }, "Color actualizado")}
+                  aria-label={`Color ${id}`}
+                  className={cn(
+                    "size-5 rounded-full transition-transform hover:scale-110",
+                    cls,
+                    workspace.avatar_color === id &&
+                      "ring-2 ring-foreground ring-offset-2 ring-offset-background",
+                  )}
+                />
+              ))}
+            </div>
+          </div>
         </SettingsRow>
+
         <div className="flex items-start justify-between gap-4 px-5 py-4">
           <div className="min-w-0">
             <p className="text-sm font-medium">Nombre</p>
@@ -6395,49 +6757,111 @@ function WorkspaceSettings() {
             </p>
           </div>
           <div className="w-64 shrink-0">
-            <Input defaultValue="Héctor's Xframe" />
+            <Input
+              value={name}
+              maxLength={50}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() =>
+                name.trim() &&
+                name !== workspace.name &&
+                save({ name: name.trim() }, "Nombre actualizado")
+              }
+              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+            />
             <p className="mt-1 text-right text-xs text-muted-foreground">
-              16 / 50 caracteres
+              {name.length} / 50 caracteres
             </p>
           </div>
         </div>
+
         <SettingsRow
           title="ID del espacio de trabajo"
-          desc="Identificador único del espacio de trabajo"
+          desc="Identificador único del espacio de trabajo."
         >
-          <button className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
-            PeTnE2Zn3qNK0h5TGLod
-            <Copy className="size-3.5" />
+          <button
+            onClick={() => {
+              navigator.clipboard?.writeText(workspace.id);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+            className="flex items-center gap-2 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {workspace.id}
+            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
           </button>
         </SettingsRow>
+
         <SettingsRow
-          title="Identificador del espacio de trabajo"
-          desc="Configura un identificador para la página de perfil del espacio de trabajo."
+          title="Identificador público"
+          desc="Se usa en la URL del perfil del espacio de trabajo."
         >
-          <UIButton variant="outline">Establecer identificador</UIButton>
+          <InlineEdit
+            value={workspace.slug}
+            placeholder="sin definir"
+            validate={(v) =>
+              !/^[a-z0-9-]{3,32}$/.test(v)
+                ? "Entre 3 y 32 caracteres: minúsculas, números y guiones"
+                : null
+            }
+            onSave={async (slug) => {
+              const free = await db.isWorkspaceSlugAvailable(slug, workspace.id);
+              if (!free) throw new Error("Ese identificador ya está en uso");
+              await save({ slug }, "Identificador actualizado");
+            }}
+          />
         </SettingsRow>
       </SettingsSection>
 
       <SettingsSection
         title="Valores predeterminados de los miembros"
-        desc="Establece límites predeterminados para los miembros del espacio de trabajo."
+        desc="Límites que se aplican a quien se une a este espacio."
       >
         <div className="flex items-start justify-between gap-4 px-5 py-4">
           <div className="min-w-0">
             <p className="text-sm font-medium">
-              Límite de créditos mensual predeterminado por miembro
+              Límite de créditos mensual por miembro
             </p>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              El límite de créditos mensual predeterminado para los miembros de
-              este espacio de trabajo. Déjalo vacío para no aplicar ningún
-              límite.
+              Déjalo vacío para no aplicar ningún límite.
             </p>
           </div>
           <Input
-            placeholder="Introduce el límite de créditos mensual por miembro"
+            type="number"
+            min={0}
+            value={limit}
+            onChange={(e) => setLimit(e.target.value)}
+            onBlur={() => {
+              const value = limit.trim() === "" ? null : Number(limit);
+              if (value === workspace.member_credit_limit) return;
+              save({ member_credit_limit: value }, "Límite actualizado");
+            }}
+            placeholder="Sin límite"
             className="w-64 shrink-0"
           />
         </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Contenido"
+        desc="Lo que hay dentro de este espacio de trabajo."
+      >
+        <SettingsRow title="Proyectos" desc="Proyectos creados en este espacio.">
+          <span className="text-sm text-muted-foreground">
+            {projects.length}
+          </span>
+        </SettingsRow>
+        <SettingsRow title="Miembros" desc="Personas con acceso al espacio.">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">1</span>
+            <UIButton
+              variant="outline"
+              size="sm"
+              onClick={() => go("/settings/people")}
+            >
+              Gestionar
+            </UIButton>
+          </div>
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title="Acceso al espacio de trabajo">
@@ -6454,17 +6878,82 @@ function WorkspaceSettings() {
       <SettingsSection title="Zona de peligro">
         <SettingsRow
           title="Eliminar espacio de trabajo"
-          desc="Elimina permanentemente este espacio de trabajo y todos los proyectos que contiene. Los miembros pierden el acceso de inmediato."
+          desc="Elimina este espacio y todos los proyectos que contiene. Los miembros pierden el acceso de inmediato."
         >
           <UIButton
             variant="ghost"
             className="text-destructive hover:text-destructive"
+            onClick={() => setDeleting(true)}
           >
             Eliminar espacio de trabajo
           </UIButton>
         </SettingsRow>
       </SettingsSection>
+
+      {deleting && (
+        <ConfirmDangerDialog
+          title="Eliminar espacio de trabajo"
+          description={`Se eliminará «${workspace.name}» y sus ${projects.length} proyectos. Esta acción no se puede deshacer.`}
+          word="ELIMINAR"
+          onClose={() => setDeleting(false)}
+          onConfirm={async () => {
+            await db.deleteWorkspace(workspace.id);
+            go("/dashboard");
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** Confirmación escrita para acciones destructivas. */
+function ConfirmDangerDialog({ title, description, word, onClose, onConfirm }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[440px]">
+        <DialogHeader>
+          <DialogTitle className="text-destructive">{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            Escribe <span className="font-medium text-foreground">{word}</span>{" "}
+            para confirmar.
+          </p>
+          <Input
+            autoFocus
+            value={text}
+            onChange={(e) => (setText(e.target.value), setError(null))}
+            placeholder={word}
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <UIButton variant="outline" onClick={onClose}>
+              Cancelar
+            </UIButton>
+            <UIButton
+              variant="destructive"
+              disabled={text !== word || busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await onConfirm();
+                } catch (e) {
+                  setError(String(e?.message ?? e));
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy && <RefreshCw className="animate-spin" />} Eliminar
+            </UIButton>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -7437,6 +7926,8 @@ function SettingsPage({ page }) {
       <main style={{ marginLeft: sideW }}>
         {page === "account" ? (
           <AccountSettings />
+        ) : page === "apps" ? (
+          <AppsSettings />
         ) : page === "workspace" ? (
           <WorkspaceSettings />
         ) : page === "billing" ? (

@@ -326,7 +326,13 @@ class ConversationCompactor:
         report.messages_after = len(new_messages)
         report.emit(project_id=state.project_id)
 
-        return PartialXframeState(messages=ReplaceMessages(new_messages))
+        # `model_construct` y no el constructor normal: la validación de Pydantic
+        # reconstruye `messages` como `list` corriente y se lleva por delante la subclase
+        # `ReplaceMessages`. El reductor comprueba el tipo con `isinstance`, así que esa
+        # coerción silenciosa haría que la compactación no compactara nada — el historial
+        # viejo volvería a fusionarse junto al resumen. Los mensajes ya son objetos
+        # válidos aquí, así que saltarse la validación no pierde nada.
+        return PartialXframeState.model_construct(messages=ReplaceMessages(new_messages))
 
 
 # --------------------------------------------------------------------------- #

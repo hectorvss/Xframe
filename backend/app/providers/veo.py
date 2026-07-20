@@ -20,8 +20,8 @@ from app.config import get_settings
 from app.providers._http import UPLOAD_TIMEOUT, HttpAdapter, _money, job_ref
 from app.providers.base import (
     GenerationRequest,
-    ModelSpec,
     Modality,
+    ModelSpec,
     ProviderJobRef,
     ProviderJobStatus,
 )
@@ -85,7 +85,7 @@ class VeoAdapter(HttpAdapter):
         if req.resolution:
             parameters["resolution"] = req.resolution
         if req.duration_s:
-            parameters["durationSeconds"] = int(round(req.duration_s))
+            parameters["durationSeconds"] = round(req.duration_s)
         if req.negative_prompt:
             parameters["negativePrompt"] = req.negative_prompt
         if req.seed is not None:
@@ -163,7 +163,7 @@ class VeoAdapter(HttpAdapter):
             await self.request(
                 "POST", f"/v1beta/{ref.external_id}:cancel", json={}, expected=(200, 202, 204)
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
 
     # -- coste -------------------------------------------------------------- #

@@ -27,8 +27,8 @@ from app.config import get_settings
 from app.providers._http import UPLOAD_TIMEOUT, HttpAdapter, _money, job_ref
 from app.providers.base import (
     GenerationRequest,
-    ModelSpec,
     Modality,
+    ModelSpec,
     ProviderJobRef,
     ProviderJobStatus,
 )
@@ -111,7 +111,7 @@ class HiggsfieldAdapter(HttpAdapter):
             return motion
         try:
             catalogue = await self.get_motions()
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
         return catalogue.get(motion.strip().lower())
 
@@ -257,7 +257,7 @@ class HiggsfieldAdapter(HttpAdapter):
             await self.request(
                 "POST", f"/v1/requests/{ref.external_id}/cancel", json={}, expected=(200, 202, 204)
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
 
     # -- coste -------------------------------------------------------------- #

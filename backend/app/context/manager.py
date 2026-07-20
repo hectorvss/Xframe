@@ -127,10 +127,17 @@ class ContextReport:
 
     @property
     def degraded(self) -> bool:
+        """
+        ¿Se perdió algo por presupuesto?
+
+        `assets_shown < assets_total` **no** cuenta: la lista de assets es una ventana
+        por diseño (`MAX_RECENT_ASSETS`) y en un proyecto con historia siempre lo será.
+        Contarlo como degradación convertiría la telemetría en ruido constante y la haría
+        inservible justo para lo que existe: detectar presupuestos mal calibrados.
+        """
         return (
             self.detail is not ContextDetail.FULL
             or self.shots_shown < self.shots_total
-            or self.assets_shown < self.assets_total
             or self.brief_truncated
             or bool(self.sections_dropped)
         )
@@ -724,7 +731,8 @@ class XframeContextManager:
                        params, credits_spent, parent_id, created_at
                   from public.assets
                  where project_id = $1::uuid
-                   and (role is not null or created_at is not null)
+                 -- Los elements primero y fuera de la ventana por antigüedad: son el
+                 -- sistema de continuidad y no pueden caerse de la lista por viejos.
                  order by (role is null), created_at desc
                  limit $2
                 """,

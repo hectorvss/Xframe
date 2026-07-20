@@ -41,6 +41,7 @@ from uuid import UUID
 
 from app.agent.state import JobResult
 from app.db import transaction
+from app.jobs.credits import to_uuid
 from app.tools.errors import XframeToolError
 
 logger = logging.getLogger(__name__)
@@ -254,7 +255,7 @@ async def cleanup_partial_assets(asset_ids: Sequence[str | UUID]) -> int:
     Reembolsar aquí duplicaría —y `credits.refund` es idempotente, así que ni siquiera
     haría eso: fallaría en silencio y confundiría la auditoría.
     """
-    ids = [credits_uuid(a) for a in asset_ids if a]
+    ids = [to_uuid(a) for a in asset_ids if a]
     if not ids:
         return 0
     async with transaction() as conn:
@@ -263,9 +264,3 @@ async def cleanup_partial_assets(asset_ids: Sequence[str | UUID]) -> int:
         )
     logger.info("fanout_partials_cleaned", extra={"count": len(deleted)})
     return len(deleted)
-
-
-def credits_uuid(value: str | UUID) -> UUID:
-    from app.jobs.credits import to_uuid
-
-    return to_uuid(value)

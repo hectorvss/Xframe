@@ -73,6 +73,8 @@ const emptyState = () => ({
   canvas_nodes: [],
   canvas_edges: [],
   messages: [],
+  workspaces: [],
+  api_keys: [],
 });
 
 /* ------------------------------------------------------------------ *
@@ -376,6 +378,114 @@ export const db = {
       .ilike("username", username)
       .neq("id", currentId);
     return !data?.length;
+  },
+
+  /* --- espacio de trabajo --- */
+
+  async getWorkspace(ownerId) {
+    const [workspace] = await DRIVER.select("workspaces", { owner_id: ownerId });
+    if (workspace) return workspace;
+    if (hasSupabase) return null;
+    return DRIVER.insert("workspaces", {
+      id: uid(),
+      owner_id: ownerId,
+      name: "Mi espacio",
+      slug: null,
+      avatar_color: "pink",
+      member_credit_limit: null,
+      created_at: nowISO(),
+      updated_at: nowISO(),
+    });
+  },
+
+  async updateWorkspace(id, patch) {
+    return DRIVER.update("workspaces", id, patch);
+  },
+
+  async isWorkspaceSlugAvailable(slug, currentId) {
+    if (!hasSupabase) return true;
+    const { data } = await supabase
+      .from("workspaces")
+      .select("id")
+      .ilike("slug", slug)
+      .neq("id", currentId);
+    return !data?.length;
+  },
+
+  async deleteWorkspace(id) {
+    return DRIVER.remove("workspaces", { id });
+  },
+
+  /* --- dispositivos y claves de API --- */
+
+  /** Sesiones abiertas del usuario, con navegador, sistema e IP. */
+  async listSessions() {
+    if (!hasSupabase) return [];
+    const { data, error } = await supabase.rpc("my_sessions");
+    if (error) throw error;
+    return data ?? [];
+  },
+
+  async revokeSession(sessionId) {
+    const { error } = await supabase.rpc("revoke_session", {
+      session_id: sessionId,
+    });
+    if (error) throw error;
+  },
+
+  /** Id de la sesión en curso, para marcarla como «este dispositivo». */
+  async currentSessionId() {
+    if (!hasSupabase) return null;
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) return null;
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1]));
+      return payload.session_id ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  async listApiKeys(ownerId) {
+    if (!hasSupabase) return [];
+    const rows = await DRIVER.select("api_keys", { owner_id: ownerId });
+    return rows
+      .filter((row) => !row.revoked_at)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  },
+
+  /**
+   * Crea una clave de API. Devuelve el token completo una única vez: en la
+   * base solo queda su hash SHA-256.
+   */
+  async createApiKey(ownerId, name) {
+    const random = crypto.getRandomValues(new Uint8Array(24));
+    const body = [...random]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const token = `xfr_${body}`;
+
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(token),
+    );
+    const tokenHash = [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    const row = await DRIVER.insert("api_keys", {
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
+      owner_id: ownerId,
+      name: name || "Clave sin nombre",
+      prefix: token.slice(0, 12),
+      token_hash: tokenHash,
+    });
+    return { key: row, token };
+  },
+
+  async revokeApiKey(id) {
+    return DRIVER.update("api_keys", id, { revoked_at: nowISO() });
   },
 
   /** Borra la cuenta y todo su contenido (edge function con rol de servicio). */

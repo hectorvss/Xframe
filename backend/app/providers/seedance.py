@@ -9,7 +9,7 @@ no van en campos JSON, van como flags de texto pegados al prompt** (`--resolutio
 Traducir eso es todo el valor de este fichero: arriba de esta capa nadie debería saber
 que existe una convención de flags en el prompt.
 
-Seedance 2 es el modelo más caro del catálogo con diferencia ($0.36–1.50/s según el
+Seedance 2 es el modelo más caro del catálogo con diferencia ($0.36-1.50/s según el
 informe 06). El `estimate_cost` importa aquí más que en ningún otro adaptador.
 """
 
@@ -22,8 +22,8 @@ from app.config import get_settings
 from app.providers._http import UPLOAD_TIMEOUT, HttpAdapter, _money, job_ref
 from app.providers.base import (
     GenerationRequest,
-    ModelSpec,
     Modality,
+    ModelSpec,
     ProviderJobRef,
     ProviderJobStatus,
 )
@@ -43,7 +43,7 @@ _MODEL_NAME: dict[str, str] = {
 }
 
 #: Seedance escala el precio con la resolución de forma agresiva; el rango declarado
-#: (36–150 créditos/s de Runway) es 4x entre extremos.
+#: (36-150 créditos/s de Runway) es 4x entre extremos.
 _RESOLUTION_MULTIPLIER: dict[str, Decimal] = {
     "480p": Decimal("0.5"),
     "720p": Decimal("1.0"),
@@ -118,7 +118,7 @@ class SeedanceAdapter(HttpAdapter):
         if req.resolution:
             flags.append(f"--resolution {req.resolution}")
         if req.duration_s:
-            flags.append(f"--duration {int(round(req.duration_s))}")
+            flags.append(f"--duration {round(req.duration_s)}")
         if req.aspect:
             flags.append(f"--ratio {req.aspect}")
         if req.seed is not None:
@@ -168,7 +168,7 @@ class SeedanceAdapter(HttpAdapter):
                 f"/api/v3/contents/generations/tasks/{ref.external_id}",
                 expected=(200, 202, 204),
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
 
     # -- coste -------------------------------------------------------------- #

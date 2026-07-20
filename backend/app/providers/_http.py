@@ -25,9 +25,10 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, Mapping
+from typing import Any
 
 import httpx
 
@@ -147,7 +148,7 @@ def classify_http_error(
 def _safe_text(response: httpx.Response) -> str:
     try:
         return response.text
-    except Exception:  # noqa: BLE001 - cuerpo binario o stream ya consumido
+    except Exception:
         return "<unreadable body>"
 
 
@@ -200,7 +201,7 @@ class HttpAdapter(GenerationAdapter):
         json: Any | None = None,
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
-        timeout: httpx.Timeout | None = None,
+        timeout: httpx.Timeout | None = None,  # noqa: ASYNC109 - se reenvía a httpx, que ya lo implementa
         expected: tuple[int, ...] = (200, 201, 202),
     ) -> httpx.Response:
         """
@@ -258,7 +259,7 @@ class HttpAdapter(GenerationAdapter):
 
     def estimate_cost(self, req: GenerationRequest, spec: ModelSpec) -> Decimal:
         """
-        Duración × precio por segundo, o precio por imagen. Los adaptadores con tarifa
+        Duración x precio por segundo, o precio por imagen. Los adaptadores con tarifa
         escalonada por resolución (Veo, Sora) lo sobrescriben.
         """
         if spec.modality == "image":

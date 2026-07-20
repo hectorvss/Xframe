@@ -60,6 +60,17 @@ _DIMENSION_ALIGNMENT = 2
 #: Resoluciones de destino admitidas al normalizar hacia abajo.
 _STANDARD_HEIGHTS = (480, 720, 1080, 1440, 2160)
 
+#: Aspectos de entrega habituales. Un clip que cae cerca de uno de estos **es** ese
+#: aspecto: 1920x1088 es 16:9 con relleno de macrobloque, no un formato nuevo.
+_STANDARD_ASPECTS = (
+    Fraction(21, 9), Fraction(16, 9), Fraction(4, 3), Fraction(5, 4),
+    Fraction(1, 1), Fraction(4, 5), Fraction(3, 4), Fraction(9, 16),
+)
+
+#: Tolerancia relativa al comparar aspectos. El 2% cubre el relleno a múltiplos de 16
+#: (1088 frente a 1080 es un 0.7%) sin llegar a confundir 16:9 con 4:3 (33%).
+_ASPECT_TOLERANCE = 0.02
+
 
 # --------------------------------------------------------------------------- #
 # Errores                                                                      #
@@ -281,9 +292,12 @@ def resolve_target_format(
 
     warnings: list[str] = []
 
-    aspects = {p.aspect for p in probes}
+    # Se comparan aspectos **ajustados**, no exactos. Sin esto, un 1080p entregado como
+    # 1920x1088 —que es lo que devuelven la mitad de los proveedores— se leería como un
+    # formato distinto y bloquearía un montaje perfectamente válido.
+    aspects = {_snap_aspect(p.aspect) for p in probes}
     if len(aspects) > 1 and not allow_letterbox and override is None:
-        detail = ", ".join(f"{p.label} [{p.aspect}]" for p in probes)
+        detail = ", ".join(f"{p.label} [{_snap_aspect(p.aspect)}]" for p in probes)
         raise IncompatibleClipsError(
             f"The timeline mixes {len(aspects)} different aspect ratios, which cannot be "
             f"combined without adding black bars to some shots: {detail}. "
@@ -297,12 +311,16 @@ def resolve_target_format(
         warnings.extend(_resample_warnings(probes, target))
         return target, warnings
 
-    # --- resolución: la del clip más pequeño, respetando su aspecto ---
+    # --- resolución: la del clip más pequeño, con el aspecto mayoritario ---
+    #
+    # La altura sale del clip más pequeño (nunca escalar hacia arriba) pero el aspecto
+    # sale de la mayoría, no de ese clip: si el más pequeño es justo el que llegó con
+    # relleno de macrobloque, tomar su aspecto literal produciría un destino torcido
+    # como 1905 de ancho y metería a todos los demás por el escalador sin motivo.
     smallest = min(probes, key=lambda p: p.pixels)
-    aspect = smallest.aspect
-    height = _snap_height(smallest.height)
+    aspect = _modal_aspect(probes)
+    height = _even(_snap_height(smallest.height))
     width = _even(int(round(height * float(aspect))))
-    height = _even(height)
 
     # --- fps: la moda; a igualdad de frecuencia, el menor (menos frames inventados) ---
     counts: dict[Fraction, int] = {}
@@ -361,6 +379,31 @@ def _resample_warnings(probes: Sequence[ClipProbe], target: TargetFormat) -> lis
         if p.sar != 1:
             warnings.append(f"{p.src}: non-square pixels (SAR {p.sar}) corrected to square")
     return warnings
+
+
+def _snap_aspect(aspect: Fraction, *, tolerance: float = _ASPECT_TOLERANCE) -> Fraction:
+    """
+    Ajusta un aspecto medido al estándar más cercano si cae dentro de la tolerancia.
+
+    Es lo que convierte "1920x1088" en "16:9" en vez de en "30:17". Sin este ajuste, el
+    montaje rechazaría material correcto por una diferencia de ocho píxeles que ningún
+    espectador puede ver.
+    """
+    value = float(aspect)
+    for standard in _STANDARD_ASPECTS:
+        if abs(value - float(standard)) / float(standard) <= tolerance:
+            return standard
+    return aspect
+
+
+def _modal_aspect(probes: Sequence[ClipProbe]) -> Fraction:
+    """Aspecto mayoritario del lote; a igualdad, el del clip más pequeño."""
+    counts: dict[Fraction, int] = {}
+    for p in probes:
+        snapped = _snap_aspect(p.aspect)
+        counts[snapped] = counts.get(snapped, 0) + 1
+    smallest_aspect = _snap_aspect(min(probes, key=lambda p: p.pixels).aspect)
+    return max(counts, key=lambda a: (counts[a], a == smallest_aspect))
 
 
 def _snap_height(height: int) -> int:

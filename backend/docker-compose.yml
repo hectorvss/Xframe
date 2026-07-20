@@ -1,0 +1,81 @@
+# Entorno de desarrollo completo: api + worker + redis + postgres.
+#
+# api y worker comparten imagen y variables, y se separan en dos servicios porque
+# tienen perfiles de carga opuestos: la api atiende peticiones cortas con SSE abierto,
+# y el worker está minutos bloqueado esperando a un proveedor. Escalarlos juntos
+# significaría dimensionar la api por la latencia de Kling.
+
+name: xframe
+
+x-app: &app
+  build:
+    context: .
+    target: base
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql://xframe:xframe@postgres:5432/xframe
+    REDIS_URL: redis://redis:6379/0
+  volumes:
+    # Código en bind mount para desarrollo; en producción se usa lo que hay en la imagen.
+    - ./app:/srv/app:ro
+    # Directorio de trabajo del montaje. Compartido entre api y worker: el worker monta
+    # el corte y la api lo sirve, y copiar un mp4 de 4K entre contenedores no tiene
+    # ningún sentido cuando pueden ver el mismo volumen.
+    - assembly-work:/tmp/xframe
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+
+  worker:
+    <<: *app
+    command: python -m app.jobs.worker
+    # Varios workers en local para ejercitar el fan-out de planos: los bugs de
+    # concurrencia con un solo worker no aparecen nunca.
+    deploy:
+      replicas: 2
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: xframe
+      POSTGRES_PASSWORD: xframe
+      POSTGRES_DB: xframe
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Sin healthcheck, api y worker arrancan antes que Postgres acepte conexiones y
+      # mueren en el primer init_pool().
+      test: ["CMD-SHELL", "pg_isready -U xframe -d xframe"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+  redisdata:
+  assembly-work:

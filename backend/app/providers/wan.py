@@ -86,7 +86,7 @@ class WanAdapter(HttpAdapter):
         if req.resolution:
             parameters["resolution"] = req.resolution.upper()
         if req.duration_s:
-            parameters["duration"] = int(round(req.duration_s))
+            parameters["duration"] = round(req.duration_s)
         if req.aspect:
             # DashScope quiere píxeles, no ratio; se traduce con la resolución elegida.
             parameters["size"] = self._size_for(req)
@@ -159,5 +159,5 @@ class WanAdapter(HttpAdapter):
             await self.request(
                 "POST", f"/api/v1/tasks/{ref.external_id}/cancel", json={}, expected=(200, 202, 204)
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None

@@ -30,8 +30,8 @@ from app.config import get_settings
 from app.providers._http import UPLOAD_TIMEOUT, HttpAdapter, _money, job_ref
 from app.providers.base import (
     GenerationRequest,
-    ModelSpec,
     Modality,
+    ModelSpec,
     ProviderJobRef,
     ProviderJobStatus,
 )

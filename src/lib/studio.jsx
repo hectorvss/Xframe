@@ -35,6 +35,7 @@ export const creditCost = ({ mode, res, dur, count }) => {
 export function StudioProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [projects, setProjects] = useState([]);
+  const [workspace, setWorkspace] = useState(null);
   const [ready, setReady] = useState(false);
 
   /** Carga perfil y proyectos de la sesión actual (o los limpia al salir). */
@@ -43,11 +44,17 @@ export function StudioProvider({ children }) {
     if (!loadedProfile) {
       setProfile(null);
       setProjects([]);
+      setWorkspace(null);
       setReady(true);
       return null;
     }
     setProfile(loadedProfile);
-    setProjects(await db.listProjects(loadedProfile.id));
+    const [list, ws] = await Promise.all([
+      db.listProjects(loadedProfile.id),
+      db.getWorkspace(loadedProfile.id).catch(() => null),
+    ]);
+    setProjects(list);
+    setWorkspace(ws);
     setReady(true);
     return loadedProfile;
   }, []);
@@ -201,6 +208,7 @@ export function StudioProvider({ children }) {
       ready,
       profile,
       projects,
+      workspace,
       genSettings,
       setGenSettings,
       preferences,
@@ -221,6 +229,7 @@ export function StudioProvider({ children }) {
       ready,
       profile,
       projects,
+      workspace,
       genSettings,
       setGenSettings,
       preferences,

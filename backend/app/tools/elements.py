@@ -17,9 +17,7 @@ afinar la ficha, no crear un personaje gemelo que rompa justo lo que venía a ar
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
-
-from pydantic import BaseModel, Field
+from typing import Any, ClassVar
 
 from app import db
 from app.taxonomy.builder import SnapshotTool, build_args, described, literal_of

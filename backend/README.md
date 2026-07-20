@@ -1,0 +1,162 @@
+# Xframe · backend
+
+Agente de cinematografía generativa. FastAPI + LangGraph sobre Postgres, con workers
+asíncronos para la generación y ffmpeg para el montaje final.
+
+El diseño y el porqué de cada decisión están en `docs/ARQUITECTURA-AGENTE.md`. Este
+fichero es solo cómo se levanta y cómo se comprueba.
+
+## Requisitos
+
+- Python 3.12
+- Postgres 16 y Redis 7 (los trae el compose)
+- ffmpeg y ffprobe en el PATH, o `FFMPEG_PATH` apuntando al binario
+
+## Arranque
+
+```bash
+cp .env.example .env      # y rellenar ANTHROPIC_API_KEY como mínimo
+docker compose up --build
+```
+
+Levanta `api` (puerto 8000), dos `worker`, `postgres` y `redis`. La imagen ya trae
+ffmpeg instalado.
+
+Sin Docker:
+
+```bash
+pip install -e ".[dev]"
+uvicorn app.main:app --reload      # api
+python -m app.jobs.worker          # worker, en otra terminal
+```
+
+## Base de datos
+
+El esquema base (`profiles`, `projects`, `assets`, `canvas_nodes`, …) está en
+`supabase/schema.sql`. Encima va el esquema del agente:
+
+```bash
+# contra el Postgres del compose
+psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/schema.sql
+psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/002_agent.sql
+
+# contra Supabase
+supabase db push
+# o: psql "$DATABASE_URL" -f ../supabase/002_agent.sql
+```
+
+`002_agent.sql` es idempotente (`create table if not exists`, `add column if not
+exists`), así que se puede reaplicar sin miedo.
+
+### Seeds de taxonomía
+
+Las tablas `gen_models`, `camera_motions` y `visual_styles` son **datos, no código**:
+de ellas salen los `Literal[...]` que ven las herramientas del agente en tiempo de
+ejecución. Un backend con esas tablas vacías arranca, pero el agente no puede generar
+nada porque no conoce ningún modelo.
+
+```bash
+psql "$DATABASE_URL" -f seeds/taxonomy.sql
+```
+
+`seeds/taxonomy.sql` está **generado**; no se edita a mano. La fuente de verdad es
+`app/providers/seed.py`, y se regenera con:
+
+```bash
+python -m app.providers.seed --emit-sql > seeds/taxonomy.sql
+```
+
+Apagar un modelo retirado es un `UPDATE`, no un despliegue:
+
+```sql
+update gen_models set status = 'retired' where id = 'runway-gen4';
+```
+
+## Variables de entorno
+
+Todas están en `.env.example`, comentadas. Las imprescindibles para arrancar:
+
+| Variable | Para qué |
+|---|---|
+| `DATABASE_URL` | Postgres. El compose la inyecta. |
+| `REDIS_URL` | Cola de jobs. El compose la inyecta. |
+| `ANTHROPIC_API_KEY` | El agente. Sin esto no hay nada. |
+| `SUPABASE_SERVICE_KEY` | Storage de assets. Salta RLS: nunca sale del servidor. |
+| `PUBLIC_BASE_URL` | Webhooks de proveedor. Debe ser alcanzable desde internet; en local, un túnel. Si apunta a localhost, los jobs solo terminan por polling. |
+| `*_API_KEY` de proveedor | Solo los de los modelos marcados `active` en `gen_models`. |
+
+## Tests
+
+```bash
+pytest -m "not evals"     # suite unitaria: rápida, sin red, sin coste
+pytest -m ffmpeg          # las que necesitan el binario instalado
+```
+
+Las llamadas HTTP a proveedores se simulan con `respx`; ningún test unitario debe salir
+a la red ni gastar un crédito.
+
+## Evals
+
+Framework en `evals/`, con el patrón de PostHog: pytest como runner, descubrimiento por
+`eval_*.py` para que **no corran con la suite unitaria**, scorers graduados (0.0 / 0.5 /
+1.0, nunca binarios) y `score=None` para "no aplica" — que no es lo mismo que 0.0 y no
+entra en la media.
+
+```bash
+pytest evals -m evals                        # todo lo que no renderiza
+pytest evals -m evals --eval thriller        # solo los casos que contengan "thriller"
+pytest evals/eval_script.py -m evals         # una suite
+
+EVAL_ALLOW_RENDER=1 pytest evals/eval_continuity.py -m evals   # gasta créditos de verdad
+```
+
+| Suite | Qué mide | Coste |
+|---|---|---|
+| `eval_script.py` | El guion responde al brief | llamadas al juez |
+| `eval_shotlist.py` | Los planos cubren el guion; herramienta y parámetros correctos | juez + determinista |
+| `eval_continuity.py` | Continuidad de personaje, estilo, validez de render y coste | **renderiza y paga** |
+
+`eval_continuity.py` exige `EVAL_ALLOW_RENDER=1` a propósito: nadie debe descubrir que
+ha gastado créditos porque corrió `pytest` sin argumentos.
+
+Los scorers visuales (`CharacterContinuity`, `StyleAdherence`) **aceleran el vídeo 8x
+antes de muestrear frames**, porque los modelos visuales muestrean a ~1 fps: sin
+acelerar, el juez vería ocho instantes casi idénticos de un plano de ocho segundos y no
+podría opinar sobre continuidad.
+
+Los datasets están hardcodeados y tipados en `evals/datasets.py`. Cada bug de producción
+debería acabar allí como un `EvalCase` permanente con su `regression_note`. Revisar
+trazas y curar el dataset es lo que hace útil un eval; escribirlo una vez, no.
+
+## Montaje final
+
+`app/assembly/` produce el asset de tipo `cut` a partir del timeline en orden narrativo.
+
+Lo que hay que saber para depurarlo: **los clips llegan heterogéneos** —720p, 1080p, 4K,
+24/25/30 fps, con y sin audio— y ahí es donde falla el montaje. Por eso `probe.py` sondea
+cada clip con ffprobe antes de tocar nada (nunca se asume lo que dijo el proveedor que
+iba a generar) y `ffmpeg.py` normaliza todo a un formato de destino explícito: la
+resolución menor del lote (nunca escalar hacia arriba) y el frame rate más frecuente
+(menos clips remuestreados). La decisión se guarda en el artefacto, en `format.rationale`.
+
+Si un montaje falla, el error trae el comando completo de ffmpeg y la cola de su stderr:
+se reproduce a mano copiándolo y pegándolo.
+
+## Estructura
+
+```
+app/
+├── main.py          FastAPI: /chat (SSE), /jobs/webhook, /projects
+├── config.py        Settings por entorno
+├── db.py            Pool de asyncpg. Sin ORM: el esquema ya está en SQL con RLS.
+├── agent/           Grafo, estado, nodos, modos, compactación, prompts
+├── tools/           Herramientas del agente y su jerarquía de errores
+├── taxonomy/        gen_models, camera_motions, styles → Literal en runtime
+├── context/         Contexto de UI del proyecto
+├── memory/          Biblia de estilo y fichas de personaje
+├── artifacts/       Guion, timeline y cut por referencia
+├── providers/       Un adaptador por proveedor de generación
+├── jobs/            Cola, worker, polling, webhooks, créditos
+└── assembly/        ffprobe + ffmpeg → el cut
+evals/               Scorers, datasets y suites
+```

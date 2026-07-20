@@ -177,9 +177,14 @@ def enumerate_for_prompt(items: Sequence[Any], *, limit: int = 60) -> str:
     return "\n".join(f"- {line}" for line in lines)
 
 
-def build_args(name: str, **fields: tuple[Any, Any]) -> type[BaseModel]:
-    """Azúcar sobre `create_model` para que los `create()` se lean como esquemas."""
-    return create_model(name, **fields)  # type: ignore[call-overload,no-any-return]
+def build_args(model_name: str, /, **fields: tuple[Any, Any]) -> type[BaseModel]:
+    """
+    Azúcar sobre `create_model` para que los `create()` se lean como esquemas.
+
+    El nombre es posicional-only porque `name` es un campo legítimo de varias tools
+    (`define_element`, por ejemplo) y colisionaría con el parámetro.
+    """
+    return create_model(model_name, **fields)  # type: ignore[call-overload,no-any-return]
 
 
 def described(type_: Any, description: str, default: Any = ...) -> tuple[Any, Any]:

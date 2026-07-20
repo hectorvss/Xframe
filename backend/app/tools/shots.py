@@ -20,7 +20,7 @@ generar y permitirlo al planificar, porque el plano alucinado llegaría igual al
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
@@ -321,7 +321,7 @@ class ReorderShotsTool(SnapshotTool):
                 "reorder_shots needs every shot exactly once. "
                 + (f"Missing: {', '.join(missing)}. " if missing else "")
                 + (f"Not shots of this project: {', '.join(unknown)}. " if unknown else "")
-                + (f"Duplicated ids in your list. " if len(given) != len(shot_ids) else "")
+                + ("Duplicated ids in your list. " if len(given) != len(shot_ids) else "")
                 + f"The project has {len(existing)} shots; read_project lists them all."
             )
 

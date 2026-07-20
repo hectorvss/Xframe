@@ -91,8 +91,20 @@ class FakeConn:
     def __init__(self, db: FakeDB) -> None:
         self.db = db
         self._held: list[asyncio.Lock] = []
+        self._undo: list[Any] = []
 
-    async def release(self) -> None:
+    async def release(self, *, rollback: bool = False) -> None:
+        """
+        Cierra la transacción. `rollback=True` deshace los cambios en orden inverso.
+
+        El deshacer es por operación y no por instantánea de toda la base: en el test de
+        concurrencia hay dos transacciones vivas a la vez, y restaurar una instantánea
+        global borraría también el trabajo de la que sí tuvo éxito.
+        """
+        if rollback:
+            for undo in reversed(self._undo):
+                undo()
+        self._undo.clear()
         for lock in reversed(self._held):
             lock.release()
         self._held.clear()
@@ -118,14 +130,25 @@ class FakeConn:
         return "OK"
 
     async def _run(self, q: str, *args: Any) -> list[Any]:  # noqa: C901
+        # Cede el control en CADA consulta. Sin esto el fake no ejerce concurrencia
+        # alguna: `await` sobre una corrutina que nunca se suspende no devuelve el control
+        # al bucle de eventos, así que dos `enqueue` bajo `gather` se ejecutarían uno
+        # entero detrás del otro y el test de doble gasto pasaría aunque se quitara el
+        # cerrojo. Este `sleep(0)` es lo que hace que ese test signifique algo.
+        await asyncio.sleep(0)
         s = " ".join(q.split())
         db = self.db
 
         # --- cerrojo de perfil ---
         if "from public.profiles where id = $1 for update" in s:
+            # Re-entrante dentro de la misma transacción, como Postgres: una transacción
+            # que ya tiene el cerrojo de una fila puede volver a pedirlo. `enqueue()` lo
+            # hace (toma el cerrojo y luego llama a `reserve()`, que lo vuelve a pedir), y
+            # un `asyncio.Lock` sin esta comprobación se bloquearía contra sí mismo.
             lock = db.lock_for(args[0])
-            await lock.acquire()
-            self._held.append(lock)
+            if lock not in self._held:
+                await lock.acquire()
+                self._held.append(lock)
             return [{"id": args[0]}]
 
         if "select owner_id from public.projects where id = $1" in s:
@@ -140,44 +163,47 @@ class FakeConn:
             rows = [r for r in db.ledger if r["profile_id"] == args[0]]
             return [{"bal": sum(r["amount"] for r in rows), "n": len(rows)}]
 
+        # El `exists` va ANTES que la suma por job: ambas consultas contienen
+        # "credit_ledger where job_id = $1" y la primera coincidencia gana.
+        if "select exists" in s and "credit_ledger" in s:
+            kinds = set(args[1])
+            hit = any(r["job_id"] == args[0] and r["kind"] in kinds for r in db.ledger)
+            return [{"exists": hit}]
+
         if "from public.credit_ledger where profile_id = $1" in s:
             return [{"sum": sum(r["amount"] for r in db.ledger if r["profile_id"] == args[0])}]
 
         if "from public.credit_ledger where job_id = $1" in s:
             return [{"sum": sum(r["amount"] for r in db.ledger if r["job_id"] == args[0])}]
 
-        if "select exists" in s and "credit_ledger" in s:
-            kinds = set(args[1])
-            hit = any(r["job_id"] == args[0] and r["kind"] in kinds for r in db.ledger)
-            return [{"exists": hit}]
-
         if "insert into public.credit_ledger" in s:
             if "'grant'" in s:
-                db.ledger.append(
-                    {
-                        "profile_id": args[0],
-                        "project_id": None,
-                        "job_id": None,
-                        "kind": "grant",
-                        "amount": args[1],
-                        "balance_after": args[1],
-                    }
-                )
+                row = {
+                    "profile_id": args[0],
+                    "project_id": None,
+                    "job_id": None,
+                    "kind": "grant",
+                    "amount": args[1],
+                    "balance_after": args[1],
+                }
             else:
-                db.ledger.append(
-                    {
-                        "profile_id": args[0],
-                        "project_id": args[1],
-                        "job_id": args[2],
-                        "kind": args[3],
-                        "amount": args[4],
-                        "balance_after": args[5],
-                    }
-                )
+                row = {
+                    "profile_id": args[0],
+                    "project_id": args[1],
+                    "job_id": args[2],
+                    "kind": args[3],
+                    "amount": args[4],
+                    "balance_after": args[5],
+                }
+            db.ledger.append(row)
+            self._undo.append(lambda: db.ledger.remove(row))
             return []
 
         if "update public.profiles set credits" in s:
-            db.profiles[args[0]]["credits"] = args[1]
+            profile = db.profiles[args[0]]
+            previous = profile["credits"]
+            self._undo.append(lambda: profile.__setitem__("credits", previous))
+            profile["credits"] = args[1]
             return []
 
         # --- jobs ---
@@ -195,7 +221,10 @@ class FakeConn:
             ]
 
         if "set credits_charged = $2" in s:
-            db.jobs[args[0]]["credits_charged"] = args[1]
+            job = db.jobs[args[0]]
+            previous = job["credits_charged"]
+            self._undo.append(lambda: job.__setitem__("credits_charged", previous))
+            job["credits_charged"] = args[1]
             return []
 
         if "where idempotency_key = $1" in s:
@@ -219,10 +248,13 @@ class FakeConn:
                 "asset_id": None,
                 "attempts": 0,
             }
+            self._undo.append(lambda: db.jobs.pop(job_id, None))
             return [{"id": job_id}]
 
         if "update public.generation_jobs" in s and "set status = 'queued'" in s:
             job = db.jobs[args[0]]
+            previous = dict(job)
+            self._undo.append(lambda: job.update(previous))
             job.update(status="queued", credits_reserved=args[2], credits_charged=0, asset_id=None)
             return []
 
@@ -254,7 +286,13 @@ def install_fake_db(monkeypatch: pytest.MonkeyPatch, db: FakeDB) -> None:
         conn = FakeConn(db)
         try:
             yield conn
-        finally:
+        except BaseException:
+            # Atomicidad: si `enqueue` inserta el job y luego la reserva se queda sin
+            # saldo, el job NO debe sobrevivir. Sin esto el fake dejaría pasar un bug
+            # que en producción significa una generación gratis.
+            await conn.release(rollback=True)
+            raise
+        else:
             await conn.release()
 
     for module in (credits, queue, fanout):
@@ -704,4 +742,6 @@ def test_usd_to_credits_rounds_up_and_has_a_floor() -> None:
     assert credits.usd_to_credits(Decimal("1.00")) == 160
     assert credits.usd_to_credits(Decimal("0.001")) == 1
     assert credits.usd_to_credits(Decimal("0")) == 1
-    assert credits.usd_to_credits(Decimal("0.0301")) > credits.usd_to_credits(Decimal("0.03"))
+    # 0.03 USD * 100 * 1.6 = 4.8 créditos exactos. Hacia abajo serían 4, y esos 0.8
+    # perdidos por job son la fuga silenciosa que este redondeo evita.
+    assert credits.usd_to_credits(Decimal("0.03")) == 5

@@ -16,7 +16,6 @@ MiniMax factura por vídeo y no por segundo (informe 06 §2.1, cifras [S]), así
 
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Any
 
 from app.config import get_settings
@@ -64,7 +63,7 @@ class HailuoAdapter(HttpAdapter):
         payload: dict[str, Any] = {
             "model": _MODEL_NAME.get(req.model_id, req.model_id),
             "prompt": self._styled_prompt(req),
-            "duration": int(round(req.duration_s or 6)),
+            "duration": round(req.duration_s or 6),
         }
         if req.resolution:
             payload["resolution"] = req.resolution.upper()

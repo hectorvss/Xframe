@@ -20,8 +20,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
 from app.providers.base import GenerationAdapter, ModelSpec
 

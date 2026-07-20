@@ -88,6 +88,9 @@ python_classes = ["Test*", "Eval*"]
 python_functions = ["test_*", "eval_*"]
 
 testpaths = ["tests", "evals"]
+# `app` y `evals` se importan desde la raíz del backend sin necesidad de instalar el
+# paquete: los evals se corren sobre el árbol de trabajo, no sobre un wheel.
+pythonpath = ["."]
 asyncio_mode = "auto"
 addopts = "-p no:warnings -ra"
 
