@@ -811,22 +811,15 @@ async def _run_ffmpeg(args: list[str], *, timeout_s: float, command: str) -> flo
     loop = asyncio.get_running_loop()
     started = loop.time()
 
+    from app.runtime import run_process
+
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        returncode, _, stderr = await run_process(args, timeout_s=timeout_s)
     except FileNotFoundError as exc:
         raise AssemblyError(
             f"ffmpeg binary not found ({exc}). Set FFMPEG_PATH or install ffmpeg in the image."
         ) from exc
-
-    try:
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
     except TimeoutError:
-        proc.kill()
-        await proc.wait()
         raise AssemblyError(
             f"ffmpeg timed out after {timeout_s:.0f}s and was killed. The cut is probably too "
             f"long or too large for a single pass, or one of the source URLs stopped responding. "
@@ -836,8 +829,8 @@ async def _run_ffmpeg(args: list[str], *, timeout_s: float, command: str) -> flo
     elapsed = loop.time() - started
     text = stderr.decode("utf-8", "replace")
 
-    if proc.returncode != 0:
-        raise FFmpegFailedError(proc.returncode or -1, _tail(text), command)
+    if returncode != 0:
+        raise FFmpegFailedError(returncode, _tail(text), command)
 
     return elapsed
 

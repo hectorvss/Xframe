@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Sequence
 
 
 def configure_event_loop() -> None:
@@ -46,7 +47,59 @@ def supports_asyncio_subprocess() -> bool:
     """
     ¿Puede este bucle lanzar subprocesos?
 
-    `False` en Windows por lo anterior. Lo consulta el montaje para decidir entre
+    `False` en Windows por lo anterior. Lo consulta `run_process` para decidir entre
     `asyncio.create_subprocess_exec` y un `subprocess.run` en un hilo.
     """
     return sys.platform != "win32"
+
+
+async def run_process(
+    args: Sequence[str], *, timeout_s: float, capture_stdout: bool = False
+) -> tuple[int, bytes, bytes]:
+    """
+    Ejecuta un binario externo y devuelve `(returncode, stdout, stderr)`.
+
+    Existe porque en Windows el bucle que necesita `psycopg` —Selector— **no implementa
+    subprocesos**: `create_subprocess_exec` lanza `NotImplementedError` a secas, sin
+    mensaje, y el montaje muere sin decir por qué. Ahí se cae a `subprocess.run` dentro de
+    un hilo, que bloquea ese hilo pero no el bucle.
+
+    En Linux —producción, y el Docker de desarrollo— se usa el camino asíncrono normal,
+    que es el bueno: no consume un hilo por render.
+
+    El timeout mata el proceso en ambos caminos. Un `ffmpeg` colgado con el fichero de
+    salida a medias es peor que un error: el asset existiría, corrupto.
+    """
+    if supports_asyncio_subprocess():
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE if capture_stdout else asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise
+        return proc.returncode or 0, stdout or b"", stderr or b""
+
+    def _blocking() -> tuple[int, bytes, bytes]:
+        import subprocess
+
+        completed = subprocess.run(  # noqa: S603
+            list(args),
+            stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=timeout_s,
+        )
+        return completed.returncode, completed.stdout or b"", completed.stderr or b""
+
+    import subprocess as _sp
+
+    try:
+        return await asyncio.to_thread(_blocking)
+    except _sp.TimeoutExpired as exc:
+        # Se normaliza al mismo tipo que levanta el camino asíncrono para que los
+        # llamantes tengan un solo `except` y no dos según la plataforma.
+        raise TimeoutError(str(exc)) from exc
