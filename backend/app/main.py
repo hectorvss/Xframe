@@ -38,6 +38,7 @@ from app.auth import (
     verify_token,
 )
 from app.auth._redis import close_redis
+from app.config import get_settings
 from app.db import close_pool, init_pool
 from app.jobs.webhooks import router as webhooks_router
 from app.runtime import configure_event_loop
@@ -101,7 +102,7 @@ app.include_router(webhooks_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=get_settings().cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

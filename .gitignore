@@ -9,3 +9,7 @@ dist/
 # Variables de entorno locales (nunca al repo)
 .env
 .env.local
+
+# Logs de servidores en desarrollo
+backend/uvicorn.log
+vite.log

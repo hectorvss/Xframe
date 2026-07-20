@@ -50,6 +50,27 @@ class Settings(BaseSettings):
     render: se le pasa la URL al enviar el job y él la descarga cuando le toca.
     """
 
+    cors_origins: str = Field(default="", alias="CORS_ORIGINS")
+    """
+    Orígenes permitidos, separados por comas. Vacío = los de desarrollo.
+
+    Estaba fijado a `localhost:5173` en el código, y eso se rompe solo: Vite salta al
+    5174, 5175… en cuanto el puerto está ocupado, y entonces el navegador bloquea toda
+    llamada al agente con un `TypeError: Failed to fetch` que no menciona CORS por
+    ninguna parte. En producción esto tiene que apuntar al dominio real.
+    """
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        if self.cors_origins.strip():
+            return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        # Desarrollo: el rango que Vite usa al ir buscando puerto libre.
+        return [
+            f"http://{host}:{port}"
+            for host in ("localhost", "127.0.0.1")
+            for port in range(5173, 5183)
+        ]
+
     # --- límites de petición ---
     chat_rate_limit: int = Field(default=20, alias="CHAT_RATE_LIMIT")
     """Turnos por ventana y usuario en `/chat`. 0 desactiva el limitador."""
