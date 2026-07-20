@@ -14,7 +14,8 @@ retoma la conversación donde estaba.
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
@@ -111,7 +112,7 @@ class ConversationRunner:
                 if event is not None:
                     await self._publish(conversation_id, event)
                     yield event
-        except Exception:  # noqa: BLE001
+        except Exception:
             # El detalle va al log, nunca al evento. `main.py` sanea la salida de /chat,
             # pero el reenganche por SSE sirve lo que hay en el bus tal cual: si el
             # `str(e)` se publica, un error de asyncpg —con fragmentos de consulta y
@@ -221,7 +222,7 @@ class ConversationRunner:
             row = await db.fetchrow(
                 "select mode from public.conversations where id = $1::uuid", conversation_id
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("stored_mode_lookup_failed", extra={"conversation": conversation_id})
             return None
         return row["mode"] if row else None

@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Sequence
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
@@ -500,8 +500,8 @@ def parse_summary(text: str) -> str:
 
 
 __all__ = [
-    "CONVERSATION_WINDOW_SIZE",
     "CONTEXT_MESSAGE_FLAG",
+    "CONVERSATION_WINDOW_SIZE",
     "CompactionReport",
     "ConversationCompactor",
     "OperationalState",

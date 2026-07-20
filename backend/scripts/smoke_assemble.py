@@ -113,8 +113,8 @@ async def main() -> int:
                 )
 
         print("\nmontando…")
-        from app.tools.base import ToolContext
         from app.taxonomy.builder import build_tools_for_mode
+        from app.tools.base import ToolContext
 
         ctx = ToolContext(
             project_id=project_id,
@@ -155,7 +155,7 @@ async def main() -> int:
         )
         print("artefactos:", [(a["kind"], a["version"]) for a in arts] or "ninguno")
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         import traceback
 
         traceback.print_exc()

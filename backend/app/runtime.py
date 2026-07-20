@@ -87,7 +87,7 @@ async def run_process(
     def _blocking() -> tuple[int, bytes, bytes]:
         import subprocess
 
-        completed = subprocess.run(  # noqa: S603
+        completed = subprocess.run(
             list(args),
             stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
             stderr=subprocess.PIPE,

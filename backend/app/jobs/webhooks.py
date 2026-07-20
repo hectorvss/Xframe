@@ -37,8 +37,9 @@ import hashlib
 import hmac
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -471,7 +472,7 @@ class WebhookReceiver:
                 f"xframe:webhook:{provider}:{delivery}", "1", nx=True, ex=DEDUP_TTL_S
             )
             return not bool(stored)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("webhook_dedup_unavailable", extra={"provider": provider})
             return False
 
@@ -554,7 +555,7 @@ def _redis_client() -> Any | None:
         import redis.asyncio as aioredis
 
         return aioredis.from_url(get_settings().redis_url, decode_responses=True)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 

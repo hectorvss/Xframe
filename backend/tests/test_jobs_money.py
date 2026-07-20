@@ -24,12 +24,13 @@ import hashlib
 import hmac
 import os
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -38,8 +39,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test/test")
 
-from app.jobs import credits, webhooks, worker  # noqa: E402
-from app.providers.base import (  # noqa: E402
+from app.jobs import credits, webhooks, worker
+from app.providers.base import (
     GenerationAdapter,
     GenerationRequest,
     ModelSpec,
@@ -74,7 +75,7 @@ def _guards_owner(sql: str) -> bool:
 
 
 def now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # --------------------------------------------------------------------------- #
@@ -133,7 +134,7 @@ class FakeConn:
         await self._run(q, *args)
         return "OK"
 
-    async def _run(self, q: str, *args: Any) -> list[Any]:  # noqa: C901
+    async def _run(self, q: str, *args: Any) -> list[Any]:
         await asyncio.sleep(0)
         s = " ".join(q.split())
         db = self.db

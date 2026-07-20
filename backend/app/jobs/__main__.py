@@ -15,11 +15,11 @@ import asyncio
 import logging
 import signal
 
-from app.runtime import configure_event_loop
 from app.config import get_settings
 from app.db import close_pool, init_pool
 from app.jobs.worker import JobWorker, sweep_stale
 from app.providers.registry import get_registry
+from app.runtime import configure_event_loop
 
 # Antes de que nadie cree un bucle. Ver app/runtime.py.
 configure_event_loop()
@@ -40,7 +40,7 @@ async def _sweep_loop(stop: asyncio.Event) -> None:
         try:
             if swept := await sweep_stale():
                 logger.info("stale_jobs_swept", extra={"count": swept})
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("sweep_failed")
         try:
             await asyncio.wait_for(stop.wait(), timeout=SWEEP_INTERVAL_S)

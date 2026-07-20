@@ -30,11 +30,12 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -43,7 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test/test")
 
-from app.jobs import resume  # noqa: E402
+from app.jobs import resume
 
 
 def run(coro: Any) -> Any:
@@ -184,7 +185,7 @@ class FakeConn:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def install(monkeypatch: pytest.MonkeyPatch, db: FakeDB) -> None:

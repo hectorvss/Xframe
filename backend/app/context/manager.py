@@ -31,9 +31,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Iterable, Sequence
+from typing import Any
 from uuid import uuid4
 
 from langchain_core.messages import BaseMessage, HumanMessage

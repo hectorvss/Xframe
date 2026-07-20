@@ -30,10 +30,11 @@ import asyncio
 import os
 import shlex
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal
 
 import structlog
 

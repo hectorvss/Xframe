@@ -31,13 +31,11 @@ os.environ.setdefault("DATABASE_URL", "postgresql://test/test")
 os.environ.setdefault("SUPABASE_URL", "https://proyecto.supabase.co")
 os.environ.setdefault("STORAGE_BUCKET", "assets")
 
-from app import storage  # noqa: E402
-from app.config import get_settings  # noqa: E402
-from app.providers.base import (  # noqa: E402
+from app import storage
+from app.config import get_settings
+from app.providers.base import (
     ElementRef,
     GenerationRequest,
-    ProviderJobRef,
-    ProviderJobStatus,
 )
 
 

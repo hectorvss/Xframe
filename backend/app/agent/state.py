@@ -15,14 +15,12 @@ Un checkpoint con vídeos dentro es un checkpoint que no se puede leer.
 
 from __future__ import annotations
 
-import operator
+from collections.abc import Sequence
 from enum import StrEnum
-from typing import Annotated, Any, Literal, Sequence, Union
-from uuid import UUID
+from typing import Annotated, Any, Literal
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from pydantic import BaseModel, ConfigDict, Field
-
 
 # --------------------------------------------------------------------------- #
 # Nodos y modos                                                                #
@@ -233,7 +231,7 @@ class XframeState(BaseModel):
     usuario no ve aparecer ningún plano.
     """
 
-    def model_copy_for_branch(self, tool_call_id: str) -> "XframeState":
+    def model_copy_for_branch(self, tool_call_id: str) -> XframeState:
         return self.model_copy(update={"root_tool_call_id": tool_call_id})
 
 

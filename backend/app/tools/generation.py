@@ -19,7 +19,8 @@ Bloquear el turno esperando a un render de 90 segundos convierte el chat en un s
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, Field
 
@@ -138,7 +139,7 @@ class _GenerationTool(SnapshotTool):
         *,
         adapter: GenerationAdapter,
         shot_id: str | None = None,
-    ) -> "EnqueueResult":
+    ) -> EnqueueResult:
         """
         Delegación a la cola. Import perezoso: el módulo de jobs se carga cuando de
         verdad se va a generar, no al construir el toolset.
@@ -241,7 +242,7 @@ class GenerateImageTool(_GenerationTool):
         )
 
     @classmethod
-    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> "GenerateImageTool | None":
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> GenerateImageTool | None:
         models = snap.models_for("image")
         if not models:
             return None
@@ -384,7 +385,7 @@ class GenerateVideoTool(_GenerationTool):
         )
 
     @classmethod
-    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> "GenerateVideoTool | None":
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> GenerateVideoTool | None:
         models = snap.models_for("video")
         if not models:
             return None
@@ -639,7 +640,7 @@ class GenerateShotBatchTool(_GenerationTool):
     @classmethod
     async def create(
         cls, ctx: ToolContext, snap: TaxonomySnapshot
-    ) -> "GenerateShotBatchTool | None":
+    ) -> GenerateShotBatchTool | None:
         models = snap.models_for("video")
         if not models:
             return None
@@ -739,7 +740,7 @@ class GenerateLipsyncTool(_GenerationTool):
     @classmethod
     async def create(
         cls, ctx: ToolContext, snap: TaxonomySnapshot
-    ) -> "GenerateLipsyncTool | None":
+    ) -> GenerateLipsyncTool | None:
         models = snap.models_for("lipsync")
         if not models:
             return None
@@ -864,7 +865,6 @@ class AssembleVideoTool(_GenerationTool):
         from app.artifacts.types import AssetRefBlock, CutArtifactContent
         from app.assembly import AssemblySpec, TimelineClip, assemble_cut
         from app.assembly.ffmpeg import default_output_path
-
         from app.storage import sign_reference
 
         # ffmpeg descarga cada entrada por HTTP, así que aquí también hace falta firmar:
@@ -935,7 +935,7 @@ class AssembleVideoTool(_GenerationTool):
 # --------------------------------------------------------------------------- #
 
 
-async def _persist_cut(project_id: str, result: "AssemblyResult", *, title: str) -> str:
+async def _persist_cut(project_id: str, result: AssemblyResult, *, title: str) -> str:
     """
     Sube el mp4 montado al storage y escribe su fila en `assets`. Devuelve el id.
 

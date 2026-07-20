@@ -28,11 +28,10 @@ from uuid import uuid4
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from app.runtime import configure_event_loop
 from app.agent.runner import ConversationRunner
 from app.config import get_settings
 from app.db import close_pool, execute, fetch, fetchrow, init_pool
-
+from app.runtime import configure_event_loop
 
 # Antes de que nadie cree un bucle. Ver app/runtime.py.
 configure_event_loop()
@@ -47,11 +46,11 @@ class NullBus:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict]] = []
 
-    async def publish(self, conversation_id, event_type, data):  # noqa: ANN001
+    async def publish(self, conversation_id, event_type, data):
         self.events.append((event_type, data))
         return "0-0"
 
-    async def seed(self, conversation_id):  # noqa: ANN001
+    async def seed(self, conversation_id):
         return "0-0"
 
 
@@ -149,7 +148,7 @@ async def main() -> int:
             if not state:
                 failures.append("el checkpointer no persistió el estado")
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         import traceback
 
         traceback.print_exc()

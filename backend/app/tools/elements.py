@@ -122,7 +122,7 @@ class DefineElementTool(SnapshotTool):
         )
 
     @classmethod
-    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> "DefineElementTool":
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> DefineElementTool:
         known = snap.element_names()
         roster = (
             "Elements already defined: " + ", ".join(known) + ". Reuse the exact name to "

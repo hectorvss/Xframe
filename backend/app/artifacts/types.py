@@ -129,10 +129,10 @@ class AssetBlock(BaseModel):
 
 
 StoredBlock = Annotated[
-    Union[TextBlock, ShotRefBlock, AssetRefBlock, LoadingBlock], Field(discriminator="type")
+    TextBlock | ShotRefBlock | AssetRefBlock | LoadingBlock, Field(discriminator="type")
 ]
 EnrichedBlock = Annotated[
-    Union[TextBlock, ShotBlock, AssetBlock, LoadingBlock, ErrorBlock],
+    TextBlock | ShotBlock | AssetBlock | LoadingBlock | ErrorBlock,
     Field(discriminator="type"),
 ]
 

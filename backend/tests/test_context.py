@@ -53,7 +53,6 @@ from app.context.types import (
 )
 from app.memory.store import MemoryEntry, MemoryKind, format_memory
 
-
 # --------------------------------------------------------------------------- #
 # Factorías                                                                    #
 # --------------------------------------------------------------------------- #

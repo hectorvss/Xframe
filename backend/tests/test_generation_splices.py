@@ -30,7 +30,6 @@ from __future__ import annotations
 import inspect
 import os
 import sys
-from contextlib import asynccontextmanager
 from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
@@ -42,20 +41,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test/test")
 
-from app.assembly.ffmpeg import AssemblyResult, AssemblySpec, TargetFormat, assemble_cut  # noqa: E402
-from app.jobs.queue import EnqueueResult  # noqa: E402
-from app.jobs.queue import enqueue as real_enqueue  # noqa: E402
-from app.providers.base import (  # noqa: E402
+from app.assembly.ffmpeg import (
+    AssemblyResult,
+    AssemblySpec,
+    TargetFormat,
+    assemble_cut,
+)
+from app.jobs.queue import EnqueueResult
+from app.jobs.queue import enqueue as real_enqueue
+from app.providers.base import (
     GenerationAdapter,
     GenerationRequest,
     ModelSpec,
     ProviderJobRef,
     ProviderJobStatus,
 )
-from app.taxonomy.builder import build_tools_for_mode  # noqa: E402
-from app.tools.errors import InsufficientCreditsError  # noqa: E402
-
-from tests.test_tools import FakeDB, make_ctx, make_model, make_snapshot  # noqa: E402
+from app.taxonomy.builder import build_tools_for_mode
+from app.tools.errors import InsufficientCreditsError
+from tests.test_tools import FakeDB, make_ctx, make_model, make_snapshot
 
 pytestmark = pytest.mark.asyncio
 
@@ -365,7 +368,6 @@ async def test_el_montaje_usa_assemble_cut_y_persiste_el_corte(
     """
     import app.artifacts.manager as manager_mod
     import app.assembly.ffmpeg as ffmpeg_mod
-    import app.tools.generation as generation_mod
 
     rows = [
         {"shot_id": SHOT_A, "position": 1, "title": "Plano 1",

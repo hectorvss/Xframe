@@ -15,8 +15,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
+from app import llm
 from app.agent.prompts.base import build_system_prompt
 from app.agent.state import (
     MAX_GENERATIONS_PER_TURN,
@@ -27,7 +28,6 @@ from app.agent.state import (
     count_tool_calls,
 )
 from app.config import get_settings
-from app import llm
 from app.tools.base import ToolContext, ToolFactory
 
 logger = logging.getLogger(__name__)
@@ -160,7 +160,7 @@ class RootToolsNode:
         try:
             ctx = await RootNode()._build_tool_context(state)
             tools = {t.name: t for t in await ToolFactory.build_for_mode(ctx)}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.exception("tool_setup_failed", extra={"tool": tool_call["name"]})
             return self._message(
                 tool_call,
@@ -256,7 +256,7 @@ class MemoryCollectorNode:
                     "memory_onboarding_ran",
                     extra={"project": state.project_id, "result": type(result).__name__},
                 )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("memory_onboarding_failed", extra={"project": state.project_id})
 
         return await Collector(state.project_id).arun(state, config)

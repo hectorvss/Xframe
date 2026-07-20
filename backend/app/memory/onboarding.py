@@ -140,7 +140,7 @@ class MemoryOnboarding:
 
         try:
             memory = await self._generate(prompt, config)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("memory_onboarding_failed", extra={"project_id": self._project_id})
             return OnboardingResult(ran=False, reason="generation_failed")
 

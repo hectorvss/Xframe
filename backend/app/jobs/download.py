@@ -163,7 +163,7 @@ def allowed_hosts_from_registry(factories: Iterable[Callable[[], object]] | None
             domains = getattr(factory, "output_domains", None)
             if domains is None:
                 domains = getattr(factory(), "output_domains", ())
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("output_domains_unavailable", extra={"factory": repr(factory)})
             continue
         hosts.update(d.lower().lstrip(".") for d in domains or () if d)
@@ -257,7 +257,7 @@ class OutputDownloader:
 
         try:
             data = base64.b64decode(payload, validate=True) if is_base64 else unquote_to_bytes(payload)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise DownloadRejected(f"data: URI ilegible: {exc}") from exc
 
         if len(data) > self._max_bytes:
@@ -380,7 +380,7 @@ class OutputDownloader:
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(None, self._resolver, host)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise DownloadRejected(f"no se pudo resolver '{host}': {exc}") from exc
 
     def _assert_peer_allowed(self, response: httpx.Response, url: str) -> None:
@@ -404,7 +404,7 @@ class OutputDownloader:
             if peer is None:
                 sock = stream.get_extra_info("socket")
                 peer = sock.getpeername() if sock is not None else None
-        except Exception:  # noqa: BLE001
+        except Exception:
             return
         if not peer:
             return

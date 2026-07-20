@@ -11,8 +11,9 @@ por `project_id` explícitamente**. Es la contrapartida de no apoyarse en RLS.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 
 import asyncpg
 

@@ -122,7 +122,7 @@ async def main() -> int:
         balance_after = await credits.balance(str(owner["id"]))
         print(f"saldo tras : {balance_after} (delta {balance_after - balance_before})")
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         import traceback
 
         traceback.print_exc()

@@ -350,7 +350,7 @@ class JobWorker:
                 self._finalize(job, "cancelled", error="worker detenido")
             )
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("job_crashed", extra={"job_id": str(job.id)})
             await self._finalize(job, "failed", error=f"error interno del worker: {exc}")
 
@@ -503,7 +503,7 @@ class JobWorker:
             if cancel_ref is not None:
                 try:
                     await adapter.cancel(cancel_ref)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     # Que la cancelación falle no cambia lo que le debemos al usuario.
                     logger.warning("job_cancel_failed", extra={"job_id": str(job.id)})
             else:
@@ -560,7 +560,7 @@ class JobWorker:
                 return ref
             except ProviderRejectedError:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 normalized = adapter.normalize_error(exc) if not isinstance(exc, ProviderError) else exc
                 if isinstance(normalized, ProviderRejectedError):
                     raise normalized
@@ -606,7 +606,7 @@ class JobWorker:
             try:
                 status = await adapter.poll(ref)
                 consecutive_errors = 0
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 consecutive_errors += 1
                 if consecutive_errors >= MAX_ATTEMPTS:
                     raise adapter.normalize_error(exc)
@@ -647,7 +647,7 @@ class JobWorker:
         url = status.output_urls[0]
         try:
             data, content_type = await self._downloader.fetch(url, adapter.download_headers(url))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("job_download_failed", extra={"job_id": str(job.id)})
             await self._finalize(job, "failed", error=f"no se pudo descargar la salida: {exc}")
             return

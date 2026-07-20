@@ -20,13 +20,19 @@ generar y permitirlo al planificar, porque el plano alucinado llegaría igual al
 from __future__ import annotations
 
 import json
-from uuid import uuid4
 from typing import Any, ClassVar
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
 from app import db
-from app.taxonomy.builder import SnapshotTool, build_args, described, enumerate_for_prompt, literal_of
+from app.taxonomy.builder import (
+    SnapshotTool,
+    build_args,
+    described,
+    enumerate_for_prompt,
+    literal_of,
+)
 from app.taxonomy.repo import TaxonomySnapshot, invalidate_cache
 from app.tools.base import ToolContext
 from app.tools.errors import UnknownEntityError, XframeToolRetryableError
@@ -215,7 +221,7 @@ class CreateShotTool(_ShotToolBase):
         )
 
     @classmethod
-    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> "CreateShotTool":
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> CreateShotTool:
         tool = cls(
             args_schema=build_args("CreateShotArgs", **cls._spec_fields(snap, required_prompt=True)),
             description=(
@@ -264,7 +270,7 @@ class UpdateShotTool(_ShotToolBase):
         return f"Shot #{row['position']} '{row['title']}' updated. Spec: {spec}.", ui
 
     @classmethod
-    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> "UpdateShotTool":
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> UpdateShotTool:
         fields = cls._spec_fields(snap, required_prompt=False)
         fields["shot_id"] = described(
             str, "Exact id of the shot, as returned by read_project or create_shot."

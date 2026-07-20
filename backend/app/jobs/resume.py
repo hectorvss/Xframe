@@ -145,7 +145,7 @@ async def mark_awaiting(
             return
         async with transaction() as tx:
             await tx.execute(sql, to_uuid(conversation_id), to_uuid(project_id))
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("resume_mark_failed", extra={"conversation_id": str(conversation_id)})
 
 
@@ -171,7 +171,7 @@ async def note_user_turn(conversation_id: str | UUID) -> None:
                 """,
                 to_uuid(conversation_id),
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("resume_counter_reset_failed", extra={"conversation_id": str(conversation_id)})
 
 
@@ -370,7 +370,7 @@ async def on_job_settled(conversation_id: str | UUID | None) -> bool:
             return False
         await _run_turn(plan)
         return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("resume_failed", extra={"conversation_id": str(conversation_id)})
         await _release(conversation_id, "failed")
         return False
@@ -420,7 +420,7 @@ async def _release(conversation_id: str | UUID, status: str) -> None:
                 to_uuid(conversation_id),
                 status,
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("resume_release_failed", extra={"conversation_id": str(conversation_id)})
 
 

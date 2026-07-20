@@ -30,7 +30,8 @@ Cuatro consecuencias, y las cuatro son el motivo de que esto exista:
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal, Sequence
+from collections.abc import Sequence
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model
 
@@ -84,7 +85,7 @@ class SnapshotTool(XframeTool):
 
     _snap: TaxonomySnapshot | None = None
 
-    def bind_snapshot(self, snap: TaxonomySnapshot) -> "SnapshotTool":
+    def bind_snapshot(self, snap: TaxonomySnapshot) -> SnapshotTool:
         self._snap = snap
         return self
 
@@ -159,7 +160,7 @@ class SnapshotTool(XframeTool):
     @classmethod
     async def create(
         cls, ctx: ToolContext, snap: TaxonomySnapshot
-    ) -> "SnapshotTool | None":
+    ) -> SnapshotTool | None:
         """
         Factoría. Devolver `None` significa "esta tool no se monta en este contexto".
 
@@ -287,7 +288,7 @@ async def build_tools_for_mode(
             continue
         try:
             tool = await cls.create(ctx, snap)
-        except Exception:  # noqa: BLE001
+        except Exception:
             # Una tool que no se puede construir no debe tumbar el turno entero: se
             # cae ella sola y el agente sigue con las demás.
             logger.exception("tool_build_failed", extra={"tool": cls.__name__})

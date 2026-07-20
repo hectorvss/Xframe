@@ -30,8 +30,9 @@ Modelo barato (`config.model_fast`): la tarea es clasificar y reformular, no raz
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import date
-from typing import Any, Sequence
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field, ValidationError
@@ -131,7 +132,7 @@ class MemoryCollectorNode:
         """
         try:
             await self._collect(state, config)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("memory_collector_failed", extra={"project_id": self._project_id})
         return PartialXframeState()
 
@@ -207,7 +208,7 @@ class MemoryCollectorNode:
                 content = await self._apply(args)
             except ValueError as e:
                 content = str(e)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.exception("memory_tool_failed", extra={"tool": name})
                 content = f"The memory tool failed internally ({type(e).__name__}). Do not retry."
             out.append(ToolMessage(content=content, tool_call_id=call.get("id", "")))

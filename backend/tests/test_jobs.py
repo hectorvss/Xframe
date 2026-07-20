@@ -26,11 +26,12 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -42,16 +43,16 @@ import os
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test/test")
 
-from app.agent.state import JobResult  # noqa: E402
-from app.jobs import credits, fanout, queue  # noqa: E402
-from app.providers.base import (  # noqa: E402
+from app.agent.state import JobResult
+from app.jobs import credits, fanout, queue
+from app.providers.base import (
     GenerationAdapter,
     GenerationRequest,
     ModelSpec,
     ProviderJobRef,
     ProviderJobStatus,
 )
-from app.tools.errors import InsufficientCreditsError, ProviderError  # noqa: E402
+from app.tools.errors import InsufficientCreditsError, ProviderError
 
 
 def run(coro: Any) -> Any:
@@ -129,7 +130,7 @@ class FakeConn:
         await self._run(q, *args)
         return "OK"
 
-    async def _run(self, q: str, *args: Any) -> list[Any]:  # noqa: C901
+    async def _run(self, q: str, *args: Any) -> list[Any]:
         # Cede el control en CADA consulta. Sin esto el fake no ejerce concurrencia
         # alguna: `await` sobre una corrutina que nunca se suspende no devuelve el control
         # al bucle de eventos, así que dos `enqueue` bajo `gather` se ejecutarían uno

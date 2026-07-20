@@ -29,7 +29,7 @@ import pytest
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test/test")
 
-from app.jobs.download import (  # noqa: E402
+from app.jobs.download import (
     DownloadRejected,
     OutputDownloader,
     OutputTooLarge,
