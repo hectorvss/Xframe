@@ -75,6 +75,7 @@ const emptyState = () => ({
   messages: [],
   workspaces: [],
   api_keys: [],
+  credit_usage: [],
 });
 
 /* ------------------------------------------------------------------ *
@@ -380,6 +381,15 @@ export const db = {
     return !data?.length;
   },
 
+  /** Consumo de créditos de los últimos N días. */
+  async listCreditUsage(ownerId, days = 30) {
+    const rows = await DRIVER.select("credit_usage", { owner_id: ownerId });
+    const since = Date.now() - days * 86400000;
+    return rows
+      .filter((row) => new Date(row.created_at).getTime() >= since)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  },
+
   /* --- espacio de trabajo --- */
 
   async getWorkspace(ownerId) {
@@ -512,15 +522,57 @@ export const db = {
   },
 
   /**
+   * Saldo real de créditos: la SUMA del libro mayor.
+   *
+   * `credit_ledger` es append-only y el saldo es su suma, nunca un contador que
+   * se actualiza. `profiles.credits` ha quedado como espejo derivado — lo
+   * mantiene el backend por comodidad de lectura, pero puede ir por detrás de
+   * una reserva en curso, y cobrar dos veces por creer un contador desfasado
+   * es exactamente lo que el libro existe para evitar.
+   *
+   * Sin Supabase no hay libro: se devuelve el contador local, que ahí sí es la
+   * única verdad que hay.
+   */
+  async getCreditBalance(profile) {
+    if (!hasSupabase) return profile?.credits ?? 0;
+
+    const { data, error } = await supabase
+      .from("credit_ledger")
+      .select("amount")
+      .eq("profile_id", profile.id);
+
+    // Con el libro vacío o ilegible se cae al espejo: es preferible enseñar un
+    // saldo aproximado a enseñar cero y asustar al usuario.
+    if (error || !data?.length) return profile?.credits ?? 0;
+    return data.reduce((total, row) => total + (row.amount ?? 0), 0);
+  },
+
+  /**
    * Descuenta créditos. En Supabase usa la función atómica spend_credits(),
    * de modo que dos generaciones simultáneas no puedan dejar saldo negativo.
    * Devuelve null si no hay saldo suficiente.
    */
-  async spendCredits(profile, amount) {
+  async spendCredits(profile, amount, { projectId = null, kind = "build" } = {}) {
     if (hasSupabase) {
-      const { data, error } = await supabase.rpc("spend_credits", { amount });
+      const { data, error } = await supabase.rpc("spend_credits", {
+        amount,
+        project_id: projectId,
+        kind,
+      });
       if (error) return null;
       return { ...profile, credits: data };
+    }
+    // En local guardamos también el histórico, para que la pantalla de uso
+    // funcione sin backend.
+    if (profile.credits >= amount) {
+      await DRIVER.insert("credit_usage", {
+        id: uid(),
+        owner_id: profile.id,
+        project_id: projectId,
+        kind,
+        amount,
+        created_at: nowISO(),
+      });
     }
     if (profile.credits < amount) return null;
     return DRIVER.update("profiles", profile.id, {

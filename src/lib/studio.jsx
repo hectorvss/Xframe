@@ -48,11 +48,14 @@ export function StudioProvider({ children }) {
       setReady(true);
       return null;
     }
-    setProfile(loadedProfile);
-    const [list, ws] = await Promise.all([
+    const [list, ws, balance] = await Promise.all([
       db.listProjects(loadedProfile.id),
       db.getWorkspace(loadedProfile.id).catch(() => null),
+      db.getCreditBalance(loadedProfile).catch(() => loadedProfile.credits),
     ]);
+    // El saldo que ve el usuario sale del libro mayor, no de profiles.credits,
+    // que es un espejo derivado y puede ir por detrás de una reserva en curso.
+    setProfile({ ...loadedProfile, credits: balance });
     setProjects(list);
     setWorkspace(ws);
     setReady(true);
@@ -149,9 +152,22 @@ export function StudioProvider({ children }) {
     return () => media.removeEventListener("change", applyTheme);
   }, [preferences.theme, preferences.language, preferences.reducedMotion]);
 
+  /**
+   * Relee el saldo del libro mayor. Lo llama el editor cuando el agente
+   * termina un turno: quien cobra es el backend, así que el frontend no puede
+   * deducir el saldo nuevo, solo volver a preguntarlo.
+   */
+  const refreshCredits = useCallback(async () => {
+    if (!profile) return null;
+    const credits = await db.getCreditBalance(profile).catch(() => null);
+    if (credits === null) return null;
+    setProfile((current) => (current ? { ...current, credits } : current));
+    return credits;
+  }, [profile]);
+
   const spendCredits = useCallback(
-    async (amount) => {
-      const next = await db.spendCredits(profile, amount);
+    async (amount, options) => {
+      const next = await db.spendCredits(profile, amount, options);
       if (!next) return false;
       setProfile(next);
       return true;
@@ -215,6 +231,7 @@ export function StudioProvider({ children }) {
       setPreferences,
       updateProfile,
       spendCredits,
+      refreshCredits,
       createProject,
       updateProject,
       deleteProject,
@@ -236,6 +253,7 @@ export function StudioProvider({ children }) {
       setPreferences,
       updateProfile,
       spendCredits,
+      refreshCredits,
       createProject,
       updateProject,
       deleteProject,

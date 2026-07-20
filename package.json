@@ -23,6 +23,7 @@
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "recharts": "^2.15.4",
     "tailwind-merge": "^3.6.0",
     "tailwindcss-animate": "^1.0.7",
     "vite": "latest"

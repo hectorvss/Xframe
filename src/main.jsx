@@ -55,6 +55,7 @@ import {
   Cloud,
   ThumbsUp,
   ThumbsDown,
+  BarChart3,
   Bookmark,
   Play,
   Image as ImageIcon,
@@ -114,6 +115,22 @@ import { cn } from "@/lib/utils";
 import { uploadAsset } from "@/lib/supabase";
 import { db } from "@/lib/db";
 import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  ChartLegend,
+  ChartLegendContent,
+} from "@/components/ui/chart";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -124,9 +141,15 @@ import {
   StudioProvider,
   useStudio,
   useProjectData,
-  creditCost,
   titleFromPrompt,
 } from "@/lib/studio";
+import {
+  sendMessage,
+  conversationIdFor,
+  labelForTool,
+  AGENT_DOWN_MESSAGE,
+} from "@/lib/agent";
+import { buildUIContext } from "@/lib/uiContext";
 import "./index.css";
 import "./styles.css";
 
@@ -2952,24 +2975,15 @@ const chatContext = {
   },
 };
 
-const assetTypeFor = (text) => {
-  const t = text.toLowerCase();
-  if (/person|astronaut|comandante|ingenier|protagon|actor|persona/.test(t))
-    return "Personajes";
-  if (/fondo|estaci|interior|exterior|pasillo|sala|localiza|escenario/.test(t))
-    return "Fondos";
-  if (/voz|audio|m[úu]sica|score|sonido/.test(t)) return "Audio";
-  if (/plano|toma|secuencia|v[íi]deo/.test(t)) return "Vídeos";
-  return "Imágenes";
-};
-
 function EditorChat({
   width,
   onResize,
   tab,
   log,
   onSend,
+  onStop,
   busy,
+  stream = null,
   elements = [],
   onUpload,
 }) {
@@ -3014,9 +3028,11 @@ function EditorChat({
     setMentionAt(open ? at : null);
   };
 
+  // El autoscroll también depende del texto en curso: el turno del agente llega
+  // token a token, así que sin esto el mensaje crece por debajo del recorte.
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [log.length, busy]);
+  }, [log.length, busy, stream?.text, stream?.assets?.length]);
 
   const send = (text) => {
     const value = (text ?? draft).trim();
@@ -3063,7 +3079,42 @@ function EditorChat({
           ),
         )}
 
-        {busy && (
+        {/* Turno en curso. Va fuera de `log` a propósito: solo se persiste el
+            mensaje final, así que mientras dura el stream vive aparte y al
+            terminar el Editor lo vuelca a `log` de una pieza. */}
+        {stream && (
+          <div className="space-y-2">
+            {stream.text && <p className="leading-relaxed">{stream.text}</p>}
+
+            {stream.assets?.length > 0 && (
+              <div className="grid grid-cols-3 gap-1.5">
+                {stream.assets.map((a) => (
+                  <div
+                    key={a.id}
+                    className="aspect-video overflow-hidden rounded-md border bg-muted bg-cover bg-center"
+                    style={{ backgroundImage: a.url ? `url(${a.url})` : undefined }}
+                    title={a.name}
+                  >
+                    {!a.url && (
+                      <div className="flex h-full items-center justify-center">
+                        <RefreshCw className="size-3.5 animate-spin text-muted-foreground" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {stream.tool && (
+              <p className="flex items-center gap-2 text-muted-foreground">
+                <RefreshCw className="size-3.5 animate-spin" />
+                {stream.tool}
+              </p>
+            )}
+          </div>
+        )}
+
+        {busy && !stream?.text && !stream?.tool && (
           <p className="flex items-center gap-2 text-muted-foreground">
             <RefreshCw className="size-3.5 animate-spin" />
             Generando…
@@ -3159,14 +3210,23 @@ function EditorChat({
                 <EditorIconBtn>
                   <Mic />
                 </EditorIconBtn>
-                <UIButton
-                  size="icon"
-                  className="size-8"
-                  disabled={!draft.trim() || busy}
-                  onClick={() => send()}
-                >
-                  <ArrowUp />
-                </UIButton>
+                {/* Mientras el agente responde, el mismo botón corta el turno.
+                    Un stream que solo se puede esperar es una trampa: los
+                    turnos duran minutos porque hay renders de por medio. */}
+                {busy && onStop ? (
+                  <UIButton size="icon" className="size-8" onClick={onStop}>
+                    <X />
+                  </UIButton>
+                ) : (
+                  <UIButton
+                    size="icon"
+                    className="size-8"
+                    disabled={!draft.trim() || busy}
+                    onClick={() => send()}
+                  >
+                    <ArrowUp />
+                  </UIButton>
+                )}
               </>
             }
           />
@@ -4904,19 +4964,6 @@ function EditorTeamChat() {
   );
 }
 
-// Banco de imágenes con el que se "resuelven" las generaciones simuladas.
-const generatedPool = [
-  "/assets/prompt-frame.webp",
-  "/assets/continuum.jpg",
-  "/assets/inspo.jpg",
-  "/assets/vesper.webp",
-  "/assets/maison.webp",
-  "/assets/ecommerce.webp",
-  "/assets/scene-2.webp",
-  "/assets/scene-3.webp",
-  "/assets/pulse.webp",
-  "/assets/lovable-slides.webp",
-];
 /** Saldo de créditos en la cabecera del editor. */
 function CreditsBadge() {
   const { profile } = useStudio();
@@ -5001,7 +5048,7 @@ function PublishDialog({ project, onClose }) {
 }
 
 function Editor({ projectId }) {
-  const { projects, profile, genSettings, spendCredits, updateProject, ready } =
+  const { projects, profile, genSettings, refreshCredits, updateProject, ready } =
     useStudio();
   const project = projects.find((p) => p.id === projectId);
   const data = useProjectData(projectId);
@@ -5021,6 +5068,14 @@ function Editor({ projectId }) {
   const [noCredits, setNoCredits] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const ranInitial = useRef(false);
+  // Turno del agente en curso: el texto que va llegando y los assets que aún no
+  // tienen render. Vive fuera de `messages` porque solo se persiste el final.
+  const [stream, setStream] = useState(null);
+  const turn = useRef(null);
+
+  // Cambiar de proyecto o salir del editor corta el stream, no el trabajo: los
+  // jobs encolados son del worker y deben terminar aunque nadie mire.
+  useEffect(() => () => turn.current?.cancel(), [projectId]);
 
   const elements = assets.filter((a) => a.role);
 
@@ -5049,74 +5104,156 @@ function Editor({ projectId }) {
     return rows.length;
   };
 
-  /** Marca los assets del lote como listos, escalonados como una cola real. */
-  const resolveBatch = (rows) =>
-    rows.forEach((row, i) =>
-      setTimeout(
-        () =>
-          patchAsset(row.id, {
-            status: "ready",
-            meta: "2048 × 1152",
-            url: generatedPool[(Date.now() + i) % generatedPool.length],
-          }),
-        900 + i * 700,
-      ),
-    );
+  /**
+   * Un turno del agente.
+   *
+   * Todo lo que el usuario escribe pasa por aquí, sea la pestaña que sea: quien
+   * decide si esto es una generación, una edición del brief o una respuesta es
+   * el agente, no el frontend. Antes había un `if (tab === "assets")` que
+   * bifurcaba entre generar y contestar con texto fijo; esa decisión ahora vive
+   * en el grafo, y el tab solo viaja como contexto (`open_tab`).
+   *
+   * El texto llega token a token en `message_delta` y se acumula en `stream`.
+   * Solo al terminar se vuelca a `messages` con `addMessage`, porque lo que se
+   * persiste es el mensaje final, no cada fragmento.
+   */
+  const runTurn = async (text) => {
+    if (!profile) return;
 
-  const generateAssets = async (prompt) => {
-    const cost = creditCost(genSettings);
-    if (!(await spendCredits(cost))) {
-      setBusy(false);
-      setNoCredits(true);
-      addMessage(
-        "agent",
-        `Te quedan ${profile.credits} créditos y esta generación cuesta ${cost}. Mejora el plan para seguir generando.`,
-      );
-      return;
-    }
+    turn.current?.cancel();
+    setBusy(true);
+    setStream({ text: "", tool: null, assets: [] });
 
-    const count = genSettings.count || 1;
-    const type = assetTypeFor(prompt);
-    const rows = await addAssets(
-      Array.from({ length: Math.max(3, count) }, (_, i) => ({
-        name: `${prompt.slice(0, 38)}${prompt.length > 38 ? "…" : ""} · v${i + 1}`,
-        type,
-        meta: "Generando",
-        status: "generating",
-      })),
-    );
-    resolveBatch(rows);
+    let full = "";
 
-    // La primera generación del proyecto también le pone portada.
-    if (project && !project.cover_url) {
-      setTimeout(
-        () => updateProject(projectId, { cover_url: generatedPool[0] }),
-        1000,
-      );
-    }
+    // Ids que ya existen como fila. Se lleva aparte y no se consulta `assets`
+    // porque dentro del turno ese array es la foto de cuando arrancó: un asset
+    // insertado hace dos eventos todavía no está ahí, y buscarlo allí acabaría
+    // insertándolo por segunda vez al llegar su `asset_ready`.
+    const known = new Set(assets.map((a) => String(a.id)));
 
-    setTimeout(() => {
-      setBusy(false);
-      addMessage(
-        "agent",
-        `Listo: ${rows.length} variantes en All assets (−${cost} créditos). Pulsa la que te guste para asignarla como element — son los que tendré en cuenta al montar el vídeo.`,
-      );
-    }, 900 + rows.length * 700);
+    const uiContext = buildUIContext({
+      project,
+      tab,
+      brief: data.brief,
+      canvas: data.canvas,
+      assets,
+      // La selección de assets todavía vive dentro de EditorAssets; hasta que
+      // se levante aquí, el agente recibe la lista vacía.
+      selectedIds: [],
+      genSettings,
+      credits: profile.credits,
+    });
+
+    turn.current = sendMessage({
+      conversationId: conversationIdFor(projectId),
+      projectId,
+      userId: profile.id,
+      message: text,
+      uiContext,
+
+      onMessageDelta: (e) => {
+        full += e.content ?? "";
+        setStream((s) => (s ? { ...s, text: full } : s));
+      },
+
+      onToolStart: (e) => {
+        const [first] = e.tools ?? [];
+        setStream((s) => (s ? { ...s, tool: first ? labelForTool(first) : null } : s));
+      },
+
+      onToolResult: () => {
+        setStream((s) => (s ? { ...s, tool: null } : s));
+      },
+
+      // Una generación encolada devuelve una referencia en `generating`, no un
+      // render. Se inserta ya como asset para que aparezca en All assets con su
+      // placeholder; el worker es quien lo completará.
+      onJobStatus: async (e) => {
+        if (e.status !== "queued" || !e.asset) return;
+        const [row] = await addAssets([
+          {
+            ...e.asset,
+            status: "generating",
+            meta: e.asset.meta ?? "Generando",
+          },
+        ]);
+        if (!row) return;
+        known.add(String(row.id));
+        setStream((s) => (s ? { ...s, assets: [...s.assets, row] } : s));
+      },
+
+      // El render ha aterrizado. Si el asset ya existía como placeholder se
+      // parchea; si no (el worker lo creó entero), se añade.
+      onAssetReady: async (e) => {
+        const incoming = e.asset ?? e;
+        if (known.has(String(incoming.id))) {
+          patchAsset(incoming.id, { ...incoming, status: "ready" });
+        } else {
+          known.add(String(incoming.id));
+          await addAssets([{ ...incoming, status: "ready" }]);
+        }
+
+        setStream((s) =>
+          s
+            ? {
+                ...s,
+                assets: s.assets.map((a) =>
+                  a.id === incoming.id ? { ...a, ...incoming } : a,
+                ),
+              }
+            : s,
+        );
+
+        // La primera imagen del proyecto también le pone portada.
+        if (project && !project.cover_url && incoming.url) {
+          updateProject(projectId, { cover_url: incoming.url });
+        }
+      },
+
+      // Un interrupt del grafo es una pregunta al usuario. Se muestra como un
+      // mensaje más: responder es simplemente escribir el siguiente turno.
+      onInterruptRequest: (e) => {
+        full += (full ? "\n\n" : "") + (e.question ?? e.message ?? "");
+        setStream((s) => (s ? { ...s, text: full, tool: null } : s));
+      },
+
+      onError: (e) => {
+        full += (full ? "\n\n" : "") + (e.message ?? AGENT_DOWN_MESSAGE);
+        setStream((s) => (s ? { ...s, text: full, tool: null } : s));
+      },
+
+      onDone: () => {
+        setBusy(false);
+        setStream(null);
+        turn.current = null;
+        if (full.trim()) addMessage("agent", full.trim());
+        // Quien cobra es el backend contra el libro mayor, así que el saldo
+        // nuevo no se deduce: se vuelve a preguntar.
+        refreshCredits();
+      },
+    });
+
+    await turn.current.promise;
   };
 
-  const regenerateAsset = async (id) => {
-    const cost = creditCost(genSettings);
-    if (!(await spendCredits(cost))) return setNoCredits(true);
+  /** Corta el turno en curso. Los jobs ya encolados siguen: son del worker. */
+  const stopTurn = () => {
+    turn.current?.cancel();
+    turn.current = null;
+    setBusy(false);
+    setStream(null);
+  };
+
+  /**
+   * Regenerar es otro turno del agente, no una operación aparte: así respeta
+   * los mismos ajustes, el mismo contexto y el mismo libro de créditos.
+   */
+  const regenerateAsset = (id) => {
+    const asset = assets.find((a) => a.id === id);
+    if (!asset || busy) return;
     patchAsset(id, { status: "generating", url: null });
-    setTimeout(
-      () =>
-        patchAsset(id, {
-          status: "ready",
-          meta: "2048 × 1152",
-          url: generatedPool[Date.now() % generatedPool.length],
-        }),
-      1200,
-    );
+    runTurn(`Regenera el asset "${asset.name}" manteniendo su intención original.`);
   };
 
   const duplicateAsset = (id) => {
@@ -5128,23 +5265,7 @@ function Editor({ projectId }) {
 
   const handleSend = (text) => {
     addMessage("user", text);
-    setBusy(true);
-
-    if (tab === "assets") return generateAssets(text);
-
-    const replies = {
-      preview:
-        "Ajusto el montaje sobre los planos actuales. Aquí solo toco corte, orden y duración — para crear material nuevo, ve a All assets.",
-      brief:
-        "Te propongo una reescritura de esa sección del brief. Puedes editarla directamente en los bloques de la derecha.",
-      canvas:
-        "Reorganizo los nodos del canvas y agrupo los que pertenecen a la misma escena.",
-      elements: `Tienes ${assets.filter((a) => a.role).length} elements asignados. Genera más assets en All assets para ampliarlos.`,
-    };
-    setTimeout(() => {
-      setBusy(false);
-      addMessage("agent", replies[tab] ?? replies.preview);
-    }, 700);
+    runTurn(text);
   };
 
   // ?run=1 → el prompt con el que se creó el proyecto se ejecuta al entrar.
@@ -5155,11 +5276,8 @@ function Editor({ projectId }) {
     history.replaceState({}, "", `/projects/${projectId}`);
     setTab("assets");
     if (project.prompt) {
-      // Directo a generateAssets: setTab aún no se ha aplicado en este render,
-      // así que handleSend leería el tab anterior y contestaría en vez de generar.
       addMessage("user", project.prompt);
-      setBusy(true);
-      generateAssets(project.prompt);
+      runTurn(project.prompt);
     }
   }, [loaded, project]);
 
@@ -5257,7 +5375,9 @@ function Editor({ projectId }) {
             tab={tab}
             log={messages}
             busy={busy}
+            stream={stream}
             onSend={handleSend}
+            onStop={stopTurn}
             elements={elements}
             onUpload={(files) => uploadFiles(files)}
           />
@@ -5354,7 +5474,7 @@ function SettingsSide({ page, width, onResize }) {
   return (
     <aside
       style={{ width }}
-      className="fixed inset-y-0 left-0 flex flex-col overflow-y-auto border-r bg-muted/30 p-3"
+      className="fixed inset-y-0 left-0 flex flex-col overflow-y-auto overflow-x-hidden border-r bg-muted/30 p-3"
     >
       <ResizeHandle onResize={onResize} />
       <button
@@ -5383,7 +5503,7 @@ function SettingsSide({ page, width, onResize }) {
               key={id}
               onClick={() => go(`/settings/${id}`)}
               className={cn(
-                "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors [&>svg]:size-4 [&>svg]:text-muted-foreground",
+                "flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground",
                 page === id
                   ? "bg-accent font-medium text-accent-foreground"
                   : "text-foreground/80 hover:bg-accent",
@@ -5401,7 +5521,7 @@ function SettingsSide({ page, width, onResize }) {
                 <Badge
                   variant="secondary"
                   className={cn(
-                    "rounded px-1.5 py-0 text-[10px] font-normal",
+                    "shrink-0 rounded px-1.5 py-0 text-[10px] font-normal",
                     badge === "Enterprise" &&
                       "bg-purple-100 text-purple-700 hover:bg-purple-100",
                   )}
@@ -5410,7 +5530,7 @@ function SettingsSide({ page, width, onResize }) {
                 </Badge>
               )}
               {external && (
-                <ExternalLink className="size-3.5 text-muted-foreground" />
+                <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
               )}
             </button>
             );
@@ -6957,9 +7077,88 @@ function ConfirmDangerDialog({ title, description, word, onClose, onConfirm }) {
   );
 }
 
-function BillingPlanCard({ p }) {
+/**
+ * Escalones de créditos de cada plan. El precio base es el del escalón de 100;
+ * a partir de 1.200 se aplica un descuento por volumen creciente.
+ */
+const creditTiers = [100, 200, 400, 800, 1200, 2000, 3000, 4000, 5000, 10000];
+const volumeDiscount = (credits) => {
+  if (credits < 1200) return 0;
+  if (credits < 2000) return 0.02;
+  if (credits < 3000) return 0.04;
+  if (credits < 4000) return 0.06;
+  if (credits < 5000) return 0.08;
+  return 0.1;
+};
+
+const tierPrice = (basePrice, credits, annual) => {
+  const units = credits / 100;
+  const gross = basePrice * units;
+  const price = Math.round(gross * (1 - volumeDiscount(credits)));
+  // El plan anual regala dos meses: se cobran 10 de 12.
+  return annual ? Math.round((price * 10) / 12) : price;
+};
+
+/** Desplegable de créditos con su precio y el ahorro por volumen. */
+function CreditTierSelect({ basePrice, annual, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative mt-4">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex h-9 w-full items-center justify-between rounded-md border bg-background px-3 text-sm"
+      >
+        {value.toLocaleString("es-ES")} créditos mensuales
+        <ChevronsUpDown className="size-3.5 text-muted-foreground" />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto rounded-lg border bg-background p-1 shadow-2xl">
+            {creditTiers.map((credits) => {
+              const discount = volumeDiscount(credits);
+              return (
+                <button
+                  key={credits}
+                  onClick={() => {
+                    onChange(credits);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent",
+                    credits === value && "bg-violet-50 text-violet-700",
+                  )}
+                >
+                  <span className="flex-1 text-left">
+                    {credits.toLocaleString("es-ES")} créditos
+                  </span>
+                  {discount > 0 && (
+                    <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">
+                      Ahorra {Math.round(discount * 100)}%
+                    </span>
+                  )}
+                  <span className="shrink-0 tabular-nums">
+                    €{tierPrice(basePrice, credits, annual).toLocaleString("es-ES")}
+                    <span className="text-muted-foreground">/mes</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function BillingPlanCard({ p, annual = false }) {
   const isPro = p.name === "Pro";
   const isEnterprise = p.name === "Enterprise";
+  const basePrice = isPro ? 25 : 50;
+  const [credits, setCredits] = useState(100);
+  const price = tierPrice(basePrice, credits, annual);
+
   return (
     <Card className="flex flex-col p-6">
       <h3 className="text-xl font-semibold">{p.name}</h3>
@@ -6971,20 +7170,23 @@ function BillingPlanCard({ p }) {
             isEnterprise ? "text-xl text-muted-foreground" : "text-4xl",
           )}
         >
-          {p.price}
+          {isEnterprise ? p.price : `€${price.toLocaleString("es-ES")}`}
         </span>
       </div>
       <p className="mt-1 min-h-[20px] text-sm text-muted-foreground">
-        {isEnterprise ? "" : p.cadence}
+        {isEnterprise ? "" : `al mes IVA incl.${annual ? " · facturado anual" : ""}`}
       </p>
       {!isEnterprise && (
-        <button className="mt-4 flex h-9 w-full items-center justify-between rounded-md border bg-background px-3 text-sm">
-          100 créditos mensuales
-          <ChevronDown className="size-3.5 text-muted-foreground" />
-        </button>
+        <CreditTierSelect
+          basePrice={basePrice}
+          annual={annual}
+          value={credits}
+          onChange={setCredits}
+        />
       )}
       <UIButton
         variant={isPro ? "default" : "outline"}
+        onClick={() => go("/es/pricing")}
         className={cn(
           "mt-4 w-full",
           isPro && "bg-violet-600 text-white hover:bg-violet-700",
@@ -7039,8 +7241,226 @@ const eduCards = [
     "Más información",
   ],
 ];
+const usageRanges = [
+  [7, "Últimos 7 días"],
+  [30, "Últimos 30 días"],
+  [90, "Últimos 90 días"],
+];
+const usageKinds = [
+  ["all", "Todos los créditos"],
+  ["build", "Generación"],
+  ["run", "Reproceso"],
+];
+
+/** Serie diaria de consumo, con los días vacíos rellenos a cero. */
+function buildUsageSeries(usage, days) {
+  const buckets = new Map();
+  for (let i = days - 1; i >= 0; i--) {
+    const day = new Date(Date.now() - i * 86400000);
+    const key = day.toISOString().slice(0, 10);
+    buckets.set(key, {
+      day: key,
+      label: day.toLocaleDateString("es-ES", { day: "numeric", month: "short" }),
+      build: 0,
+      run: 0,
+    });
+  }
+  for (const row of usage) {
+    const key = row.created_at.slice(0, 10);
+    const bucket = buckets.get(key);
+    if (bucket) bucket[row.kind] = (bucket[row.kind] ?? 0) + row.amount;
+  }
+  return [...buckets.values()];
+}
+
+const usageChartConfig = {
+  build: { label: "Generación", color: "hsl(258 90% 60%)" },
+  run: { label: "Reproceso", color: "hsl(217 91% 60%)" },
+};
+
+/** Detalle de consumo de créditos: serie diaria y desglose por proyecto. */
+function UsageDetails({ onBack }) {
+  const { profile, projects } = useStudio();
+  const [usage, setUsage] = useState([]);
+  const [days, setDays] = useState(30);
+  const [kind, setKind] = useState("all");
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (!profile) return;
+    db.listCreditUsage(profile.id, days).then(setUsage).catch(() => setUsage([]));
+  }, [profile?.id, days]);
+
+  const filtered = usage.filter((row) => kind === "all" || row.kind === kind);
+  const series = buildUsageSeries(filtered, days);
+  const total = filtered.reduce((sum, row) => sum + row.amount, 0);
+
+  const byProject = projects
+    .map((project) => ({
+      project,
+      total: filtered
+        .filter((row) => row.project_id === project.id)
+        .reduce((sum, row) => sum + row.amount, 0),
+    }))
+    .filter(({ total, project }) =>
+      total > 0 && project.title.toLowerCase().includes(query.toLowerCase()),
+    )
+    .sort((a, b) => b.total - a.total);
+
+  return (
+    <div className="mx-auto max-w-5xl px-8 py-10">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <UIButton variant="outline" size="icon" onClick={onBack}>
+            <ArrowLeft />
+          </UIButton>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">
+              Detalle de uso
+            </h1>
+            <p className="mt-1 text-muted-foreground">
+              Desglose del consumo de créditos por día y por proyecto.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <Card className="mt-6 p-6">
+        <p className="text-2xl font-bold tracking-tight">
+          {total.toLocaleString("es-ES")} créditos
+        </p>
+        <p className="text-sm text-muted-foreground">
+          en los {days} últimos días
+        </p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <SettingSelect
+            value={kind}
+            options={usageKinds}
+            onChange={setKind}
+            className="w-[190px]"
+          />
+          <div className="flex-1" />
+          <SettingSelect
+            value={String(days)}
+            options={usageRanges.map(([d, l]) => [String(d), l])}
+            onChange={(value) => setDays(Number(value))}
+            className="w-[180px]"
+          />
+        </div>
+
+        {total === 0 ? (
+          <div className="mt-6 rounded-lg border border-dashed p-10 text-center">
+            <BarChart3 className="mx-auto size-7 text-muted-foreground" />
+            <p className="mt-3 font-medium">Todavía no has gastado créditos</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Genera material y aquí verás el consumo día a día.
+            </p>
+          </div>
+        ) : (
+          <ChartContainer config={usageChartConfig} className="mt-6 h-[260px] w-full">
+            <BarChart data={series} barCategoryGap={2}>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" />
+              <XAxis
+                dataKey="label"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                minTickGap={24}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                width={28}
+                allowDecimals={false}
+              />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <ChartLegend content={<ChartLegendContent />} />
+              <Bar dataKey="build" stackId="c" fill="var(--color-build)" radius={[0, 0, 0, 0]} />
+              <Bar dataKey="run" stackId="c" fill="var(--color-run)" radius={[2, 2, 0, 0]} />
+            </BarChart>
+          </ChartContainer>
+        )}
+      </Card>
+
+      <Card className="mt-5 p-0">
+        <div className="border-b p-4">
+          <div className="relative w-72">
+            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar proyectos…"
+              className="h-9 w-full rounded-md border bg-background pl-8 pr-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between px-5 py-2.5 text-xs font-medium text-muted-foreground">
+          <span>Proyecto</span>
+          <span>Consumo</span>
+        </div>
+        {byProject.length === 0 ? (
+          <p className="px-5 pb-5 text-sm text-muted-foreground">
+            Ningún proyecto ha consumido créditos en este periodo.
+          </p>
+        ) : (
+          <div className="divide-y border-t">
+            {byProject.map(({ project, total: amount }) => (
+              <button
+                key={project.id}
+                onClick={() => go(`/projects/${project.id}`)}
+                className="flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-accent"
+              >
+                <div
+                  className="size-10 shrink-0 rounded bg-muted bg-cover bg-center"
+                  style={{
+                    backgroundImage: project.cover_url
+                      ? `url(${project.cover_url})`
+                      : undefined,
+                  }}
+                />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  {project.title}
+                </span>
+                <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
+                  {amount.toLocaleString("es-ES")} créditos
+                </span>
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 function BillingSettings() {
   const [billing, setBilling] = useState("monthly");
+  const [showUsage, setShowUsage] = useState(false);
+  const { profile, projects } = useStudio();
+  const [usage, setUsage] = useState([]);
+
+  useEffect(() => {
+    if (!profile) return;
+    db.listCreditUsage(profile.id, 30).then(setUsage).catch(() => setUsage([]));
+  }, [profile?.id]);
+
+  if (showUsage) return <UsageDetails onBack={() => setShowUsage(false)} />;
+
+  const spent = usage.reduce((sum, row) => sum + row.amount, 0);
+  const series = buildUsageSeries(usage, 30);
+  const topProjects = projects
+    .map((project) => ({
+      project,
+      total: usage
+        .filter((row) => row.project_id === project.id)
+        .reduce((sum, row) => sum + row.amount, 0),
+    }))
+    .filter(({ total }) => total > 0)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 3);
+
   return (
     <div className="mx-auto max-w-6xl px-8 py-10">
       <div className="flex items-start justify-between gap-4">
@@ -7049,7 +7469,7 @@ function BillingSettings() {
             Planes y uso de créditos
           </h1>
           <p className="mt-1 text-muted-foreground">
-            Manage your subscription plan and credit balance.
+            Gestiona tu plan y el saldo de créditos.
           </p>
         </div>
         <UIButton variant="ghost" className="shrink-0 text-muted-foreground">
@@ -7103,28 +7523,57 @@ function BillingSettings() {
             <span className="font-semibold">Usage</span>
             <ChevronRight className="size-4 text-muted-foreground" />
           </div>
-          <svg viewBox="0 0 320 60" className="mt-4 h-14 w-full text-muted-foreground/50">
-            <path
-              d="M0 45 L 210 45 L 240 12 L 265 45 L 320 45"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            />
-          </svg>
+          <ChartContainer config={usageChartConfig} className="mt-4 h-24 w-full">
+            <AreaChart data={series} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
+              <defs>
+                <linearGradient id="usageFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--color-build)" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="var(--color-build)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Area
+                type="monotone"
+                dataKey="build"
+                stroke="var(--color-build)"
+                strokeWidth={1.5}
+                fill="url(#usageFill)"
+              />
+            </AreaChart>
+          </ChartContainer>
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>Jun 20</span>
-            <span>Jul 19</span>
+            <span>{series[0]?.label}</span>
+            <span>{series[series.length - 1]?.label}</span>
           </div>
           <div className="mt-4 flex items-center justify-between border-t pt-4 text-sm">
-            <span className="text-muted-foreground">Last 30 days</span>
-            <span className="font-medium">2.40 credits</span>
+            <span className="text-muted-foreground">Últimos 30 días</span>
+            <span className="font-medium">
+              {spent.toLocaleString("es-ES")} créditos
+            </span>
           </div>
-          <div className="mt-2 flex items-center justify-between text-sm">
-            <span>Tráiler — Proyecto Neón</span>
-            <span className="text-muted-foreground">2.40 credits</span>
-          </div>
-          <UIButton variant="outline" className="mt-4">
-            More usage details
+          {topProjects.length === 0 ? (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Aún no hay consumo en este periodo.
+            </p>
+          ) : (
+            topProjects.map(({ project, total }) => (
+              <div
+                key={project.id}
+                className="mt-2 flex items-center justify-between gap-3 text-sm"
+              >
+                <span className="min-w-0 truncate">{project.title}</span>
+                <span className="shrink-0 text-muted-foreground tabular-nums">
+                  {total.toLocaleString("es-ES")} créditos
+                </span>
+              </div>
+            ))
+          )}
+          <UIButton
+            variant="outline"
+            className="mt-4"
+            onClick={() => setShowUsage(true)}
+          >
+            Más detalles de uso
           </UIButton>
         </Card>
       </div>
@@ -7156,7 +7605,7 @@ function BillingSettings() {
       </div>
       <div className="mt-6 grid gap-5 lg:grid-cols-3">
         {plans.slice(1).map((p) => (
-          <BillingPlanCard key={p.name} p={p} />
+          <BillingPlanCard key={p.name} p={p} annual={billing === "annual"} />
         ))}
       </div>
 

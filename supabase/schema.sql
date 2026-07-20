@@ -353,3 +353,25 @@ revoke all on function public.my_sessions() from public, anon;
 grant execute on function public.my_sessions() to authenticated;
 revoke all on function public.revoke_session(uuid) from public, anon;
 grant execute on function public.revoke_session(uuid) to authenticated;
+
+-- ------------------------------------------------- consumo de créditos
+-- Histórico que alimenta la pantalla de uso. El descuento y el registro van
+-- juntos en spend_credits(): sin saldo no se apunta nada.
+
+create table if not exists public.credit_usage (
+  id         uuid primary key default gen_random_uuid(),
+  owner_id   uuid        not null references public.profiles on delete cascade,
+  project_id uuid        references public.projects on delete set null,
+  kind       text        not null default 'build' check (kind in ('build', 'run')),
+  amount     integer     not null check (amount > 0),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists credit_usage_owner_idx
+  on public.credit_usage (owner_id, created_at desc);
+
+alter table public.credit_usage enable row level security;
+create policy "consumo propio" on public.credit_usage
+  for all to authenticated
+  using ((select auth.uid()) = owner_id)
+  with check ((select auth.uid()) = owner_id);
