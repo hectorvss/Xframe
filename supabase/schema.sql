@@ -256,3 +256,100 @@ create policy "assets borrado propio" on storage.objects
 revoke all on function public.handle_new_user() from public, anon, authenticated;
 revoke all on function public.spend_credits(integer) from public, anon;
 grant execute on function public.spend_credits(integer) to authenticated;
+
+-- --------------------------------------------------- espacio de trabajo
+-- Uno personal por usuario; la tabla ya admite equipos (owner + miembros).
+
+create table if not exists public.workspaces (
+  id            uuid primary key default gen_random_uuid(),
+  owner_id      uuid        not null references public.profiles on delete cascade,
+  name          text        not null default 'Mi espacio'
+                  check (char_length(name) between 1 and 50),
+  slug          text,
+  avatar_color  text        not null default 'pink',
+  member_credit_limit integer
+                  check (member_credit_limit is null or member_credit_limit >= 0),
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+create unique index if not exists workspaces_slug_key
+  on public.workspaces (lower(slug)) where slug is not null;
+
+alter table public.workspaces enable row level security;
+create policy "espacios propios" on public.workspaces
+  for all to authenticated
+  using ((select auth.uid()) = owner_id)
+  with check ((select auth.uid()) = owner_id);
+
+-- Cada perfil nuevo estrena su espacio personal.
+create or replace function public.handle_new_profile()
+returns trigger language plpgsql security definer set search_path = public
+as $fn$
+begin
+  insert into public.workspaces (owner_id, name, slug)
+  values (
+    new.id,
+    coalesce(nullif(new.name, ''), 'Mi') || '''s Xframe',
+    regexp_replace(lower(split_part(new.email, '@', 1)), '[^a-z0-9]', '', 'g')
+  )
+  on conflict do nothing;
+  return new;
+end;
+$fn$;
+
+revoke all on function public.handle_new_profile() from public, anon, authenticated;
+
+create trigger on_profile_created
+  after insert on public.profiles
+  for each row execute function public.handle_new_profile();
+
+-- ------------------------------------------------------ claves de API
+-- Solo se guarda el hash: el token completo se muestra una única vez.
+
+create table if not exists public.api_keys (
+  id           uuid primary key default gen_random_uuid(),
+  owner_id     uuid        not null references public.profiles on delete cascade,
+  name         text        not null default 'Clave sin nombre',
+  prefix       text        not null,
+  token_hash   text        not null unique,
+  last_used_at timestamptz,
+  created_at   timestamptz not null default now(),
+  revoked_at   timestamptz
+);
+
+alter table public.api_keys enable row level security;
+create policy "claves propias" on public.api_keys
+  for all to authenticated
+  using ((select auth.uid()) = owner_id)
+  with check ((select auth.uid()) = owner_id);
+
+-- ---------------------------------------------------------- sesiones
+-- auth.sessions no admite RLS, así que se expone acotada al propio usuario.
+
+create or replace function public.my_sessions()
+returns table (
+  id uuid, created_at timestamptz, refreshed_at timestamp,
+  user_agent text, ip text
+)
+language sql security definer set search_path = auth, public
+as $fn$
+  select s.id, s.created_at, s.refreshed_at, s.user_agent, host(s.ip)
+    from auth.sessions s
+   where s.user_id = auth.uid()
+   order by coalesce(s.refreshed_at, s.created_at::timestamp) desc;
+$fn$;
+
+create or replace function public.revoke_session(session_id uuid)
+returns boolean language plpgsql security definer set search_path = auth, public
+as $fn$
+begin
+  delete from auth.sessions where id = session_id and user_id = auth.uid();
+  return found;
+end;
+$fn$;
+
+revoke all on function public.my_sessions() from public, anon;
+grant execute on function public.my_sessions() to authenticated;
+revoke all on function public.revoke_session(uuid) from public, anon;
+grant execute on function public.revoke_session(uuid) to authenticated;
