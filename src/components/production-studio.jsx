@@ -305,61 +305,32 @@ function SaveState({ saving, error }) {
   );
 }
 
-function PanelToggles({
-  leftVisible,
-  rightVisible,
-  onLeftChange,
-  onRightChange,
-}) {
+function SidebarToggle({ side, expanded, onChange, label }) {
+  const Icon =
+    side === "left"
+      ? expanded
+        ? PanelLeftClose
+        : PanelLeftOpen
+      : expanded
+        ? PanelRightClose
+        : PanelRightOpen;
+  const action = expanded ? "Ocultar" : "Mostrar";
+
   return (
-    <div className="flex items-center rounded-md border bg-background p-0.5">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            onClick={() => onLeftChange(!leftVisible)}
-            aria-label={
-              leftVisible
-                ? "Ocultar panel izquierdo"
-                : "Mostrar panel izquierdo"
-            }
-          >
-            {leftVisible ? (
-              <PanelLeftClose className="size-3.5" />
-            ) : (
-              <PanelLeftOpen className="size-3.5" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {leftVisible ? "Ocultar navegador" : "Mostrar navegador"}
-        </TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            onClick={() => onRightChange(!rightVisible)}
-            aria-label={
-              rightVisible ? "Ocultar inspector" : "Mostrar inspector"
-            }
-          >
-            {rightVisible ? (
-              <PanelRightClose className="size-3.5" />
-            ) : (
-              <PanelRightOpen className="size-3.5" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {rightVisible ? "Ocultar inspector" : "Mostrar inspector"}
-        </TooltipContent>
-      </Tooltip>
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 shrink-0"
+          onClick={() => onChange(!expanded)}
+          aria-label={`${action} ${label}`}
+        >
+          <Icon className="size-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{`${action} ${label}`}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -1170,12 +1141,6 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
               {(totalDuration / 1000).toFixed(1)} s
             </Badge>
             <SaveState saving={saving} error={error} />
-            <PanelToggles
-              leftVisible={scenePanelVisible}
-              rightVisible={scriptInspectorVisible}
-              onLeftChange={setScenePanelVisible}
-              onRightChange={setScriptInspectorVisible}
-            />
             <Button variant="outline" size="sm" onClick={() => reload()}>
               <RefreshCw
                 className={cn("size-3.5", loading && "animate-spin")}
@@ -1187,104 +1152,126 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns: `${scenePanelVisible ? "220px " : ""}minmax(420px, 1fr)${scriptInspectorVisible ? " 310px" : ""}`,
+            gridTemplateColumns: `${scenePanelVisible ? "220px" : "44px"} minmax(420px, 1fr) ${scriptInspectorVisible ? "310px" : "44px"}`,
           }}
         >
-          {scenePanelVisible && (
-            <aside className="flex min-h-0 flex-col border-r bg-muted/10">
-              <div className="flex items-center justify-between px-3 py-3">
+          <aside className="flex min-h-0 flex-col border-r bg-muted/10">
+            <div
+              className={cn(
+                "flex h-14 shrink-0 items-center border-b",
+                scenePanelVisible ? "justify-between px-3" : "justify-center",
+              )}
+            >
+              {scenePanelVisible && (
                 <div>
                   <p className="text-xs font-semibold">ESCENAS</p>
                   <p className="text-[10px] text-muted-foreground">
                     Orden narrativo
                   </p>
                 </div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="outline" size="icon" onClick={addScene}>
-                      <Plus className="size-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Nueva escena</TooltipContent>
-                </Tooltip>
-              </div>
-              <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
-                <div className="space-y-1">
-                  {data.scenes.map((item, index) => {
-                    const count = data.lines.filter(
-                      (line) => String(line.scene_id) === String(item.id),
-                    ).length;
-                    const referenceCount = data.assetLinks.filter(
-                      (link) =>
-                        String(link.scene_id) === String(item.id) &&
-                        !link.script_line_id,
-                    ).length;
-                    return (
-                      <Button
-                        key={item.id}
-                        variant="ghost"
-                        className={cn(
-                          "h-auto w-full justify-start gap-2.5 px-2.5 py-2.5 text-left",
-                          String(scene?.id) === String(item.id) && "bg-accent",
-                        )}
-                        onClick={() => setSceneId(item.id)}
-                      >
-                        <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-semibold">
-                          {index + 1}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-xs font-medium">
-                            {item.title || `Escena ${index + 1}`}
-                          </span>
-                          <span className="mt-0.5 block truncate text-[10px] font-normal text-muted-foreground">
-                            {count} líneas ·{" "}
-                            {item.target_duration_ms
-                              ? `${item.target_duration_ms / 1000}s`
-                              : "sin duración"}
-                            {referenceCount ? ` · ${referenceCount} refs` : ""}
-                          </span>
-                        </span>
-                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <div className="flex items-center gap-1">
+                {scenePanelVisible && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="outline" size="icon" onClick={addScene}>
+                        <Plus className="size-4" />
                       </Button>
-                    );
-                  })}
+                    </TooltipTrigger>
+                    <TooltipContent>Nueva escena</TooltipContent>
+                  </Tooltip>
+                )}
+                <SidebarToggle
+                  side="left"
+                  expanded={scenePanelVisible}
+                  onChange={setScenePanelVisible}
+                  label="escenas"
+                />
+              </div>
+            </div>
+            {scenePanelVisible && (
+              <>
+                <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+                  <div className="space-y-1">
+                    {data.scenes.map((item, index) => {
+                      const count = data.lines.filter(
+                        (line) => String(line.scene_id) === String(item.id),
+                      ).length;
+                      const referenceCount = data.assetLinks.filter(
+                        (link) =>
+                          String(link.scene_id) === String(item.id) &&
+                          !link.script_line_id,
+                      ).length;
+                      return (
+                        <Button
+                          key={item.id}
+                          variant="ghost"
+                          className={cn(
+                            "h-auto w-full justify-start gap-2.5 px-2.5 py-2.5 text-left",
+                            String(scene?.id) === String(item.id) &&
+                              "bg-accent",
+                          )}
+                          onClick={() => setSceneId(item.id)}
+                        >
+                          <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-semibold">
+                            {index + 1}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-medium">
+                              {item.title || `Escena ${index + 1}`}
+                            </span>
+                            <span className="mt-0.5 block truncate text-[10px] font-normal text-muted-foreground">
+                              {count} líneas ·{" "}
+                              {item.target_duration_ms
+                                ? `${item.target_duration_ms / 1000}s`
+                                : "sin duración"}
+                              {referenceCount
+                                ? ` · ${referenceCount} refs`
+                                : ""}
+                            </span>
+                          </span>
+                          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+                <div className="border-t p-3">
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" className="w-full">
+                        <Sparkles />
+                        Importar con el agente
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Estructurar un guion</DialogTitle>
+                        <DialogDescription>
+                          Pega el texto aprobado. El agente propondrá escenas y
+                          dirección sin generar audio.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <Textarea
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                        className="min-h-52"
+                        placeholder={
+                          "ESCENA 1 — Estudio, noche\nMARTA: “La campaña está lista.”\nVOZ EN OFF: “Del concepto al lanzamiento.”"
+                        }
+                      />
+                      <DialogFooter>
+                        <Button disabled={!draft.trim()} onClick={sendBrief}>
+                          <WandSparkles />
+                          Llevar al chat
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
                 </div>
-              </ScrollArea>
-              <div className="border-t p-3">
-                <Dialog>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" className="w-full">
-                      <Sparkles />
-                      Importar con el agente
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Estructurar un guion</DialogTitle>
-                      <DialogDescription>
-                        Pega el texto aprobado. El agente propondrá escenas y
-                        dirección sin generar audio.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <Textarea
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                      className="min-h-52"
-                      placeholder={
-                        "ESCENA 1 — Estudio, noche\nMARTA: “La campaña está lista.”\nVOZ EN OFF: “Del concepto al lanzamiento.”"
-                      }
-                    />
-                    <DialogFooter>
-                      <Button disabled={!draft.trim()} onClick={sendBrief}>
-                        <WandSparkles />
-                        Llevar al chat
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              </div>
-            </aside>
-          )}
+              </>
+            )}
+          </aside>
 
           <main className="min-h-0 overflow-y-auto">
             {!scene && !loading ? (
@@ -1498,11 +1485,29 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
             )}
           </main>
 
-          {scriptInspectorVisible && (
-            <aside className="min-h-0 border-l bg-muted/10">
+          <aside className="flex min-h-0 flex-col border-l bg-muted/10">
+            <div
+              className={cn(
+                "flex h-14 shrink-0 items-center border-b",
+                scriptInspectorVisible
+                  ? "justify-between px-3"
+                  : "justify-center",
+              )}
+            >
+              {scriptInspectorVisible && (
+                <span className="text-xs font-semibold">INSPECTOR</span>
+              )}
+              <SidebarToggle
+                side="right"
+                expanded={scriptInspectorVisible}
+                onChange={setScriptInspectorVisible}
+                label="inspector"
+              />
+            </div>
+            {scriptInspectorVisible && (
               <Tabs
                 defaultValue="line"
-                className="flex h-full min-h-0 flex-col"
+                className="flex min-h-0 flex-1 flex-col"
               >
                 <TabsList className="m-3 mb-0 grid grid-cols-2">
                   <TabsTrigger value="line">Línea</TabsTrigger>
@@ -1563,8 +1568,8 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
                   </ScrollArea>
                 </TabsContent>
               </Tabs>
-            </aside>
-          )}
+            )}
+          </aside>
         </div>
       </div>
     </TooltipProvider>
@@ -2387,12 +2392,6 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
               {(totalMs / 1000).toFixed(1)} s
             </Badge>
             <SaveState saving={saving} error={error} />
-            <PanelToggles
-              leftVisible={audioLibraryVisible}
-              rightVisible={audioInspectorVisible}
-              onLeftChange={setAudioLibraryVisible}
-              onRightChange={setAudioInspectorVisible}
-            />
             <Dialog open={briefOpen} onOpenChange={setBriefOpen}>
               <DialogTrigger asChild>
                 <Button size="sm">
@@ -2428,15 +2427,31 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns: `${audioLibraryVisible ? "300px " : ""}minmax(500px, 1fr)${audioInspectorVisible ? " 310px" : ""}`,
+            gridTemplateColumns: `${audioLibraryVisible ? "300px" : "44px"} minmax(500px, 1fr) ${audioInspectorVisible ? "310px" : "44px"}`,
           }}
         >
-          {audioLibraryVisible && (
-            <aside className="min-h-0 border-r bg-muted/10">
+          <aside className="flex min-h-0 flex-col border-r bg-muted/10">
+            <div
+              className={cn(
+                "flex h-14 shrink-0 items-center border-b",
+                audioLibraryVisible ? "justify-between px-3" : "justify-center",
+              )}
+            >
+              {audioLibraryVisible && (
+                <span className="text-xs font-semibold">SONIDO</span>
+              )}
+              <SidebarToggle
+                side="left"
+                expanded={audioLibraryVisible}
+                onChange={setAudioLibraryVisible}
+                label="biblioteca de sonido"
+              />
+            </div>
+            {audioLibraryVisible && (
               <Tabs
                 value={libraryTab}
                 onValueChange={setLibraryTab}
-                className="flex h-full min-h-0 flex-col"
+                className="flex min-h-0 flex-1 flex-col"
               >
                 <TabsList className="m-3 mb-0 grid h-auto grid-cols-2">
                   <TabsTrigger value="library">Biblioteca</TabsTrigger>
@@ -2547,8 +2562,8 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                   </ScrollArea>
                 </TabsContent>
               </Tabs>
-            </aside>
-          )}
+            )}
+          </aside>
 
           <main className="min-h-0 overflow-auto p-5">
             <div className="min-w-[660px]">
@@ -2679,9 +2694,27 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
             </div>
           </main>
 
-          {audioInspectorVisible && (
-            <aside className="min-h-0 border-l bg-muted/10">
-              <ScrollArea className="h-full">
+          <aside className="flex min-h-0 flex-col border-l bg-muted/10">
+            <div
+              className={cn(
+                "flex h-14 shrink-0 items-center border-b",
+                audioInspectorVisible
+                  ? "justify-between px-3"
+                  : "justify-center",
+              )}
+            >
+              {audioInspectorVisible && (
+                <span className="text-xs font-semibold">INSPECTOR</span>
+              )}
+              <SidebarToggle
+                side="right"
+                expanded={audioInspectorVisible}
+                onChange={setAudioInspectorVisible}
+                label="inspector de mezcla"
+              />
+            </div>
+            {audioInspectorVisible && (
+              <ScrollArea className="min-h-0 flex-1">
                 <div className="p-4">
                   <CueInspector
                     cue={cue}
@@ -2692,8 +2725,8 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                   />
                 </div>
               </ScrollArea>
-            </aside>
-          )}
+            )}
+          </aside>
         </div>
       </div>
     </TooltipProvider>
