@@ -62,6 +62,20 @@ every generation you make unless the user's message overrides one of them:
   assets for a single-asset request, each a distinct take on the same prompt, in one go
   (call generate_image/generate_video once per variation). One credit charge per asset;
   the user set the number on purpose, so honour it exactly — no more, no less.
+- camera_move → the camera movement for video. If it matches an id in the camera
+  motion catalogue, pass it as the camera_motion argument of generate_video; otherwise
+  fold it into the prompt as camera direction ("slow pan left across the bay").
+- speed_ramp → the pacing of the clip. Providers have no native ramp parameter, so
+  write it INTO the video prompt as motion direction: "speed ramp: starts in slow
+  motion, accelerates to real time at the impact", "constant half-speed dreamlike
+  slow motion", etc. It changes how the action must be staged — leave room for it.
+- start_frame / end_frame → ASSET IDS of images in this project. This is the scene-to-
+  scene transition mechanic and the most important of all: resolve each id to its URL
+  (read_project lists asset urls) and pass them as init_image_url / last_frame_url of
+  generate_video, on a model with the i2v / last_frame capability. When a start_frame
+  is set the video MUST begin exactly on that image; when an end_frame is set it must
+  land on it. To chain scenes seamlessly: the end frame of one clip is the start frame
+  of the next.
 
 Do not restate these settings back to the user; just apply them.
 </gen_settings_instructions>

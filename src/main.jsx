@@ -33,6 +33,13 @@ import {
   X,
   Ban,
   AlertTriangle,
+  ArrowDown,
+  ZoomIn,
+  RotateCw,
+  MoveHorizontal,
+  Crosshair,
+  Move,
+  Square,
   User,
   Palette,
   LifeBuoy,
@@ -523,6 +530,55 @@ const styleGroups = {
   "Movimiento de cámara": ["Auto", "Estático", "Push lento", "Órbita", "Handheld", "Crash zoom"],
 };
 
+// Movimientos de cámara del compositor de VÍDEO. Los ids son EXACTAMENTE los del
+// catálogo `camera_motions` del backend: así el agente puede pasarlos tal cual al
+// argumento camera_motion de generate_video sin traducir nada.
+const CAMERA_MOVES = [
+  ["static-lockoff", "Estática"],
+  ["handheld-follow", "Handheld"],
+  ["zoom-in", "Zoom in"],
+  ["push-to-glass", "Push in"],
+  ["dolly-zoom", "Dolly zoom"],
+  ["pan-left", "Pan izq."],
+  ["pan-right", "Pan dcha."],
+  ["tilt-up", "Tilt arriba"],
+  ["tilt-down", "Tilt abajo"],
+  ["crane-up", "Crane up"],
+  ["crane-down", "Crane down"],
+  ["truck-left", "Truck izq."],
+  ["truck-right", "Truck dcha."],
+  ["orbit-360", "Órbita 360"],
+  ["head-tracking", "Tracking"],
+];
+const MOVE_ICONS = {
+  "static-lockoff": Square,
+  "handheld-follow": Move,
+  "zoom-in": ZoomIn,
+  "push-to-glass": ZoomIn,
+  "dolly-zoom": Crosshair,
+  "pan-left": ArrowLeft,
+  "pan-right": ArrowRight,
+  "tilt-up": ArrowUp,
+  "tilt-down": ArrowDown,
+  "crane-up": ArrowUp,
+  "crane-down": ArrowDown,
+  "truck-left": MoveHorizontal,
+  "truck-right": MoveHorizontal,
+  "orbit-360": RotateCw,
+  "head-tracking": Eye,
+};
+
+// Rampas de velocidad. No hay parámetro nativo en los proveedores: el agente las
+// escribe DENTRO del prompt como dirección de ritmo, y por eso son etiquetas legibles.
+const SPEED_RAMPS = [
+  "Ninguno",
+  "Lento → Rápido",
+  "Rápido → Lento",
+  "Impacto (ramp al golpe)",
+  "Slow motion 0.5x",
+  "Timelapse 2x",
+];
+
 function SettingsSlider({ label, value, options, onChange }) {
   const trackRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -787,9 +843,17 @@ function ModelPicker({ value, onChange, mode = "video" }) {
  * que elijas en el panel se mantiene al entrar en el editor y se persiste.
  * `onMention` engancha el botón @ con el compositor que lo aloja.
  */
-function GenSettingsBar({ trailing, onMention, onAttach }) {
+function GenSettingsBar({ trailing, onMention, onAttach, assets = [], videoDirection = false }) {
   const { genSettings: s, setGenSettings } = useStudio();
   const { mode, model, aspect, res, dur, count, sound, genre, style, camera } = s;
+  const cameraMove = s.camera_move ?? null;
+  const speedRamp = s.speed_ramp ?? null;
+  const startFrame = s.start_frame ?? null;
+  const endFrame = s.end_frame ?? null;
+  // Imágenes del proyecto elegibles como frame inicial/final del vídeo.
+  const frameCandidates = assets.filter(
+    (a) => a.url && a.status === "ready" && !/video|cut|audio/i.test(String(a.type)),
+  );
   const setMode = (v) => setGenSettings({ mode: v });
   const setModel = (v) => setGenSettings({ model: v });
   const setAspect = (v) => setGenSettings({ aspect: v });
@@ -936,6 +1000,81 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
                   </div>
                 )}
 
+                {/* --- Dirección de vídeo: movimiento, ritmo y frames de anclaje.
+                    SOLO en el compositor de All assets (videoDirection), que es donde
+                    se generan las escenas — en el dashboard o en otras pestañas estos
+                    controles no tienen assets sobre los que operar. --- */}
+                {mode === "video" && videoDirection && (
+                  <>
+                    <Separator className="my-1.5" />
+                    {[
+                      [
+                        "Movimiento",
+                        CAMERA_MOVES.find(([id]) => id === cameraMove)?.[1] ?? "Auto",
+                        CameraIcon,
+                        "move",
+                      ],
+                      ["Speed ramp", speedRamp ?? "Ninguno", Zap, "ramp"],
+                    ].map(([label, value, I, key]) => (
+                      <button
+                        key={key}
+                        onClick={() => setFlyout(flyout === key ? null : key)}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent",
+                          flyout === key && "bg-accent",
+                        )}
+                      >
+                        <I className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className="ml-auto max-w-[120px] truncate">{value}</span>
+                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                      </button>
+                    ))}
+                    {/* Frames de anclaje: el vídeo ARRANCA en el frame inicial y ATERRIZA
+                        en el final. Encadenar escenas = el final de una es el inicio de
+                        la siguiente. */}
+                    <div className="mt-1 grid grid-cols-2 gap-1.5 px-1 pb-1">
+                      {[
+                        ["start_frame", "Frame inicial", startFrame],
+                        ["end_frame", "Frame final", endFrame],
+                      ].map(([key, label, val]) => (
+                        <div key={key} className="relative">
+                          <button
+                            onClick={() => setFlyout(flyout === key ? null : key)}
+                            className={cn(
+                              "w-full overflow-hidden rounded-lg border text-left transition-colors hover:bg-accent",
+                              flyout === key && "ring-2 ring-primary",
+                            )}
+                          >
+                            {val?.url ? (
+                              <div
+                                className="aspect-video bg-muted bg-cover bg-center"
+                                style={{ backgroundImage: `url(${val.url})` }}
+                              />
+                            ) : (
+                              <div className="flex aspect-video items-center justify-center border-b border-dashed bg-muted/40">
+                                <ImageIcon className="size-4 text-muted-foreground/60" />
+                              </div>
+                            )}
+                            <p className="truncate px-1.5 py-1 text-[10px] text-muted-foreground">
+                              {label}
+                            </p>
+                          </button>
+                          {val && (
+                            <button
+                              onClick={() => setGenSettings({ [key]: null })}
+                              title="Quitar"
+                              className="absolute right-1 top-1 flex size-4 items-center justify-center rounded bg-black/55 text-white"
+                            >
+                              <X className="size-2.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
                 {flyout && (
                   <div className="absolute left-full top-0 ml-2 w-[280px] rounded-xl border bg-background p-2 shadow-2xl">
                     {flyout === "genre" &&
@@ -972,6 +1111,73 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
                           onChange={(v) => setCamera({ ...camera, [k]: v })}
                         />
                       ))}
+                    {flyout === "move" && (
+                      <div className="grid grid-cols-3 gap-1">
+                        {CAMERA_MOVES.map(([id, label]) => {
+                          const I = MOVE_ICONS[id] ?? CameraIcon;
+                          return (
+                            <button
+                              key={id}
+                              onClick={() => {
+                                setGenSettings({ camera_move: cameraMove === id ? null : id });
+                                setFlyout(null);
+                              }}
+                              className={cn(
+                                "flex flex-col items-center gap-1 rounded-lg border p-2 text-center transition-colors hover:bg-accent",
+                                cameraMove === id &&
+                                  "border-primary bg-primary/10 text-primary",
+                              )}
+                            >
+                              <I className="size-4" />
+                              <span className="text-[10px] leading-tight">{label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {flyout === "ramp" &&
+                      SPEED_RAMPS.map((r) => (
+                        <button
+                          key={r}
+                          onClick={() => {
+                            setGenSettings({ speed_ramp: r === "Ninguno" ? null : r });
+                            setFlyout(null);
+                          }}
+                          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+                        >
+                          {r}
+                          {(speedRamp ?? "Ninguno") === r && <Check className="size-3.5" />}
+                        </button>
+                      ))}
+                    {(flyout === "start_frame" || flyout === "end_frame") && (
+                      <>
+                        <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          {flyout === "start_frame" ? "Frame inicial" : "Frame final"} — imágenes del proyecto
+                        </p>
+                        {frameCandidates.length === 0 && (
+                          <p className="p-2 text-xs text-muted-foreground">
+                            No hay imágenes listas en el proyecto. Genera una escena o un
+                            personaje primero: los frames de anclaje salen de ahí.
+                          </p>
+                        )}
+                        <div className="grid max-h-56 grid-cols-3 gap-1 overflow-y-auto">
+                          {frameCandidates.map((a) => (
+                            <button
+                              key={a.id}
+                              title={a.name}
+                              onClick={() => {
+                                setGenSettings({
+                                  [flyout]: { id: String(a.id), url: a.url, name: a.name },
+                                });
+                                setFlyout(null);
+                              }}
+                              className="aspect-video overflow-hidden rounded-md border bg-muted bg-cover bg-center transition-shadow hover:shadow-md"
+                              style={{ backgroundImage: `url(${a.url})` }}
+                            />
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -3143,6 +3349,7 @@ function EditorChat({
   busy,
   stream = null,
   elements = [],
+  assets = [],
   onUpload,
   insert = null,
   onInsertDone,
@@ -3449,6 +3656,8 @@ function EditorChat({
           <GenSettingsBar
             onMention={openMention}
             onAttach={() => fileRef.current?.click()}
+            assets={assets}
+            videoDirection={tab === "assets"}
             trailing={
               <>
                 <EditorIconBtn>
@@ -6224,6 +6433,7 @@ function Editor({ projectId }) {
               onSend={handleSend}
               onStop={stopTurn}
               elements={elements}
+              assets={assets}
               onUpload={(files) => uploadFiles(files)}
               insert={chatInsert}
               onInsertDone={() => setChatInsert(null)}

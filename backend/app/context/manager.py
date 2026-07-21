@@ -447,6 +447,10 @@ def _format_gen_settings(settings: GenSettings) -> str:
         "sound": None if settings.sound is None else ("on" if settings.sound else "off"),
         "style": settings.style,
         "camera": settings.camera,
+        "camera_move": settings.camera_move,
+        "speed_ramp": settings.speed_ramp,
+        "start_frame": settings.start_frame,
+        "end_frame": settings.end_frame,
     }
     attrs = "".join(f' {k}="{_attr(v)}"' for k, v in pairs.items() if v not in (None, ""))
     return P.GEN_SETTINGS_TEMPLATE.format(attrs=attrs) if attrs else ""
@@ -623,6 +627,10 @@ def _flatten_setting(key: str, value: Any) -> Any:
     if key == "sound":
         # Se conserva como bool: el frontend lo guarda como booleano JSON.
         return bool(value) if value is not None else None
+    if key in ("start_frame", "end_frame") and isinstance(value, dict):
+        # El frontend guarda {id, url, name} para poder pintar la miniatura; al modelo
+        # le basta el id — la URL firmada caduca y se re-resuelve con read_project.
+        return str(value.get("id")) if value.get("id") else None
     if isinstance(value, dict):
         parts = [f"{k}: {v}" for k, v in value.items() if v not in (None, "", "Auto")]
         return " · ".join(parts) if parts else None
@@ -920,6 +928,7 @@ class XframeContextManager:
         known = {
             "model", "aspect", "resolution", "duration_s", "style", "camera",
             "mode", "genre", "sound", "count",
+            "camera_move", "speed_ramp", "start_frame", "end_frame",
         }
         return GenSettings(
             **{k: _flatten_setting(k, v) for k, v in merged.items() if k in known},

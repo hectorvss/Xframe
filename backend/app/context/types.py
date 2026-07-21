@@ -228,6 +228,21 @@ class GenSettings(BaseModel):
     genre: str | None = None
     sound: bool | None = None
     count: int | None = None
+
+    camera_move: str | None = None
+    """Movimiento de cámara elegido en el compositor (id del catálogo, p. ej. 'pan-left')."""
+
+    speed_ramp: str | None = None
+    """Rampa de velocidad del clip ('Lento → Rápido', 'Impacto'…). Es dirección de ritmo."""
+
+    start_frame: str | None = None
+    """Asset id de la imagen que debe ser el PRIMER frame del vídeo (i2v)."""
+
+    end_frame: str | None = None
+    """Asset id de la imagen que debe ser el ÚLTIMO frame (first-and-last-frame).
+    start/end frame son la mecánica de las transiciones escena a escena: el último
+    frame de una escena es el primero de la siguiente."""
+
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
