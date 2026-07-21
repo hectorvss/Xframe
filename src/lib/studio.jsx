@@ -297,6 +297,12 @@ export function useProjectData(projectId) {
   const [canvas, setCanvas] = useState(null);
   const [loaded, setLoaded] = useState(false);
 
+  // `reloadNonce` fuerza una recarga completa bajo demanda (el botón de refrescar del
+  // editor): mismo camino que la carga inicial, así que trae TODO — assets, mensajes,
+  // brief y canvas — desde la base, que es la fuente de verdad.
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const reload = useCallback(() => setReloadNonce((n) => n + 1), []);
+
   useEffect(() => {
     let alive = true;
     setLoaded(false);
@@ -317,7 +323,7 @@ export function useProjectData(projectId) {
     return () => {
       alive = false;
     };
-  }, [projectId]);
+  }, [projectId, reloadNonce]);
 
   // Mientras haya algún asset generándose, se sondea la base cada pocos segundos.
   //
@@ -431,6 +437,7 @@ export function useProjectData(projectId) {
 
   return {
     loaded,
+    reload,
     assets,
     refreshAssets,
     addAssets,

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
@@ -456,6 +456,25 @@ const modelFamilies = [
     ["HappyHorse", "1080p", "3s-15s", "NEW"],
   ]],
 ];
+// Catálogo de IMAGEN, separado del de vídeo: en modo foto el selector debe ofrecer
+// modelos de foto, no un Sora que no genera stills.
+const imageModelFamilies = [
+  ["OpenAI GPT Image", "openai.com", "Imagen fotorrealista con texto legible y referencias", [
+    ["GPT Image 2", "4K", "1-4 img"],
+    ["GPT Image 1", "1080p", "1-4 img"],
+  ]],
+  ["Flux", "bfl.ai", "Fotorrealismo y control de composición", [
+    ["Flux 2 Pro", "4K", "1-4 img", "PREMIUM"],
+    ["Flux 2", "1080p", "1-4 img"],
+  ]],
+  ["Nano Banana", "deepmind.google", "Edición y consistencia de personaje", [
+    ["Nano Banana Pro", "4K", "1-4 img", "NEW"],
+    ["Nano Banana", "1080p", "1-4 img"],
+  ]],
+  ["Seedream", "bytedance.com", "Ilustración y realismo de alta fidelidad", [
+    ["Seedream 4.0", "4K", "1-4 img"],
+  ]],
+];
 function ModelLogo({ domain, name, className = "size-5" }) {
   if (domain) {
     return (
@@ -611,10 +630,13 @@ function MiniSelect({ icon: Icon, value, options, onChange }) {
     </DropdownMenu>
   );
 }
-function ModelPicker({ value, onChange }) {
+function ModelPicker({ value, onChange, mode = "video" }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState(null);
+  // El catálogo depende del modo del compositor: foto ofrece modelos de imagen,
+  // vídeo ofrece modelos de vídeo. Mezclarlos era ofrecer imposibles.
+  const families = mode === "image" ? imageModelFamilies : modelFamilies;
   const match = (n) => n.toLowerCase().includes(q.toLowerCase());
   const pick = (n) => {
     onChange(n);
@@ -664,12 +686,12 @@ function ModelPicker({ value, onChange }) {
               />
             </div>
             <div className="max-h-[380px] overflow-y-auto overscroll-contain p-2">
-              {cinematicModels.filter(([n]) => match(n)).length > 0 && (
+              {mode === "video" && cinematicModels.filter(([n]) => match(n)).length > 0 && (
                 <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
                   Modelos cinematográficos
                 </p>
               )}
-              {cinematicModels
+              {mode === "video" && cinematicModels
                 .filter(([n]) => match(n))
                 .map(([n, d, badge]) => (
                   <button key={n} onClick={() => pick(n)} className={rowCls}>
@@ -685,12 +707,12 @@ function ModelPicker({ value, onChange }) {
                   </button>
                 ))}
 
-              {featuredModels.filter(([n]) => match(n)).length > 0 && (
+              {mode === "video" && featuredModels.filter(([n]) => match(n)).length > 0 && (
                 <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
                   Modelos destacados
                 </p>
               )}
-              {featuredModels
+              {mode === "video" && featuredModels
                 .filter(([n]) => match(n))
                 .map(([n, domain, res, dur, badge]) => (
                   <button key={n} onClick={() => pick(n)} className={rowCls}>
@@ -705,7 +727,7 @@ function ModelPicker({ value, onChange }) {
               <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
                 Todos los modelos
               </p>
-              {modelFamilies
+              {families
                 .filter(
                   ([fname, , , variants]) =>
                     match(fname) || variants.some(([n]) => match(n)),
@@ -785,6 +807,16 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
       ? "Auto"
       : Object.values(o).filter((v) => v !== "Auto").join(", ");
 
+  // Al cambiar de modo, el modelo elegido debe existir en el catálogo de ese modo:
+  // quedarse con "OpenAI Sora 2" seleccionado en modo foto es pedir un imposible.
+  useEffect(() => {
+    const families = mode === "image" ? imageModelFamilies : modelFamilies;
+    const names = families.flatMap(([, , , variants]) => variants.map(([n]) => n));
+    if (!names.includes(model)) {
+      setGenSettings({ model: mode === "image" ? "GPT Image 2" : "OpenAI Sora 2" });
+    }
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <>
       <div className="flex items-center gap-0.5 px-1 pb-1">
@@ -828,7 +860,7 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
             </button>
           ))}
         </div>
-        <ModelPicker value={model} onChange={setModel} />
+        <ModelPicker value={model} onChange={setModel} mode={mode} />
 
         <div className="relative">
           <button
@@ -836,7 +868,8 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
             className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Settings className="size-3.5" />
-            {res} · {dur}
+            {/* El resumen habla el idioma del modo: una foto no dura segundos. */}
+            {mode === "image" ? `${res} · ×${count}` : `${res} · ${dur}`}
           </button>
           {open && (
             <>
@@ -868,31 +901,40 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
                   </button>
                 ))}
                 <Separator className="my-1.5" />
+                {/* Ajustes por modo: una foto no tiene duración ni sonido, y la
+                    cantidad de variaciones es un ajuste de foto (los vídeos se
+                    generan de uno en uno: cada segundo cuesta créditos). */}
                 <SettingsSlider label="Aspecto" value={aspect} options={aspectList} onChange={setAspect} />
                 <SettingsSlider label="Resolución" value={res} options={resolutionList} onChange={setRes} />
-                <SettingsSlider label="Duración" value={dur} options={durationList} onChange={setDur} />
-                <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm">
-                  <span className="text-muted-foreground">Cantidad</span>
-                  <div className="flex items-center gap-0.5">
-                    <button
-                      onClick={() => setCount(Math.max(1, count - 1))}
-                      className="flex size-6 items-center justify-center rounded hover:bg-accent"
-                    >
-                      <Minus className="size-3" />
-                    </button>
-                    <span className="w-8 text-center tabular-nums">{count}/4</span>
-                    <button
-                      onClick={() => setCount(Math.min(4, count + 1))}
-                      className="flex size-6 items-center justify-center rounded hover:bg-accent"
-                    >
-                      <Plus className="size-3" />
-                    </button>
+                {mode === "video" && (
+                  <SettingsSlider label="Duración" value={dur} options={durationList} onChange={setDur} />
+                )}
+                {mode === "image" && (
+                  <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm">
+                    <span className="text-muted-foreground">Cantidad</span>
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        onClick={() => setCount(Math.max(1, count - 1))}
+                        className="flex size-6 items-center justify-center rounded hover:bg-accent"
+                      >
+                        <Minus className="size-3" />
+                      </button>
+                      <span className="w-8 text-center tabular-nums">{count}/4</span>
+                      <button
+                        onClick={() => setCount(Math.min(4, count + 1))}
+                        className="flex size-6 items-center justify-center rounded hover:bg-accent"
+                      >
+                        <Plus className="size-3" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm">
-                  <span className="text-muted-foreground">Sonido</span>
-                  <Switch checked={sound} onCheckedChange={setSound} />
-                </div>
+                )}
+                {mode === "video" && (
+                  <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm">
+                    <span className="text-muted-foreground">Sonido</span>
+                    <Switch checked={sound} onCheckedChange={setSound} />
+                  </div>
+                )}
 
                 {flyout && (
                   <div className="absolute left-full top-0 ml-2 w-[280px] rounded-xl border bg-background p-2 shadow-2xl">
@@ -3002,9 +3044,10 @@ function ShareMenu({ projectId }) {
     </div>
   );
 }
-const EditorIconBtn = ({ children, onClick, className = "" }) => (
+const EditorIconBtn = ({ children, onClick, title, className = "" }) => (
   <button
     onClick={onClick}
+    title={title}
     className={cn(
       "flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-4",
       className,
@@ -3112,6 +3155,53 @@ function EditorChat({
   const endRef = useRef(null);
   const areaRef = useRef(null);
   const fileRef = useRef(null);
+  const mirrorRef = useRef(null);
+
+  // Autocrecimiento del área de texto: crece con lo escrito hasta 200px y a partir de
+  // ahí el scroll es interno y FUNCIONAL, pero sin barra visible (la oculta el CSS).
+  useEffect(() => {
+    const el = areaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    // El espejo de pills debe seguir el mismo scroll que el textarea.
+    if (mirrorRef.current) mirrorRef.current.scrollTop = el.scrollTop;
+  }, [draft]);
+
+  // Pills de mención: el texto real vive en el textarea (transparente) y un espejo
+  // idéntico detrás pinta cada @element como una pill coloreada. Es el truco estándar
+  // de highlight-overlay: la edición conserva toda su funcionalidad nativa (selección,
+  // atajos, IME) porque el textarea sigue siendo un textarea.
+  const mentionRegex = useMemo(() => {
+    if (!elements.length) return null;
+    const names = [...elements]
+      .map((e) => e.name)
+      .sort((a, b) => b.length - a.length)
+      .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    return new RegExp(`@(${names.join("|")})`, "g");
+  }, [elements]);
+
+  const draftWithPills = useMemo(() => {
+    if (!mentionRegex || !draft) return draft;
+    const out = [];
+    let last = 0;
+    let m;
+    mentionRegex.lastIndex = 0;
+    while ((m = mentionRegex.exec(draft))) {
+      if (m.index > last) out.push(draft.slice(last, m.index));
+      out.push(
+        <span
+          key={`${m.index}-${m[0]}`}
+          className="rounded-md bg-primary/15 font-medium text-primary"
+        >
+          {m[0]}
+        </span>,
+      );
+      last = m.index + m[0].length;
+    }
+    out.push(draft.slice(last));
+    return out;
+  }, [draft, mentionRegex]);
 
   // Menciones @: se abren al escribir "@" y filtran por lo que sigue.
   const mentionQuery =
@@ -3302,24 +3392,40 @@ function EditorChat({
               e.target.value = "";
             }}
           />
-          <Textarea
-            ref={areaRef}
-            value={draft}
-            onChange={(e) => onDraftChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (mentionAt !== null && matches.length && e.key === "Enter") {
-                e.preventDefault();
-                return insertMention(matches[0]);
-              }
-              if (e.key === "Escape") return setMentionAt(null);
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            placeholder={placeholder}
-            className="min-h-[52px] resize-none border-0 text-sm shadow-none focus-visible:ring-0"
-          />
+          <div className="relative">
+            {/* Espejo de pills: mismas métricas de texto que el Textarea de debajo. */}
+            <div
+              ref={mirrorRef}
+              aria-hidden
+              className="pointer-events-none absolute inset-0 z-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-2 text-sm"
+            >
+              {draftWithPills}
+              {"​"}
+            </div>
+            <Textarea
+              ref={areaRef}
+              value={draft}
+              rows={1}
+              onChange={(e) => onDraftChange(e.target.value)}
+              onScroll={(e) => {
+                if (mirrorRef.current)
+                  mirrorRef.current.scrollTop = e.currentTarget.scrollTop;
+              }}
+              onKeyDown={(e) => {
+                if (mentionAt !== null && matches.length && e.key === "Enter") {
+                  e.preventDefault();
+                  return insertMention(matches[0]);
+                }
+                if (e.key === "Escape") return setMentionAt(null);
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              placeholder={placeholder}
+              className="relative z-10 min-h-[52px] max-h-[200px] resize-none overflow-y-auto border-0 bg-transparent text-sm text-transparent caret-foreground shadow-none focus-visible:ring-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            />
+          </div>
           <GenSettingsBar
             onMention={openMention}
             onAttach={() => fileRef.current?.click()}
@@ -3424,7 +3530,6 @@ const fmt = (s) =>
 
 function EditorPreview({ assets = [], onAssemble }) {
   const [exporting, setExporting] = useState(false);
-  const [copied, setCopied] = useState(false);
   // Nada de demos ni guiones de ejemplo: la vista previa reproduce SOLO material real
   // del proyecto. Prioridad: (1) el corte final montado por el agente (asset 'cut'),
   // (2) los fragmentos de vídeo listos, encadenados en secuencia, (3) las imágenes como
@@ -3528,17 +3633,8 @@ function EditorPreview({ assets = [], onAssemble }) {
                 : "Sin material aún"}
         </Badge>
         <div className="flex-1" />
-        <UIButton
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            navigator.clipboard?.writeText(location.href);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          }}
-        >
-          {copied ? <Check /> : <Share2 />} {copied ? "Copiado" : "Compartir"}
-        </UIButton>
+        {/* Compartir vive en el header del editor (ShareMenu); duplicarlo aquí solo
+            confundía sobre cuál era el bueno. */}
         <UIButton variant="outline" size="sm" onClick={() => setExporting(true)}>
           <Download /> Exportar
         </UIButton>
@@ -5364,10 +5460,14 @@ function Editor({ projectId }) {
     messages,
     addMessage,
     loaded,
+    reload,
   } = data;
 
   const [tab, setTab] = useState("preview");
   const [chatW, resizeChat] = useResizableWidth("xf-editor-chat", 380, 300, 720);
+  // Ocultar el chat lateral (botón PanelLeft del header). Se oculta con CSS, sin
+  // desmontar, para que borrador y scroll del hilo no se pierdan.
+  const [chatHidden, setChatHidden] = useState(false);
   const [busy, setBusy] = useState(false);
   const [noCredits, setNoCredits] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -5718,11 +5818,22 @@ function Editor({ projectId }) {
           <ChevronDown className="size-3.5 text-muted-foreground" />
         </button>
         <div className="flex items-center">
-          <EditorIconBtn>
-            <History />
+          {/* Recarga real: mismo camino que la carga inicial del proyecto — assets,
+              mensajes, brief y canvas se releen de la base. */}
+          <EditorIconBtn
+            title="Actualizar el proyecto"
+            onClick={() => {
+              reload();
+              refreshCredits?.();
+            }}
+          >
+            <History className={cn(!loaded && "animate-spin")} />
           </EditorIconBtn>
-          <EditorIconBtn>
-            <PanelLeft />
+          <EditorIconBtn
+            title={chatHidden ? "Mostrar el chat" : "Ocultar el chat"}
+            onClick={() => setChatHidden((h) => !h)}
+          >
+            <PanelLeft className={cn(chatHidden && "text-muted-foreground")} />
           </EditorIconBtn>
         </div>
         <div className="ml-1 flex items-center gap-0.5 rounded-lg border p-0.5">
@@ -5765,18 +5876,22 @@ function Editor({ projectId }) {
 
       <div className="flex flex-1 overflow-hidden">
         {tab !== "chat" && (
-          <EditorChat
-            width={chatW}
-            onResize={resizeChat}
-            tab={tab}
-            log={messages}
-            busy={busy}
-            stream={stream}
-            onSend={handleSend}
-            onStop={stopTurn}
-            elements={elements}
-            onUpload={(files) => uploadFiles(files)}
-          />
+          // Ocultar con CSS y no desmontando: así el borrador a medio escribir y el
+          // scroll del hilo sobreviven a esconder/mostrar el panel.
+          <div className={cn("flex", chatHidden && "hidden")}>
+            <EditorChat
+              width={chatW}
+              onResize={resizeChat}
+              tab={tab}
+              log={messages}
+              busy={busy}
+              stream={stream}
+              onSend={handleSend}
+              onStop={stopTurn}
+              elements={elements}
+              onUpload={(files) => uploadFiles(files)}
+            />
+          </div>
         )}
         <main className="flex-1 overflow-hidden p-2">
           {tab === "preview" && (
