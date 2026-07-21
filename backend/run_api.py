@@ -43,6 +43,10 @@ def main() -> None:
         port=args.port,
         reload=args.reload,
         log_level=args.log_level,
+        # La API sÃ³lo se publica tras Caddy. Confiar en sus cabeceras conserva
+        # HTTPS en las redirecciones automÃ¡ticas de mounts como /mcp -> /mcp/.
+        proxy_headers=True,
+        forwarded_allow_ips="*",
         # Lo importante de todo este fichero. Sin esto, uvicorn instala Proactor en
         # Windows y el checkpointer no puede abrir una sola conexión.
         loop="none",
