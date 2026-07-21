@@ -81,3 +81,65 @@
 .scrollbar-hidden::-webkit-scrollbar {
   display: none;
 }
+
+/*
+ * Escala editorial compartida por los paneles de Guion y Audio.
+ * La jerarquía está pensada para un sidebar de ~310 px: títulos discretos,
+ * ayudas legibles y controles compactos sin perder área táctil.
+ */
+@layer components {
+  .production-sidebar {
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .production-sidebar .text-sm {
+    font-size: 13px;
+    line-height: 18px;
+  }
+
+  .production-sidebar .text-xs {
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .production-sidebar .text-\[11px\],
+  .production-sidebar .text-\[10px\] {
+    font-size: 11px;
+    line-height: 15px;
+  }
+
+  .production-sidebar button,
+  .production-sidebar input,
+  .production-sidebar textarea,
+  .production-sidebar [role="combobox"],
+  .production-sidebar [role="tab"] {
+    font-size: 12px;
+  }
+
+  .production-sidebar input:not([type="range"]),
+  .production-sidebar [role="combobox"] {
+    min-height: 36px;
+  }
+
+  .production-sidebar textarea {
+    line-height: 17px;
+  }
+
+  .production-sidebar .h-11,
+  .production-sidebar .h-10 {
+    height: 36px;
+  }
+
+  .production-sidebar .p-4 {
+    padding: 12px;
+  }
+
+  .production-sidebar .space-y-5 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 16px;
+  }
+
+  .production-sidebar .rounded-xl {
+    border-radius: 10px;
+  }
+}

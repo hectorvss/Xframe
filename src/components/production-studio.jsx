@@ -1162,12 +1162,12 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns: `${scenePanelVisible ? "220px" : "0px"} minmax(420px, 1fr) ${scriptInspectorVisible ? "310px" : "0px"}`,
+            gridTemplateColumns: `${scenePanelVisible ? "240px" : "0px"} minmax(420px, 1fr) ${scriptInspectorVisible ? "310px" : "0px"}`,
           }}
         >
           <aside
             className={cn(
-              "relative flex min-h-0 flex-col",
+              "production-sidebar relative flex min-h-0 flex-col",
               scenePanelVisible
                 ? "overflow-hidden border-r bg-muted/10"
                 : "overflow-visible",
@@ -1512,7 +1512,7 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
 
           <aside
             className={cn(
-              "relative flex min-h-0 flex-col",
+              "production-sidebar relative flex min-h-0 flex-col",
               scriptInspectorVisible
                 ? "overflow-hidden border-l bg-muted/10"
                 : "overflow-visible",
@@ -2075,7 +2075,7 @@ function SoundComposer({
                     <ChevronRight className="size-4" />
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="flex max-h-[82vh] max-w-lg flex-col gap-0 overflow-hidden p-0">
+                <DialogContent className="production-sidebar flex max-h-[82vh] max-w-lg flex-col gap-0 overflow-hidden p-0">
                   <DialogHeader className="border-b p-4">
                     <DialogTitle className="flex items-center gap-2 text-base">
                       <ArrowLeft className="size-4" /> Selecciona una voz
@@ -2499,7 +2499,9 @@ function SoundTemplates({ templates, mediaAssets, onUse, onVariant, run }) {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => run(() => db.deleteAudioTemplate(template.id))}
+                    onClick={() =>
+                      run(() => db.deleteAudioTemplate(template.id))
+                    }
                   >
                     <Trash2 className="size-3.5" />
                   </Button>
@@ -2862,14 +2864,19 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
       "Crea los perfiles de voz que necesito para este proyecto. Para cada voz, define nombre, idioma, acento, tono y uso narrativo; guÃ¡rdala con create_voice_profile en Audio > Voces con su proveedor e ID reutilizable. Si el proveedor no puede crear o devolver un ID de voz, guÃ¡rdala honestamente como borrador y dime quÃ© falta. No clones ni imites voces reales sin consentimiento verificable.",
     );
   const inferTemplateKind = (asset) => {
-    const description = `${asset.name || ""} ${asset.meta || ""} ${asset.type || ""}`.toLowerCase();
+    const description =
+      `${asset.name || ""} ${asset.meta || ""} ${asset.type || ""}`.toLowerCase();
     if (/music|mÃºsica|song|track|score/.test(description)) return "music";
-    if (/ambient|ambience|room tone|atmÃ³sfera/.test(description)) return "ambience";
+    if (/ambient|ambience|room tone|atmÃ³sfera/.test(description))
+      return "ambience";
     return "sfx";
   };
   const saveAsVoice = (asset) => {
     const providerVoiceId =
-      asset.provider_voice_id || asset.voice_id || asset.params?.voice_id || null;
+      asset.provider_voice_id ||
+      asset.voice_id ||
+      asset.params?.voice_id ||
+      null;
     return run(() =>
       db.createVoiceProfile(projectId, {
         name: asset.name || "Voz guardada",
@@ -3012,12 +3019,12 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns: `${audioLibraryVisible ? "400px" : "0px"} minmax(500px, 1fr) ${audioInspectorVisible ? "310px" : "0px"}`,
+            gridTemplateColumns: `${audioLibraryVisible ? "320px" : "0px"} minmax(500px, 1fr) ${audioInspectorVisible ? "310px" : "0px"}`,
           }}
         >
           <aside
             className={cn(
-              "relative flex min-h-0 flex-col",
+              "production-sidebar relative flex min-h-0 flex-col",
               audioLibraryVisible
                 ? "overflow-hidden border-r bg-muted/10"
                 : "overflow-visible",
@@ -3086,12 +3093,16 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                                       </DropdownMenuItem>
                                     ),
                                   )}
-                                  <DropdownMenuItem onClick={() => saveAsVoice(asset)}>
+                                  <DropdownMenuItem
+                                    onClick={() => saveAsVoice(asset)}
+                                  >
                                     <Mic2 className="mr-2 size-4" />
                                     Guardar en Voces
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    disabled={templateAssetIds.has(String(asset.id))}
+                                    disabled={templateAssetIds.has(
+                                      String(asset.id),
+                                    )}
                                     onClick={() => saveAsTemplate(asset)}
                                   >
                                     <Bookmark className="mr-2 size-4" />
@@ -3154,7 +3165,10 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                   <ScrollArea className="h-full">
                     <div className="p-3">
                       <SoundTemplates
-                        templates={[...systemSoundTemplates, ...data.audioTemplates]}
+                        templates={[
+                          ...systemSoundTemplates,
+                          ...data.audioTemplates,
+                        ]}
                         mediaAssets={savedTemplateAssets}
                         onUse={useTemplate}
                         onVariant={varyAsset}
@@ -3327,7 +3341,7 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
 
           <aside
             className={cn(
-              "relative flex min-h-0 flex-col",
+              "production-sidebar relative flex min-h-0 flex-col",
               audioInspectorVisible
                 ? "overflow-hidden border-l bg-muted/10"
                 : "overflow-visible",
