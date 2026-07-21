@@ -902,7 +902,15 @@ class AssembleVideoTool(_GenerationTool):
         # El montaje no estaba persistido en ninguna parte: se renderizaba un mp4 en un
         # directorio temporal y se le contaba al usuario que existía un asset que nadie
         # había escrito. Un entregable que solo vive en /tmp no es un entregable.
-        asset_id = await _persist_cut(self.ctx.project_id, result, title=title)
+        #
+        # Una vez subido, el mp4 local ya no vale nada: la verdad es la fila de `assets`
+        # y el objeto del bucket. Se borra en `finally` para que un montaje fallido —o el
+        # normal— no deje ficheros acumulándose en el disco del contenedor, que corre
+        # meses sin reiniciarse. La verdad ya está en el storage; el temporal es basura.
+        try:
+            asset_id = await _persist_cut(self.ctx.project_id, result, title=title)
+        finally:
+            _discard_temp(result.output_path)
         artifact = await manager.acreate(
             CutArtifactContent(
                 title=title,
@@ -933,6 +941,27 @@ class AssembleVideoTool(_GenerationTool):
 # --------------------------------------------------------------------------- #
 # Ayudas                                                                       #
 # --------------------------------------------------------------------------- #
+
+
+def _discard_temp(path: str | None) -> None:
+    """
+    Borra el mp4 temporal del montaje, sin ruido.
+
+    Que falle el borrado no puede tumbar el turno: el asset ya está en el storage y esto
+    es solo higiene de disco. Un fichero que no se pudo borrar es un problema de operación
+    (lo recogerá el barrido de /tmp del sistema), no del usuario, que ya tiene su corte.
+    """
+    if not path:
+        return
+    import logging
+    from pathlib import Path
+
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError as exc:  # best-effort; el asset ya está a salvo en el storage
+        logging.getLogger(__name__).warning(
+            "cut_temp_cleanup_failed", extra={"path": path, "error": str(exc)}
+        )
 
 
 async def _persist_cut(project_id: str, result: AssemblyResult, *, title: str) -> str:
