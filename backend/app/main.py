@@ -44,6 +44,7 @@ from app.jobs.webhooks import router as webhooks_router
 from app.mcp_api import oauth_router
 from app.mcp_api import router as mcp_router
 from app.mcp_server import asgi_app as mcp_asgi_app
+from app.mcp_server import session_manager_lifespan as mcp_session_manager_lifespan
 from app.runtime import configure_event_loop
 from app.stream.bus import EventBus
 
@@ -85,15 +86,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # La versión anterior lo invocaba y el proceso no llegaba a levantar.
     _bus = EventBus()
     checkpointer = await make_checkpointer()
-    async with checkpointer as cp:
-        await cp.setup()
-        _runner = ConversationRunner(cp, _bus)
-        # El módulo de reanudación construye su propio runner cuando corre dentro del
-        # worker, que es un proceso sin grafo. Aquí ya hay uno con su checkpointer
-        # abierto: prestárselo evita abrir un segundo contra la misma base para hacer
-        # exactamente lo mismo.
-        resume.set_runner(_runner)
-        yield
+    async with mcp_session_manager_lifespan():
+        async with checkpointer as cp:
+            await cp.setup()
+            _runner = ConversationRunner(cp, _bus)
+            # El módulo de reanudación construye su propio runner cuando corre dentro del
+            # worker, que es un proceso sin grafo. Aquí ya hay uno con su checkpointer
+            # abierto: prestárselo evita abrir un segundo contra la misma base para hacer
+            # exactamente lo mismo.
+            resume.set_runner(_runner)
+            yield
     resume.set_runner(None)
     await _bus.close()
     await close_redis()

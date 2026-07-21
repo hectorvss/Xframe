@@ -17,17 +17,22 @@ import contextvars
 import hashlib
 import json
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import db
 from app.auth.ratelimit import check_rate_limit
 from app.auth.supabase import AuthError, verify_token
+from app.config import get_settings
 from app.storage import StorageError, get_signer
 
 logger = logging.getLogger(__name__)
@@ -259,6 +264,28 @@ class McpBearerAuth:
         await send({"type": "http.response.body", "body": response.body})
 
 
+def _transport_security_settings() -> TransportSecuritySettings:
+    """Permite el dominio publicado sin relajar la protección DNS rebinding."""
+    public = urlparse(get_settings().public_base_url)
+    public_host = public.netloc
+    public_origin = f"{public.scheme}://{public_host}"
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            public_host,
+            "127.0.0.1:*",
+            "localhost:*",
+            "[::1]:*",
+        ],
+        allowed_origins=[
+            public_origin,
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://[::1]:*",
+        ],
+    )
+
+
 mcp = FastMCP(
     "Xframe",
     instructions=(
@@ -269,6 +296,7 @@ mcp = FastMCP(
     stateless_http=True,
     json_response=True,
     streamable_http_path="/",
+    transport_security=_transport_security_settings(),
 )
 
 
@@ -475,3 +503,15 @@ async def run_xframe_agent(project_id: str, instruction: str, mode: str = "produ
 def asgi_app() -> ASGIApp:
     """Aplicación que se monta como ``/mcp`` en FastAPI."""
     return McpBearerAuth(mcp.streamable_http_app())
+
+
+@asynccontextmanager
+async def session_manager_lifespan() -> AsyncIterator[None]:
+    """Mantiene vivo el task group requerido por Streamable HTTP.
+
+    Al montar ``streamable_http_app`` dentro de otra aplicacion ASGI, Starlette
+    no ejecuta el lifespan de la aplicacion hija. El SDK MCP exige arrancar el
+    session manager explicitamente desde el lifespan de la aplicacion raiz.
+    """
+    async with mcp.session_manager.run():
+        yield

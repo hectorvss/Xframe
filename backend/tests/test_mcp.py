@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+import httpx
 import pytest
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test/test")
@@ -48,3 +49,46 @@ async def test_oauth_token_uses_the_saved_client_grant(monkeypatch) -> None:
     assert principal is not None
     assert principal.scopes == frozenset({"projects:read"})
     assert principal.project_ids == frozenset({PROJECT})
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_initialize_runs_inside_mcp_lifespan(monkeypatch) -> None:
+    """El primer initialize no puede fallar por un task group sin arrancar."""
+    principal = mcp_server.McpPrincipal(
+        user_id=ALICE,
+        scopes=frozenset(mcp_server.ALL_SCOPES),
+    )
+
+    async def authenticated(*_args):
+        return principal
+
+    monkeypatch.setattr(mcp_server.McpBearerAuth, "_principal_for", authenticated)
+    app = mcp_server.asgi_app()
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "xframe-regression", "version": "1.0"},
+        },
+    }
+
+    async with mcp_server.session_manager_lifespan():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://localhost:8000",
+        ) as client:
+            response = await client.post(
+                "/",
+                json=request,
+                headers={
+                    "Authorization": "Bearer test-token",
+                    "Accept": "application/json, text/event-stream",
+                    "MCP-Protocol-Version": "2025-06-18",
+                },
+            )
+
+    assert response.status_code == 200
+    assert response.json()["result"]["serverInfo"]["name"] == "Xframe"

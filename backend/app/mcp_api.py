@@ -34,7 +34,9 @@ class OAuthGrantCreate(BaseModel):
 
 
 def _mcp_url() -> str:
-    return f"{get_settings().public_base_url.rstrip('/')}/mcp"
+    # La ruta canonica del mount lleva barra final; asi los clientes no tienen
+    # que preservar Authorization a traves de una redireccion 307.
+    return f"{get_settings().public_base_url.rstrip('/')}/mcp/"
 
 
 def oauth_issuer_url() -> str:
