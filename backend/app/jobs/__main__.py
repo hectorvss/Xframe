@@ -17,7 +17,7 @@ import signal
 
 from app.config import get_settings
 from app.db import close_pool, init_pool
-from app.jobs.worker import JobWorker, sweep_stale
+from app.jobs.worker import JobWorker, sweep_orphan_assets, sweep_stale
 from app.providers.registry import get_registry
 from app.runtime import configure_event_loop
 
@@ -42,6 +42,12 @@ async def _sweep_loop(stop: asyncio.Event) -> None:
                 logger.info("stale_jobs_swept", extra={"count": swept})
         except Exception:
             logger.exception("sweep_failed")
+        try:
+            # Assets 'generating' que ningún job vivo respalda: la tarjeta "Generando…"
+            # eterna de la UI. Mismo bucle porque es igual de idempotente y global.
+            await sweep_orphan_assets()
+        except Exception:
+            logger.exception("orphan_asset_sweep_failed")
         try:
             await asyncio.wait_for(stop.wait(), timeout=SWEEP_INTERVAL_S)
         except TimeoutError:

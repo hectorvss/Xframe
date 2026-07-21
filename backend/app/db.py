@@ -25,10 +25,14 @@ _pool: asyncpg.Pool | None = None
 async def init_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
+        settings = get_settings()
+        # Tamaños por entorno, no cableados: el pooler de Supabase en modo sesión tiene
+        # un cupo GLOBAL de 15 clientes que se reparten entre API, workers y checkpointer.
+        # Ver el comentario de `db_pool_max` en config.py.
         _pool = await asyncpg.create_pool(
-            get_settings().database_url,
-            min_size=2,
-            max_size=16,
+            settings.database_url,
+            min_size=settings.db_pool_min,
+            max_size=settings.db_pool_max,
             init=_init_conn,
         )
     return _pool

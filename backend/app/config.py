@@ -13,6 +13,17 @@ class Settings(BaseSettings):
 
     # --- infraestructura ---
     database_url: str = Field(alias="DATABASE_URL")
+
+    db_pool_min: int = Field(default=1, alias="DB_POOL_MIN")
+    db_pool_max: int = Field(default=4, alias="DB_POOL_MAX")
+    """
+    Tamaño del pool de asyncpg POR PROCESO. El defecto es deliberadamente pequeño: el
+    pooler de Supabase en modo sesión admite 15 clientes EN TOTAL, y de ahí comen la API,
+    cada réplica del worker y el checkpointer de LangGraph. Con el antiguo max_size=16
+    por proceso, el segundo worker agotaba el cupo y moría en bucle con EMAXCONNSESSION,
+    y las tools del agente fallaban a mitad de turno "por un error interno". La suma de
+    todos los procesos debe quedar por debajo de 15; se reparte por entorno en compose.
+    """
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
     supabase_url: str = Field(default="", alias="SUPABASE_URL")

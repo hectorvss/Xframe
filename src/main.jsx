@@ -5313,6 +5313,17 @@ function Editor({ projectId }) {
   const [ghosts, setGhosts] = useState([]);
   const turn = useRef(null);
 
+  // Red de seguridad de los fantasmas: `onDone`/`onError` los limpian, pero si el
+  // stream muere sin despedirse (backend reiniciado a mitad de turno, red caída), esos
+  // callbacks no llegan nunca y la malla de píxeles se quedaría animándose para
+  // siempre. A los dos minutos sin resolución se retiran solos: ninguna generación de
+  // imagen tarda tanto en, al menos, encolarse.
+  useEffect(() => {
+    if (!ghosts.length) return undefined;
+    const t = setTimeout(() => setGhosts([]), 120000);
+    return () => clearTimeout(t);
+  }, [ghosts]);
+
   // Cambiar de proyecto o salir del editor corta el stream, no el trabajo: los
   // jobs encolados son del worker y deben terminar aunque nadie mire.
   useEffect(() => () => turn.current?.cancel(), [projectId]);

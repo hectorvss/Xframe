@@ -1040,6 +1040,71 @@ async def sweep_stale(*, older_than_s: int = STALE_AFTER_S) -> int:
     return swept
 
 
+ORPHAN_ASSET_AFTER_S = 900
+"""
+Quince minutos: más que el timeout de cualquier job de imagen y que el arranque en frío
+del worker, y mucho menos que la eternidad que duraba el síntoma.
+"""
+
+
+async def sweep_orphan_assets(*, older_than_s: int = ORPHAN_ASSET_AFTER_S) -> int:
+    """
+    Cierra assets clavados en 'generating' que ningún job vivo respalda.
+
+    Un asset llega a ese limbo por dos caminos reales, ambos observados en producción:
+
+    - `define_element` sin imagen de referencia crea su asset en 'generating' contando
+      con que el agente genere y adjunte la imagen después. Si el turno muere antes
+      (un error de pool, un timeout del LLM), nadie vuelve a tocar esa fila.
+    - El worker muere entre crear el asset y finalizar el job; `sweep_stale` cancela y
+      reembolsa el JOB, pero el asset no lleva `job_id` hasta el final y se queda.
+
+    El síntoma en la UI es idéntico en ambos: una tarjeta "Generando…" animada para
+    siempre. Pasarlo a 'failed' es honesto — no hay nada generándose — y reversible:
+    si más tarde el agente le adjunta una referencia, `define_element` lo devuelve a
+    'ready'.
+
+    La guarda `not exists` protege lo legítimo: un vídeo largo aún en curso tiene su
+    job en estado activo y no se toca.
+    """
+    async with transaction() as conn:
+        # Primero el rescate: 'generating' CON url es un asset terminado al que nadie
+        # cerró el estado (p. ej. un element cuya referencia se adjuntó antes del fix de
+        # define_element). Suspenderlo sería mentir dos veces.
+        rescued = await conn.fetch(
+            """
+            update public.assets
+               set status = 'ready'
+             where status = 'generating' and url is not null
+            returning id
+            """
+        )
+        rows = await conn.fetch(
+            """
+            update public.assets a
+               set status = 'failed'
+             where a.status = 'generating'
+               and a.url is null
+               and a.created_at < now() - ($1 || ' seconds')::interval
+               and not exists (
+                   select 1 from public.generation_jobs j
+                    where j.asset_id = a.id
+                      and j.status in ('queued', 'submitted', 'running')
+               )
+            returning a.id
+            """,
+            str(older_than_s),
+        )
+        if rescued:
+            logger.info("orphan_assets_rescued", extra={"count": len(rescued)})
+    if rows:
+        logger.warning(
+            "orphan_assets_swept",
+            extra={"count": len(rows), "asset_ids": [str(r["id"]) for r in rows]},
+        )
+    return len(rows)
+
+
 def _deserialize(raw: dict[str, Any]) -> GenerationRequest:
     """
     jsonb → `GenerationRequest`. Se filtran las claves desconocidas: un job encolado por

@@ -78,7 +78,17 @@ class DefineElementTool(SnapshotTool):
                 update public.assets
                    set role = $3,
                        meta = $4,
-                       url  = coalesce($5, url)
+                       url  = coalesce($5, url),
+                       -- Adjuntar la referencia CIERRA el estado. Sin esta línea, el
+                       -- element nacía en 'generating' (creación sin URL, más abajo) y
+                       -- se quedaba ahí para siempre aunque el agente le adjuntara la
+                       -- imagen después: la UI mostraba una tarjeta "Generando…" eterna
+                       -- para un element perfectamente terminado. También rescata a un
+                       -- element barrido a 'failed' al que por fin le llega su imagen.
+                       status = case
+                                    when coalesce($5, url) is not null then 'ready'
+                                    else status
+                                end
                  where id = $1::uuid and project_id = $2::uuid
                 returning id, name, role, meta, url, status
                 """,

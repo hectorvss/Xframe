@@ -33,9 +33,17 @@ x-app: &app
       max-file: "5"
 
 services:
+  # Presupuesto de conexiones: el pooler de Supabase en modo sesión admite 15 clientes
+  # EN TOTAL. Reparto: api 6 + worker 3×2 + checkpointer/margen ≈ 14. Si se añade una
+  # réplica o un proceso nuevo, hay que restarle de aquí, no confiar en la suerte: el
+  # síntoma de pasarse es EMAXCONNSESSION y un worker en bucle de crash.
   api:
     <<: *app
     command: python run_api.py --host 0.0.0.0 --port 8000
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DB_POOL_MIN: "1"
+      DB_POOL_MAX: "6"
     # Solo en el loopback del host, nunca en 0.0.0.0: el puerto no debe quedar expuesto a
     # internet sin TLS ni saltándose el rate limit. Quien habla con él es el Caddy que ya
     # corre en la máquina, y desde el host `127.0.0.1:8000` le basta.
@@ -55,6 +63,10 @@ services:
   worker:
     <<: *app
     command: python -m app.jobs
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DB_POOL_MIN: "1"
+      DB_POOL_MAX: "3"
     volumes:
       - assembly-work:/tmp/xframe
     deploy:
