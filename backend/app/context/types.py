@@ -43,6 +43,8 @@ class OpenTab(StrEnum):
     ASSETS = "assets"
     ELEMENTS = "elements"
     PREVIEW = "preview"
+    SCRIPT = "script"
+    AUDIO = "audio"
     CHAT = "chat"
 
 
@@ -324,6 +326,12 @@ class XframeUIContext(BaseModel):
     elements: list[ElementContext] = Field(default_factory=list)
     recent_assets: list[AssetContext] = Field(default_factory=list)
     selected_assets: list[AssetContext] = Field(default_factory=list)
+
+    screenplay: list[dict[str, Any]] = Field(default_factory=list)
+    """Editable scenes with ordered dialogue/action lines."""
+    character_voices: list[dict[str, Any]] = Field(default_factory=list)
+    audio_cues: list[dict[str, Any]] = Field(default_factory=list)
+    transitions: list[dict[str, Any]] = Field(default_factory=list)
 
     gen_settings: GenSettings = Field(default_factory=GenSettings)
     credits: int = 0

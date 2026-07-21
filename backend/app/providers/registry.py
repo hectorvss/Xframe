@@ -36,6 +36,7 @@ _FACTORIES: dict[str, Callable[[], GenerationAdapter]] = {}
 
 
 def _register_defaults() -> None:
+    from app.providers.elevenlabs import ElevenLabsAdapter
     from app.providers.flux import FluxAdapter
     from app.providers.hailuo import HailuoAdapter
     from app.providers.higgsfield import HiggsfieldAdapter
@@ -43,6 +44,7 @@ def _register_defaults() -> None:
     from app.providers.openai_image import OpenAIImageAdapter
     from app.providers.seedance import SeedanceAdapter
     from app.providers.sora import SoraAdapter
+    from app.providers.sync_labs import SyncLabsAdapter
     from app.providers.veo import VeoAdapter
     from app.providers.wan import WanAdapter
 
@@ -59,6 +61,8 @@ def _register_defaults() -> None:
         # dict se indexa por provider_id y compartirlo haría que una familia machacara a
         # la otra. Comparten la clave OPENAI_API_KEY, que es lo único que se comparte.
         OpenAIImageAdapter,
+        ElevenLabsAdapter,
+        SyncLabsAdapter,
     ):
         _FACTORIES[adapter_cls.provider_id] = adapter_cls
 
@@ -156,7 +160,7 @@ class DbAdapterRegistry:
             select id, family, provider, modality, cost_per_second, cost_per_image,
                    min_duration_s, max_duration_s, resolutions, aspects,
                    supports_i2v, supports_last_frame, supports_char_ref, supports_audio,
-                   description_llm
+                   capabilities, description_llm
               from public.gen_models
              -- `<> 'retired'`, no `= 'active'`, y tiene que coincidir **exactamente** con
              -- la regla de `taxonomy/repo.py`. Allí un modelo `deprecated` se sigue
@@ -192,6 +196,7 @@ def _to_spec(row: Any) -> ModelSpec:
         supports_last_frame=row["supports_last_frame"],
         supports_char_ref=row["supports_char_ref"],
         supports_audio=row["supports_audio"],
+        capabilities=tuple(row["capabilities"] or ()),
         description_llm=row["description_llm"] or "",
     )
     # `ModelSpec` usa slots y no declara cost_per_image; se cuelga como atributo suelto

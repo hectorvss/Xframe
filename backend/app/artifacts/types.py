@@ -153,10 +153,38 @@ class ScriptArtifactContent(_BaseContent):
     content_type: Literal["script"] = "script"
 
 
+class ScreenplayArtifactContent(_BaseContent):
+    """Structured screenplay snapshot.
+
+    Scenes and lines remain normalized in their own tables so the UI can edit and
+    collaborate at line granularity.  The artifact stores stable references and is the
+    immutable version the user approved before voice/video generation.
+    """
+
+    content_type: Literal["screenplay"] = "screenplay"
+    scene_ids: list[str] = Field(default_factory=list)
+    cast_element_ids: list[str] = Field(default_factory=list)
+    scenes: list[dict[str, Any]] = Field(default_factory=list)
+    language: str = "es"
+    target_duration_s: float | None = None
+
+
 class TimelineArtifactContent(_BaseContent):
     """Timeline: la secuencia de planos con sus duraciones."""
 
     content_type: Literal["timeline"] = "timeline"
+    total_duration_s: float | None = None
+
+
+class AudioPlanArtifactContent(_BaseContent):
+    """Versioned snapshot of the multitrack sound direction for a cut."""
+
+    content_type: Literal["audio_plan"] = "audio_plan"
+    cue_ids: list[str] = Field(default_factory=list)
+    cue_snapshot: list[dict[str, Any]] = Field(default_factory=list)
+    buses: dict[str, Any] = Field(default_factory=dict)
+    target_lufs: float = -14.0
+    true_peak_dbtp: float = -1.0
     total_duration_s: float | None = None
 
 
@@ -177,12 +205,19 @@ class PlanArtifactContent(_BaseContent):
 
 
 StoredContent = Union[
-    ScriptArtifactContent, TimelineArtifactContent, CutArtifactContent, PlanArtifactContent
+    ScriptArtifactContent,
+    ScreenplayArtifactContent,
+    TimelineArtifactContent,
+    AudioPlanArtifactContent,
+    CutArtifactContent,
+    PlanArtifactContent,
 ]
 
 CONTENT_BY_KIND: dict[str, type[BaseModel]] = {
     "script": ScriptArtifactContent,
+    "screenplay": ScreenplayArtifactContent,
     "timeline": TimelineArtifactContent,
+    "audio_plan": AudioPlanArtifactContent,
     "cut": CutArtifactContent,
     "plan": PlanArtifactContent,
 }

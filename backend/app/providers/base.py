@@ -135,6 +135,7 @@ class ModelSpec:
     supports_last_frame: bool = False
     supports_char_ref: bool = False
     supports_audio: bool = False
+    capabilities: tuple[str, ...] = ()
     description_llm: str = ""
 
 

@@ -16,7 +16,9 @@
  */
 
 /** Pestañas del editor, tal cual las declara `OpenTab` en el backend. */
-const OPEN_TABS = ["brief", "canvas", "assets", "elements", "preview", "chat"];
+const OPEN_TABS = [
+  "brief", "canvas", "assets", "elements", "preview", "chat", "script", "audio",
+];
 
 /** Ventana de assets recientes. El censo real va en `total_assets`. */
 const RECENT_ASSETS_LIMIT = 40;

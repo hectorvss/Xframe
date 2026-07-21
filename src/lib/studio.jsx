@@ -136,6 +136,10 @@ export function StudioProvider({ children }) {
 
   const updateProfile = useCallback(
     async (patch) => {
+      // Public pages render the same generation controls before authentication. Their
+      // defaults may emit a preference update during mount; without this guard that
+      // harmless UI initialization dereferenced a null profile and polluted the console.
+      if (!profile?.id) return null;
       const next = await db.updateProfile(profile.id, patch);
       setProfile(next);
       return next;

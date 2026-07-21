@@ -8,6 +8,9 @@ __pycache__/
 .vite-localhost.out.log
 .DS_Store
 
+# Estado local generado por Supabase CLI (referencia de proyecto, versiones, etc.)
+supabase/.temp/
+
 # Variables de entorno locales (nunca al repo)
 .env
 .env.local

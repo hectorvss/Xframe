@@ -459,6 +459,69 @@ def _format_gen_settings(settings: GenSettings) -> str:
     return P.GEN_SETTINGS_TEMPLATE.format(attrs=attrs) if attrs else ""
 
 
+def _format_production(ctx: XframeUIContext, detail: ContextDetail) -> str:
+    if not (ctx.screenplay or ctx.character_voices or ctx.audio_cues or ctx.transitions):
+        return ""
+    lines: list[str] = []
+    if ctx.character_voices:
+        lines.append("<cast_voices>")
+        for voice in ctx.character_voices[:40]:
+            lines.append(
+                f'<voice character="{_attr(voice.get("character_name", ""))}" '
+                f'element_id="{_attr(voice.get("element_id", ""))}" '
+                f'profile_id="{_attr(voice.get("voice_profile_id", ""))}" '
+                f'provider="{_attr(voice.get("provider", ""))}" '
+                f'language="{_attr(voice.get("language", ""))}"/>'
+            )
+        lines.append("</cast_voices>")
+    if ctx.screenplay:
+        lines.append("<screenplay>")
+        line_limit = 120 if detail is ContextDetail.FULL else 50
+        used = 0
+        for scene in ctx.screenplay[:30]:
+            lines.append(
+                f'<scene id="{_attr(scene.get("id", ""))}" position="{scene.get("position", 0)}" '
+                f'title="{_attr(scene.get("title", ""))}">'
+            )
+            for item in scene.get("lines", []):
+                if used >= line_limit:
+                    break
+                used += 1
+                attrs = (
+                    f'id="{_attr(item.get("id", ""))}" type="{_attr(item.get("line_type", ""))}" '
+                    f'speaker="{_attr(item.get("speaker_name", ""))}" '
+                    f'shot="{_attr(item.get("shot_id", ""))}" '
+                    f'emotion="{_attr(item.get("emotion", "neutral"))}" '
+                    f'status="{_attr(item.get("status", "draft"))}"'
+                )
+                lines.append(f"<line {attrs}>{_body(_clip(str(item.get('text', '')), 800))}</line>")
+            lines.append("</scene>")
+        lines.append("</screenplay>")
+    if ctx.audio_cues:
+        lines.append("<audio_cues>")
+        for cue in ctx.audio_cues[:100]:
+            lines.append(
+                f'<cue id="{_attr(cue.get("id", ""))}" asset="{_attr(cue.get("asset_id", ""))}" '
+                f'kind="{_attr(cue.get("track_kind", ""))}" '
+                f'range_ms="{cue.get("start_ms", 0)}-{cue.get("end_ms", 0)}" '
+                f'gain_db="{cue.get("gain_db", 0)}" role="{_attr(cue.get("narrative_role", ""))}"/>'
+            )
+        lines.append("</audio_cues>")
+    if ctx.transitions:
+        lines.append("<transitions>")
+        for transition in ctx.transitions[:80]:
+            lines.append(
+                f'<transition id="{_attr(transition.get("id", ""))}" '
+                f'from="{_attr(transition.get("from_asset_id", ""))}" '
+                f'to="{_attr(transition.get("to_asset_id", ""))}" '
+                f'kind="{_attr(transition.get("kind", ""))}" '
+                f'duration_ms="{transition.get("duration_ms", 0)}" '
+                f'status="{_attr(transition.get("status", ""))}"/>'
+            )
+        lines.append("</transitions>")
+    return P.PRODUCTION_TEMPLATE.format(body="\n".join(lines))
+
+
 def serialize_context(
     ctx: XframeUIContext,
     *,
@@ -696,6 +759,9 @@ def _render(
     if elements_xml := _format_elements(ctx.elements, detail):
         sections.append(elements_xml)
 
+    if production_xml := _format_production(ctx, detail):
+        sections.append(production_xml)
+
     assets_xml, assets_shown = _format_assets(
         ctx.recent_assets, ctx.total_assets or len(ctx.recent_assets), detail, assets_limit
     )
@@ -814,12 +880,13 @@ class XframeContextManager:
             self._load_sheets(),
             self._load_profile(),
             self._load_guidance(),
+            self._load_production(),
             return_exceptions=True,
         )
-        project, brief, shots, assets_bundle, sheets, profile, guidance = [
+        project, brief, shots, assets_bundle, sheets, profile, guidance, production = [
                 self._or_default(r, default)
                 for r, default in zip(
-                results, ({}, [], [], ([], 0), {}, {}, Guidance()), strict=True
+                results, ({}, [], [], ([], 0), {}, {}, Guidance(), {}), strict=True
             )
         ]
 
@@ -840,6 +907,10 @@ class XframeContextManager:
             elements=elements,
             recent_assets=assets,
             selected_assets=selected,
+            screenplay=production.get("screenplay", []),
+            character_voices=production.get("character_voices", []),
+            audio_cues=production.get("audio_cues", []),
+            transitions=production.get("transitions", []),
             gen_settings=self._build_gen_settings(project, profile),
             credits=int(profile.get("credits", 0) or 0),
             total_assets=total_assets,
@@ -859,6 +930,92 @@ class XframeContextManager:
             self._project_id,
         )
         return dict(row) if row else {}
+
+    async def _load_production(self) -> dict[str, Any]:
+        scene_rows, line_rows, voice_rows, cue_rows, transition_rows = await asyncio.gather(
+            db.fetch(
+                """select id, position, title, setting, time_of_day, summary,
+                          dramatic_intent, target_duration_ms, status
+                     from public.script_scenes where project_id=$1::uuid
+                    order by position""",
+                self._project_id,
+            ),
+            db.fetch(
+                """select l.id, l.scene_id, l.position, l.line_type, l.speaker_element_id,
+                          speaker.name as speaker_name, l.voice_profile_id, l.shot_id, l.text,
+                          l.language, l.emotion, l.direction, l.pace, l.intensity,
+                          l.pause_before_ms, l.pause_after_ms, l.target_duration_ms,
+                          l.audio_asset_id, l.status
+                     from public.script_lines l
+                     left join public.assets speaker on speaker.id=l.speaker_element_id
+                    where l.project_id=$1::uuid order by l.scene_id, l.position""",
+                self._project_id,
+            ),
+            db.fetch(
+                """select cv.element_id, element.name as character_name,
+                          cv.voice_profile_id, vp.name as voice_name, vp.provider,
+                          vp.provider_voice_id, vp.language, vp.accent, vp.description,
+                          vp.settings, vp.pronunciation_rules, vp.consent_status
+                     from public.character_voices cv
+                     join public.assets element on element.id=cv.element_id
+                     join public.voice_profiles vp on vp.id=cv.voice_profile_id
+                    where cv.project_id=$1::uuid and cv.is_default""",
+                self._project_id,
+            ),
+            db.fetch(
+                """select id, asset_id, shot_id, script_line_id, track_kind, start_ms,
+                          end_ms, source_in_ms, source_out_ms, gain_db, fade_in_ms,
+                          fade_out_ms, pan, loop, locked, approved, ducking_group,
+                          ducking_db, priority, narrative_role, context_tags
+                     from public.audio_cues where project_id=$1::uuid
+                    order by start_ms, priority desc""",
+                self._project_id,
+            ),
+            db.fetch(
+                """select id, from_asset_id, to_asset_id, kind, duration_ms,
+                          generated_asset_id, model_id, seed, parameters, signature, status
+                     from public.timeline_transitions where project_id=$1::uuid
+                    order by created_at""",
+                self._project_id,
+            ),
+        )
+        lines_by_scene: dict[str, list[dict[str, Any]]] = {}
+        for row in line_rows:
+            data = dict(row)
+            for key in ("id", "scene_id", "speaker_element_id", "voice_profile_id", "shot_id", "audio_asset_id"):
+                if data.get(key) is not None:
+                    data[key] = str(data[key])
+            lines_by_scene.setdefault(data["scene_id"], []).append(data)
+        screenplay: list[dict[str, Any]] = []
+        for row in scene_rows:
+            data = dict(row)
+            data["id"] = str(data["id"])
+            data["lines"] = lines_by_scene.get(data["id"], [])
+            screenplay.append(data)
+
+        def stringify(rows: Any, uuid_fields: tuple[str, ...]) -> list[dict[str, Any]]:
+            output: list[dict[str, Any]] = []
+            for row in rows:
+                data = dict(row)
+                for key in uuid_fields:
+                    if data.get(key) is not None:
+                        data[key] = str(data[key])
+                output.append(data)
+            return output
+
+        return {
+            "screenplay": screenplay,
+            "character_voices": stringify(
+                voice_rows, ("element_id", "voice_profile_id")
+            ),
+            "audio_cues": stringify(
+                cue_rows, ("id", "asset_id", "shot_id", "script_line_id")
+            ),
+            "transitions": stringify(
+                transition_rows,
+                ("id", "from_asset_id", "to_asset_id", "generated_asset_id"),
+            ),
+        }
 
     async def _load_profile(self) -> dict[str, Any]:
         row = await db.fetchrow(

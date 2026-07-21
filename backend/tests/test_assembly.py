@@ -14,12 +14,14 @@ alineación a macrobloques.
 from __future__ import annotations
 
 from fractions import Fraction
+from types import SimpleNamespace
 
 import pytest
 
 from app.assembly.ffmpeg import (
     AssemblyError,
     AssemblySpec,
+    AudioTimelineClip,
     ClipsNotReadyError,
     IncompatibleClipsError,
     TargetFormat,
@@ -30,6 +32,15 @@ from app.assembly.ffmpeg import (
     resolve_target_format,
 )
 from app.assembly.probe import ClipProbe
+
+
+@pytest.fixture(autouse=True)
+def stable_ffmpeg_binary(monkeypatch):
+    """Filtergraph tests must not depend on deployment credentials or PATH."""
+    monkeypatch.setattr(
+        "app.assembly.ffmpeg.get_settings",
+        lambda: SimpleNamespace(ffmpeg_path="ffmpeg"),
+    )
 
 
 def make_probe(
@@ -209,6 +220,67 @@ def test_external_audio_track_replaces_clip_audio(clips, heterogeneous_probes):
     assert "afade=t=out" in graph
     assert "acrossfade" not in graph  # el audio de los clips no se usa
     assert "[aout]" in graph
+
+
+def test_multitrack_audio_places_cues_and_mixes_native_sound(clips, heterogeneous_probes):
+    target, _ = resolve_target_format(heterogeneous_probes)
+    spec = AssemblySpec(
+        clips=clips,
+        output_path="/tmp/out.mp4",
+        audio_cues=[
+            AudioTimelineClip(
+                asset_id="dialogue",
+                src="dialogue.wav",
+                track_kind="dialogue",
+                start_s=1.25,
+                end_s=4.25,
+                gain_db=-2,
+                fade_in_s=0.1,
+                fade_out_s=0.2,
+            ),
+            AudioTimelineClip(
+                asset_id="music",
+                src="music.wav",
+                track_kind="music",
+                start_s=0,
+                end_s=11,
+                gain_db=-14,
+                loop=True,
+                ducking_group="dialogue",
+                ducking_db=-12,
+            ),
+        ],
+    )
+    args, duration = _build_command(spec, clips, heterogeneous_probes, target)
+    graph = args[args.index("-filter_complex") + 1]
+
+    assert duration == pytest.approx(11.0)
+    assert "dialogue.wav" in args and "music.wav" in args
+    assert "adelay=1250|1250" in graph
+    assert "volume=-14dB" in graph
+    assert "sidechaincompress" in graph
+    assert "amix=inputs=3" in graph  # native cut + dialogue + score
+    assert "loudnorm=I=-14:TP=-1" in graph
+    assert "-stream_loop" in args
+
+
+def test_multitrack_audio_rejects_cue_past_cut(clips, heterogeneous_probes):
+    target, _ = resolve_target_format(heterogeneous_probes)
+    spec = AssemblySpec(
+        clips=clips,
+        output_path="/tmp/out.mp4",
+        audio_cues=[
+            AudioTimelineClip(
+                asset_id="late",
+                src="late.wav",
+                track_kind="sfx",
+                start_s=10,
+                end_s=12,
+            )
+        ],
+    )
+    with pytest.raises(AssemblyError, match="invalid range"):
+        _build_command(spec, clips, heterogeneous_probes, target)
 
 
 def test_single_clip_timeline_needs_no_chaining(heterogeneous_probes):

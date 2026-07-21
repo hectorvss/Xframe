@@ -73,6 +73,14 @@ const emptyState = () => ({
   canvas_nodes: [],
   canvas_edges: [],
   messages: [],
+  script_scenes: [],
+  script_lines: [],
+  voice_profiles: [],
+  character_voices: [],
+  audio_cues: [],
+  asset_annotations: [],
+  asset_operations: [],
+  timeline_transitions: [],
   workspaces: [],
   api_keys: [],
   credit_usage: [],
@@ -990,6 +998,48 @@ export const db = {
 
   async deleteAsset(id) {
     return DRIVER.remove("assets", { id });
+  },
+
+  /* --- production studio: screenplay, voices, audio and review --- */
+
+  async getProduction(projectId) {
+    const [scenes, lines, voices, characterVoices, cues, annotations, operations, transitions] =
+      await Promise.all([
+        DRIVER.select("script_scenes", { project_id: projectId }),
+        DRIVER.select("script_lines", { project_id: projectId }),
+        DRIVER.select("voice_profiles", { project_id: projectId }),
+        DRIVER.select("character_voices", { project_id: projectId }),
+        DRIVER.select("audio_cues", { project_id: projectId }),
+        DRIVER.select("asset_annotations", { project_id: projectId }),
+        DRIVER.select("asset_operations", { project_id: projectId }),
+        DRIVER.select("timeline_transitions", { project_id: projectId }),
+      ]);
+    return {
+      scenes: scenes.sort((a, b) => a.position - b.position),
+      lines: lines.sort((a, b) => a.position - b.position),
+      voices,
+      characterVoices,
+      cues: cues.sort((a, b) => a.start_ms - b.start_ms),
+      annotations,
+      operations,
+      transitions,
+    };
+  },
+
+  async addAnnotation(projectId, annotation) {
+    return DRIVER.insert("asset_annotations", {
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
+      project_id: projectId,
+      kind: "comment",
+      body: "",
+      geometry: {},
+      color: "#2563eb",
+      ...annotation,
+    });
+  },
+
+  async deleteAnnotation(id) {
+    return DRIVER.remove("asset_annotations", { id });
   },
 
   /* --- brief, canvas y mensajes --- */

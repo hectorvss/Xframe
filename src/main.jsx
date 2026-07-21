@@ -150,6 +150,7 @@ import {
   mcpApi,
 } from "@/lib/agent";
 import { buildUIContext } from "@/lib/uiContext";
+import { AudioStudio, ScreenplayStudio } from "@/components/production-studio";
 import "./index.css";
 import "./styles.css";
 
@@ -4051,6 +4052,8 @@ function ConnectorsDialog({ onClose }) {
 const editorTabs = [
   ["preview", Monitor, "Vista previa"],
   ["assets", Layers, "All assets"],
+  ["script", FileText, "Guion"],
+  ["audio", Volume2, "Audio"],
   ["brief", FileText, "Project brief"],
   ["elements", AtSign, "Elements"],
   ["canvas", Frame, "Canvas"],
@@ -4319,6 +4322,20 @@ const chatContext = {
       "Interior de estación orbital abandonada",
       "Nébula ámbar de fondo",
     ],
+  },
+  script: {
+    label: "Guion de producción",
+    hint: "Estructura escenas, reparto, diálogo, voz en off y tiempos.",
+    placeholder: "Describe una escena o pega el diálogo exacto…",
+    examples: ["Describe una escena o pega el diálogo exacto…"],
+    chips: ["Estructura el guion", "Revisa los diálogos", "Asigna voces"],
+  },
+  audio: {
+    label: "Diseño de audio",
+    hint: "Genera voces, música, efectos y construye la mezcla por contexto.",
+    placeholder: "Describe el arco musical o el sonido de una escena…",
+    examples: ["Describe el arco musical o el sonido de una escena…"],
+    chips: ["Diseña la música", "Genera las voces", "Crea la mezcla"],
   },
   preview: {
     label: "Edición del montaje",
@@ -5448,11 +5465,43 @@ const elementRoles = ["Personaje", "Localización", "Objeto"];
 // Vista ampliada del asset.
 function AssetLightbox({
   asset,
+  projectId,
   onClose,
   onAssign,
   onRegenerate,
   onDuplicate,
+  onAction,
 }) {
+  const [reviewMode, setReviewMode] = useState(null);
+  const [pin, setPin] = useState(null);
+  const [comment, setComment] = useState("");
+  const placePin = (event) => {
+    if (reviewMode !== "comment") return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setPin({
+      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    });
+  };
+  const saveComment = async () => {
+    if (!pin || !comment.trim()) return;
+    await db.addAnnotation(projectId, {
+      asset_id: asset.id,
+      kind: "comment",
+      body: comment.trim(),
+      geometry: { type: "point", ...pin },
+    });
+    setComment("");
+    setPin(null);
+    setReviewMode(null);
+  };
+  const derived = [
+    ["edit", Wand2, "Editar componente"],
+    ["extend", MoveHorizontal, "Extender clip"],
+    ["remix", RefreshCw, "Remix"],
+    ["variations", Grid2X2, "Variaciones"],
+    ["character", AtSign, "Reutilizar personaje"],
+  ];
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-4xl">
@@ -5475,6 +5524,7 @@ function AssetLightbox({
           </DialogDescription>
         </DialogHeader>
 
+        <div className="relative" onClick={placePin}>
         {asset.url && /video|cut/i.test(String(asset.type)) ? (
           // Un vídeo se reproduce, no se enseña como imagen rota.
           <video
@@ -5496,6 +5546,37 @@ function AssetLightbox({
             <Volume2 className="size-10 text-muted-foreground" />
           </div>
         )}
+          {reviewMode === "comment" && (
+            <div className="pointer-events-none absolute inset-0 cursor-crosshair ring-1 ring-inset ring-blue-500/70" />
+          )}
+          {pin && (
+            <span
+              className="absolute flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-blue-600 text-[10px] font-semibold text-white shadow-lg"
+              style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
+            >1</span>
+          )}
+          <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center rounded-full border border-white/10 bg-neutral-950/90 p-1 text-white shadow-xl backdrop-blur">
+            <button title="Seleccionar" className="flex size-8 items-center justify-center rounded-full hover:bg-white/10"><Crosshair className="size-3.5" /></button>
+            <button title="Texto" className="flex size-8 items-center justify-center rounded-full hover:bg-white/10"><Type className="size-3.5" /></button>
+            <button title="Anotar" onClick={(e) => { e.stopPropagation(); setReviewMode(reviewMode === "comment" ? null : "comment"); }} className={cn("flex size-8 items-center justify-center rounded-full hover:bg-white/10", reviewMode === "comment" && "bg-blue-600 hover:bg-blue-600")}><Pencil className="size-3.5" /></button>
+            <button title="Comentar" onClick={(e) => { e.stopPropagation(); setReviewMode("comment"); }} className="flex size-8 items-center justify-center rounded-full hover:bg-white/10"><MessageCircle className="size-3.5" /></button>
+          </div>
+        </div>
+
+        {pin && (
+          <div className="rounded-xl border bg-background p-3 shadow-sm">
+            <Textarea autoFocus value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Describe el cambio exacto en este punto…" className="min-h-20 resize-none border-0 p-0 shadow-none focus-visible:ring-0" />
+            <div className="mt-2 flex justify-end gap-2"><UIButton variant="ghost" size="sm" onClick={() => setPin(null)}>Cancelar</UIButton><UIButton size="sm" disabled={!comment.trim()} onClick={saveComment}>Guardar comentario</UIButton></div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          {derived.map(([action, Icon, label]) => (
+            <button key={action} onClick={() => onAction?.(asset, action)} className="flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg border bg-background px-2 text-center text-[11px] font-medium transition-colors hover:bg-accent">
+              <Icon className="size-4 text-muted-foreground" />{label}
+            </button>
+          ))}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <UIButton
@@ -5794,11 +5875,13 @@ function GeneratingCard({ label }) {
 
 function EditorAssets({
   assets,
+  projectId,
   onAssign,
   onDuplicate,
   onRemove,
   onRegenerate,
   onUpload,
+  onAction,
 }) {
   const fileRef = useRef(null);
   const [filter, setFilter] = useState("Todos");
@@ -5943,10 +6026,12 @@ function EditorAssets({
       {openAsset && (
         <AssetLightbox
           asset={openAsset}
+          projectId={projectId}
           onClose={() => setOpenId(null)}
           onAssign={onAssign}
           onRegenerate={onRegenerate}
           onDuplicate={onDuplicate}
+          onAction={onAction}
         />
       )}
       {customAsset && (
@@ -7813,7 +7898,7 @@ function Editor({ projectId }) {
             <PanelLeft className={cn(chatHidden && "text-muted-foreground")} />
           </EditorIconBtn>
         </div>
-        <div className="ml-1 flex items-center gap-0.5 rounded-lg border p-0.5">
+        <div className="ml-1 flex min-w-0 items-center gap-0.5 overflow-x-auto rounded-lg border p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {editorTabs.map(([id, I, l]) => (
             <button
               key={id}
@@ -7904,11 +7989,43 @@ function Editor({ projectId }) {
           {tab === "assets" && (
             <EditorAssets
               assets={ghosts.length ? [...ghosts, ...assets] : assets}
+              projectId={projectId}
               onAssign={(id, role) => patchAsset(id, { role })}
               onDuplicate={duplicateAsset}
               onRemove={removeAsset}
               onRegenerate={regenerateAsset}
               onUpload={uploadFiles}
+              onAction={(asset, action) => {
+                const instructions = {
+                  edit: `Edita únicamente el componente que señalaré del asset @${asset.name} (id ${asset.id}), conservando composición, identidad y el resto de píxeles. Pregúntame por la máscara o usa sus anotaciones existentes.`,
+                  extend: `Extiende el clip @${asset.name} (id ${asset.id}) con continuidad exacta desde su último frame. Conserva personaje, cámara, iluminación y sonido; estima coste antes de generar.`,
+                  remix: `Crea un remix derivado de @${asset.name} (id ${asset.id}). Conserva su linaje y pregúntame qué dimensión quiero cambiar antes de generar.`,
+                  variations: `Propón variaciones controladas de @${asset.name} (id ${asset.id}), cambiando una sola variable cada vez y preservando semilla, personajes y composición cuando el modelo lo permita. Estima el lote antes de generarlo.`,
+                  character: `Convierte o reutiliza el personaje visible en @${asset.name} (id ${asset.id}) como Element persistente, con ficha de continuidad y referencias aprobadas.`,
+                };
+                setChatHidden(false);
+                setChatInsert({ text: instructions[action], at: Date.now() });
+              }}
+            />
+          )}
+          {tab === "script" && (
+            <ScreenplayStudio
+              projectId={projectId}
+              assets={assets}
+              onSeedChat={(text) => {
+                setChatHidden(false);
+                setChatInsert({ text, at: Date.now() });
+              }}
+            />
+          )}
+          {tab === "audio" && (
+            <AudioStudio
+              projectId={projectId}
+              assets={assets}
+              onSeedChat={(text) => {
+                setChatHidden(false);
+                setChatInsert({ text, at: Date.now() });
+              }}
             />
           )}
           {tab === "brief" && (

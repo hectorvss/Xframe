@@ -123,6 +123,33 @@ class Settings(BaseSettings):
     higgsfield_key_id: str = Field(default="", alias="HIGGSFIELD_KEY_ID")
     higgsfield_key_secret: str = Field(default="", alias="HIGGSFIELD_KEY_SECRET")
     bfl_api_key: str = Field(default="", alias="BFL_API_KEY")
+    elevenlabs_api_key: str = Field(default="", alias="ELEVENLABS_API_KEY")
+    sync_api_key: str = Field(default="", alias="SYNC_API_KEY")
+
+    def provider_is_configured(self, provider_id: str) -> bool:
+        """Return whether a generation provider has every credential it needs.
+
+        The catalogue is user-facing. Advertising a model whose adapter can only fail
+        with "API key missing" is not graceful degradation; it is a broken affordance.
+        Keep this mapping beside the credentials so adding a provider cannot silently
+        forget the readiness rule.
+        """
+        ready = {
+            "openai": bool(self.openai_api_key),
+            "openai_image": bool(self.openai_api_key),
+            "google": bool(self.google_api_key),
+            "kling": bool(self.kling_access_key and self.kling_secret_key),
+            "minimax": bool(self.minimax_api_key),
+            "bytedance": bool(self.bytedance_api_key),
+            "wan": bool(self.wan_api_key),
+            "higgsfield": bool(self.higgsfield_key_id and self.higgsfield_key_secret),
+            "bfl": bool(self.bfl_api_key),
+            "elevenlabs": bool(self.elevenlabs_api_key),
+            "sync": bool(self.sync_api_key),
+        }
+        # Unknown providers are intentionally closed. A row typo must not become a
+        # model the agent offers and then cannot resolve.
+        return ready.get(provider_id, False)
 
     public_base_url: str = Field(default="http://localhost:8000", alias="PUBLIC_BASE_URL")
     """Base para los webhooks de proveedor. Debe ser accesible desde fuera."""

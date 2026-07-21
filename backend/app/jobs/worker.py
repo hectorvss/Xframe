@@ -686,6 +686,58 @@ class JobWorker:
                 asset_id,
                 final_credits,
             )
+            operation_id = await conn.fetchval(
+                """
+                update public.asset_operations
+                   set status='succeeded', output_asset_id=$2, completed_at=now()
+                 where job_id=$1
+                returning id
+                """,
+                job.id,
+                asset_id,
+            )
+            if operation_id is not None and job.request.get("modality") == "lipsync":
+                metrics = status.raw.get("metrics") if isinstance(status.raw, dict) else None
+                # Sync does not currently guarantee objective AV/identity metrics in the
+                # completion payload. Absence is never treated as a pass: the asset is
+                # delivered, clearly marked for review, and remains traceable to the take.
+                await conn.execute(
+                    """
+                    insert into public.quality_reports
+                      (project_id, asset_id, operation_id, check_type, status, score,
+                       passed, metrics, issues)
+                    values ($1,$2,$3,'lipsync',$4,$5,$6,$7::jsonb,$8::jsonb)
+                    """,
+                    job.project_id,
+                    asset_id,
+                    operation_id,
+                    (
+                        "passed"
+                        if metrics and metrics.get("passed") is True
+                        else "failed"
+                        if metrics and metrics.get("passed") is False
+                        else "needs_review"
+                    ),
+                    metrics.get("score") if metrics else None,
+                    True if metrics and metrics.get("passed") is True else None,
+                    metrics or {},
+                    [] if metrics else [
+                        {
+                            "code": "objective_metrics_unavailable",
+                            "message": "Review mouth timing, speaker identity and occlusions before approval.",
+                        }
+                    ],
+                )
+            if operation_id is not None and job.request.get("extra", {}).get("transition_id"):
+                await conn.execute(
+                    """
+                    update public.timeline_transitions
+                       set status='ready', generated_asset_id=$2, updated_at=now()
+                     where operation_id=$1
+                    """,
+                    operation_id,
+                    asset_id,
+                )
             if job.shot_id:
                 await conn.execute(
                     """
@@ -855,6 +907,21 @@ class JobWorker:
                 "update public.assets set status = 'failed' where job_id = $1 and status = 'generating'",
                 job.id,
             )
+            operation_id = await conn.fetchval(
+                """update public.asset_operations
+                      set status=$2, completed_at=now()
+                    where job_id=$1 and status not in ('succeeded','failed','cancelled')
+                returning id""",
+                job.id,
+                "cancelled" if state == "cancelled" else "failed",
+            )
+            if operation_id is not None:
+                await conn.execute(
+                    """update public.timeline_transitions
+                          set status='failed', updated_at=now()
+                        where operation_id=$1 and status <> 'ready'""",
+                    operation_id,
+                )
             if job.shot_id:
                 await conn.execute(
                     "update public.canvas_nodes set shot_status = 'failed' where id = $1 and project_id = $2",

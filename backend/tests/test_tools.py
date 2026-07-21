@@ -303,6 +303,13 @@ async def test_plan_restriction_is_indistinguishable_from_absence(fake_db, monke
     Es la diferencia entre que el agente proponga algo que va a fallar y que ni se le
     ocurra proponerlo.
     """
+    # This test isolates plan filtering. Provider-readiness has its own contract and
+    # would otherwise depend on whichever API-key environment the test runner inherited.
+    monkeypatch.setattr(
+        repo,
+        "get_settings",
+        lambda: type("ReadySettings", (), {"provider_is_configured": lambda self, _: True})(),
+    )
     rows = [
         {
             "id": "seedance-2.0", "family": "Seedance", "provider": "bytedance",
@@ -345,6 +352,39 @@ async def test_retired_models_never_reach_the_catalogue(fake_db) -> None:
     assert "DEPRECATED" in deprecated.summary_for_llm()
 
 
+async def test_unconfigured_providers_are_absent_from_runtime_catalogue(
+    fake_db, monkeypatch
+) -> None:
+    """The agent cannot select a provider that has no server-side credentials."""
+    base = {
+        "family": "Test", "modality": "video", "description_llm": "video",
+        "min_duration_s": 2, "max_duration_s": 10, "resolutions": ["1080p"],
+        "aspects": ["16:9"], "supports_i2v": True,
+        "supports_last_frame": False, "supports_char_ref": False,
+        "supports_audio": False, "capabilities": [], "cost_per_second": "0.1",
+        "cost_per_image": None, "credits_per_unit": 16, "min_plan": "free",
+        "status": "active", "sunset_at": None,
+    }
+    fake_db({
+        "from public.gen_models": [
+            {**base, "id": "available", "label": "Available", "provider": "kling"},
+            {**base, "id": "missing-key", "label": "Missing", "provider": "bytedance"},
+        ]
+    })
+    monkeypatch.setattr(
+        repo,
+        "get_settings",
+        lambda: type(
+            "ProviderSettings", (),
+            {"provider_is_configured": lambda self, provider: provider == "kling"},
+        )(),
+    )
+
+    models = await repo.active_models("free", "video")
+
+    assert [model.id for model in models] == ["available"]
+
+
 # --------------------------------------------------------------------------- #
 # 2. En preproducción no existen las tools de generación                       #
 # --------------------------------------------------------------------------- #
@@ -359,15 +399,30 @@ async def test_preproduction_has_no_generation_tools(fake_db) -> None:
 
     for forbidden in (
         "generate_image", "generate_video", "generate_shot_batch",
-        "generate_lipsync", "upscale_asset", "assemble_video",
+        "generate_lipsync", "generate_transition", "upscale_asset", "assemble_video",
     ):
         assert forbidden not in names, f"{forbidden} must not exist in preproduction"
 
     # Y no es que estén y no cobren: no hay ni una sola tool que consuma créditos.
     assert not any(t.consumes_credits for t in tools)
-
-    # Lo que sí debe estar: planificar es todo lo que se puede hacer aquí.
     assert {"read_project", "create_shot", "define_element", "finalize_plan"} <= names
+
+
+async def test_generated_transition_tool_requires_both_boundary_capabilities(fake_db) -> None:
+    fake_db()
+    incapable = make_snapshot(
+        models=[make_model("i2v-only", "video", supports_last_frame=False)]
+    )
+    capable = make_snapshot(
+        models=[make_model("bounded-video", "video", supports_last_frame=True)]
+    )
+
+    without_tool = await build_tools_for_mode(make_ctx(), snapshot=incapable)
+    with_tool = await build_tools_for_mode(make_ctx(), snapshot=capable)
+
+    assert "generate_transition" not in {tool.name for tool in without_tool}
+    names = [tool.name for tool in with_tool]
+    assert names.count("generate_transition") == 1
 
 
 async def test_production_mounts_the_generation_tools(fake_db) -> None:

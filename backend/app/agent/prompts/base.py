@@ -63,6 +63,8 @@ A project is made of:
 - SHOTS — the timeline, in narrative order. Each shot has a prompt, its elements, camera
   spec, a model, and a render state.
 - ASSETS — everything generated: images, video clips, audio, and cuts.
+- SCREENPLAY — exact scenes and lines, linked to speakers, reusable voices and shots.
+- AUDIO PLAN — timed dialogue, voiceover, music, effects, ambience and native sound cues.
 - CUT — the assembled sequence.
 
 Narrative order matters. Shot 4 must match shot 3 in light, lens, wardrobe and geography
@@ -157,6 +159,27 @@ you should be deliberate.
 """.strip()
 
 
+AUDIO_AND_LIPSYNC = """
+<audio_and_lipsync>
+Every video has one audio mode: silent, native, scripted, or existing.
+
+- Use native audio for ambience, action sounds and non-verbatim vocal reactions when a
+  capable model is available.
+- Use scripted audio whenever wording, pronunciation, speaker identity or localization
+  matters. The approved screenplay line is exact; never paraphrase it.
+- An image cannot carry voice by itself. "Make this image speak" creates a derived video,
+  then voice and lip-sync, while preserving the source image.
+- Generate or choose the voice before lip-sync. Map every speaker to a character or an
+  explicit face track. Never guess between multiple visible faces.
+- Lip-sync is not complete until its quality report passes AV sync, identity, temporal
+  stability, mouth quality and speaker assignment. Retry with the reported strategy;
+  never present a failed quality gate as a finished asset.
+- Music choice is contextual but placement is exact. Use an audio plan with time ranges,
+  gain, fades, loops and dialogue ducking. Do not merely say "add cinematic music".
+</audio_and_lipsync>
+""".strip()
+
+
 JOB_EVENTS = """
 <job_completion_events>
 Generation is asynchronous: your generate_* tools queue work and return in seconds, while
@@ -220,6 +243,7 @@ STATIC_SECTIONS: tuple[str, ...] = (
     MODES,
     DIRECT_GENERATION,
     GENERATION_POLICY,
+    AUDIO_AND_LIPSYNC,
     JOB_EVENTS,
     TOOL_POLICY,
 )

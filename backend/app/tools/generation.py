@@ -19,7 +19,10 @@ Bloquear el turno esperando a un render de 90 segundos convierte el chat en un s
 
 from __future__ import annotations
 
+import asyncio
+import tempfile
 from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, Field
@@ -687,8 +690,171 @@ class GenerateShotBatchTool(_GenerationTool):
 
 
 # --------------------------------------------------------------------------- #
-# generate_lipsync / upscale_asset / assemble_video                            #
+# generate_audio / generate_lipsync / assemble_video                           #
 # --------------------------------------------------------------------------- #
+
+
+class GenerateAudioTool(_GenerationTool):
+    """Generate an audio asset from the approved screenplay or a music/SFX brief."""
+
+    name: str = "generate_audio"
+
+    async def _arun_impl(
+        self,
+        kind: str,
+        model_id: str,
+        script_line_ids: list[str] | None = None,
+        voice_profile_id: str | None = None,
+        prompt: str | None = None,
+        duration_s: float | None = None,
+        composition_plan: dict[str, Any] | None = None,
+        loop: bool = False,
+        **_: Any,
+    ) -> tuple[str, Any]:
+        model = self.require_model(model_id, "audio")
+        duration_s = self.check_duration(model, duration_s)
+        capabilities = set(model.capabilities)
+        required = "sfx" if kind in {"sfx", "ambience"} else kind
+        if capabilities and required not in capabilities:
+            raise XframeToolRetryableError(
+                f"Model '{model.id}' cannot generate {kind}. Its capabilities are: "
+                f"{', '.join(model.capabilities)}. Choose a compatible audio model."
+            )
+
+        line_ids = list(dict.fromkeys(script_line_ids or []))
+        lines: list[dict[str, Any]] = []
+        if line_ids:
+            rows = await db.fetch(
+                """
+                select l.id, l.text, l.target_duration_ms, l.emotion, l.direction,
+                       l.voice_profile_id, vp.provider_voice_id, vp.settings
+                  from public.script_lines l
+             left join public.voice_profiles vp on vp.id=coalesce(l.voice_profile_id,$3::uuid)
+                 where l.project_id=$1::uuid and l.id=any($2::uuid[])
+                 order by l.scene_id, l.position
+                """,
+                self.ctx.project_id,
+                line_ids,
+                voice_profile_id,
+            )
+            found = {str(row["id"]) for row in rows}
+            missing = [line_id for line_id in line_ids if line_id not in found]
+            if missing:
+                raise XframeToolRetryableError(
+                    "Unknown screenplay line ids: " + ", ".join(missing)
+                )
+            for row in rows:
+                if not row["provider_voice_id"]:
+                    raise XframeToolRetryableError(
+                        f"Script line {row['id']} has no ready provider voice. Assign a "
+                        "voice profile to its character before generating speech."
+                    )
+                lines.append(dict(row))
+
+        if kind in {"voice", "dialogue"} and not lines:
+            raise XframeToolRetryableError(
+                "Speech must reference screenplay line ids so the generated words, speaker "
+                "and later lipsync all share one source of truth. Create the screenplay first."
+            )
+        if kind in {"music", "sfx", "ambience"} and not (prompt or composition_plan):
+            raise XframeToolRetryableError(
+                f"{kind} generation needs a precise prompt or composition plan."
+            )
+
+        text = "\n".join(str(line["text"]) for line in lines) if lines else (prompt or "")
+        inferred = sum((line["target_duration_ms"] or 0) for line in lines) / 1000
+        if not duration_s:
+            duration_s = inferred or max(1.0, len(text) / 14)
+            duration_s = self.check_duration(model, duration_s)
+
+        extra: dict[str, Any] = {
+            "audio_kind": kind,
+            "script_line_ids": line_ids,
+            "composition_plan": composition_plan,
+            "loop": loop,
+        }
+        if kind == "dialogue":
+            extra["dialogue_inputs"] = [
+                {"text": line["text"], "voice_id": line["provider_voice_id"]}
+                for line in lines
+            ]
+        elif kind == "voice":
+            # A single render cannot honestly use several speaker identities.
+            voices = {str(line["provider_voice_id"]) for line in lines}
+            if len(voices) != 1:
+                raise XframeToolRetryableError(
+                    "Single-speaker voice generation received multiple voices; use kind='dialogue'."
+                )
+            extra["voice_id"] = voices.pop()
+            extra["voice_settings"] = lines[0].get("settings") or {}
+
+        req = GenerationRequest(
+            modality="audio",
+            model_id=model.id,
+            prompt=text,
+            duration_s=duration_s,
+            audio=True,
+            extra=extra,
+        )
+        adapter, credits = await self.quote(req)
+        self.assert_affordable(credits)
+        job = await self.enqueue(req, adapter=adapter)
+        return (
+            f"{kind.capitalize()} queued on {model.id} ({job.credits_reserved} credits "
+            f"reserved). Job {job.job_id}.",
+            {
+                "job_id": job.job_id,
+                "model_id": model.id,
+                "credits": job.credits_reserved,
+                "kind": "audio",
+                "audio_kind": kind,
+                "script_line_ids": line_ids,
+                "reused": job.reused,
+            },
+        )
+
+    @classmethod
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> GenerateAudioTool | None:
+        models = snap.models_for("audio")
+        if not models:
+            return None
+        tool = cls(
+            args_schema=build_args(
+                "GenerateAudioArgs",
+                kind=described(
+                    literal_of(["voice", "dialogue", "music", "sfx", "ambience"]),
+                    "Audio role. Dialogue is multi-speaker; voice is one speaker.",
+                ),
+                model_id=described(literal_of([m.id for m in models]), "Compatible audio model."),
+                script_line_ids=described(
+                    list[str] | None,
+                    "Exact screenplay line ids for voice/dialogue. Required for speech.",
+                    None,
+                ),
+                voice_profile_id=described(
+                    str | None, "Optional voice override for otherwise unassigned lines.", None
+                ),
+                prompt=described(
+                    str | None, "Music, SFX or ambience brief. Never substitutes screenplay dialogue.", None
+                ),
+                duration_s=described(float | None, "Target audio duration in seconds.", None),
+                composition_plan=described(
+                    dict[str, Any] | None,
+                    "Optional section-level music plan with durations and styles.",
+                    None,
+                ),
+                loop=described(bool, "Make SFX/ambience loopable when supported.", False),
+            ),
+            description=(
+                "Generate reusable voice, multi-character dialogue, music, sound effects or "
+                "ambience assets. USE THIS after screenplay wording and voice identities are "
+                "defined, or after the music/SFX brief is explicit. DO NOT generate speech "
+                "from free-form invented copy; pass screenplay line ids. Generated audio is "
+                "an asset and must be placed later with create_audio_plan.\n\nAudio models:\n"
+                + enumerate_for_prompt(models)
+            ),
+        )
+        return tool.bind_context(ctx).bind_snapshot(snap)  # type: ignore[return-value]
 
 
 class GenerateLipsyncTool(_GenerationTool):
@@ -702,9 +868,15 @@ class GenerateLipsyncTool(_GenerationTool):
         model_id: str,
         text: str | None = None,
         audio_url: str | None = None,
+        audio_asset_id: str | None = None,
+        segments: list[dict[str, Any]] | None = None,
+        sync_mode: str = "cut_off",
         **_: Any,
     ) -> tuple[str, Any]:
-        if not text and not audio_url:
+        if audio_asset_id:
+            audio = await _asset_or_raise(self.ctx.project_id, audio_asset_id, kind="audio")
+            audio_url = audio["url"]
+        if not text and not audio_url and not segments:
             raise XframeToolRetryableError(
                 "generate_lipsync needs either the line to be spoken (text) or an audio "
                 "track (audio_url). Ask the user for the dialogue if you do not have it — "
@@ -720,12 +892,58 @@ class GenerateLipsyncTool(_GenerationTool):
             # lee para cotizar, y sin ella el lipsync se cotizaba como si durase cero.
             duration_s=source.get("duration_s") or 5,
             init_image_url=source["url"],
-            extra={"audio_url": audio_url, "source_asset_id": asset_id},
+            extra={
+                "audio_url": audio_url,
+                "audio_asset_id": audio_asset_id,
+                "source_asset_id": asset_id,
+                "segments": segments or [],
+                "sync_mode": sync_mode,
+            },
         )
         adapter, credits = await self.quote(req)
         self.assert_affordable(credits)
 
         job = await self.enqueue(req, adapter=adapter, shot_id=source.get("shot_id"))
+        # Lipsync is a derived asset, never an overwrite. Recording the operation at
+        # queue time lets the worker attach the output and QC report even after restart.
+        async with db.transaction() as conn:
+            operation_id = await conn.fetchval(
+                """
+                insert into public.asset_operations
+                  (project_id, operation, status, provider, model_id, prompt, params, job_id)
+                values ($1::uuid,'lipsync','queued',$2,$3,$4,$5::jsonb,$6::uuid)
+                returning id
+                """,
+                self.ctx.project_id,
+                adapter.provider_id,
+                model.id,
+                text or "",
+                req.extra,
+                job.job_id,
+            )
+            await conn.execute(
+                """
+                insert into public.asset_operation_inputs
+                  (operation_id, project_id, asset_id, role, position)
+                values ($1::uuid,$2::uuid,$3::uuid,'source',0)
+                on conflict do nothing
+                """,
+                operation_id,
+                self.ctx.project_id,
+                asset_id,
+            )
+            if audio_asset_id:
+                await conn.execute(
+                    """
+                    insert into public.asset_operation_inputs
+                      (operation_id, project_id, asset_id, role, position)
+                    values ($1::uuid,$2::uuid,$3::uuid,'audio',1)
+                    on conflict do nothing
+                    """,
+                    operation_id,
+                    self.ctx.project_id,
+                    audio_asset_id,
+                )
         return (
             f"Lipsync queued on {model.id} over asset {asset_id} "
             f"({job.credits_reserved} credits reserved). Job {job.job_id}.",
@@ -734,6 +952,7 @@ class GenerateLipsyncTool(_GenerationTool):
                 "credits": job.credits_reserved,
                 "reused": job.reused,
                 "kind": "lipsync",
+                "operation_id": str(operation_id),
             },
         )
 
@@ -757,7 +976,20 @@ class GenerateLipsyncTool(_GenerationTool):
                     str | None, "The line to be spoken. Provide this or audio_url.", None
                 ),
                 audio_url=described(
-                    str | None, "Existing audio track to sync against.", None
+                    str | None, "Existing external audio URL; prefer audio_asset_id.", None
+                ),
+                audio_asset_id=described(
+                    str | None, "Ready project audio asset to synchronize.", None
+                ),
+                segments=described(
+                    list[dict[str, Any]] | None,
+                    "Optional multi-speaker segments: start_s, end_s, audio_url and explicit face mapping.",
+                    None,
+                ),
+                sync_mode=described(
+                    literal_of(["cut_off", "loop", "bounce", "silence"]),
+                    "How Sync reconciles unequal video/audio lengths.",
+                    "cut_off",
                 ),
             ),
             description=(
@@ -797,6 +1029,143 @@ class GenerateLipsyncTool(_GenerationTool):
 # con su `create()` leyendo `snap.models_for(...)`, igual que las otras cuatro.
 
 
+class GenerateTransitionTool(_GenerationTool):
+    """Render a deterministic bridge from exact clip boundary frames."""
+
+    name: str = "generate_transition"
+
+    async def _arun_impl(
+        self, transition_id: str, model_id: str, **_: Any
+    ) -> tuple[str, Any]:
+        row = await db.fetchrow(
+            """
+            select t.*, fa.url as from_url, fa.status as from_status,
+                   ta.url as to_url, ta.status as to_status
+              from public.timeline_transitions t
+              join public.assets fa on fa.id=t.from_asset_id
+              join public.assets ta on ta.id=t.to_asset_id
+             where t.id=$1::uuid and t.project_id=$2::uuid
+            """,
+            transition_id,
+            self.ctx.project_id,
+        )
+        if not row or row["kind"] != "generated":
+            raise XframeToolRetryableError(
+                f"Transition {transition_id} is not a generated transition in this project."
+            )
+        if row["status"] == "ready" and row["generated_asset_id"]:
+            return (
+                f"Transition {transition_id} is already ready; reused its deterministic output.",
+                {"transition_id": transition_id, "asset_id": str(row["generated_asset_id"]), "reused": True},
+            )
+        if row["from_status"] != "ready" or row["to_status"] != "ready":
+            raise XframeToolRetryableError("Both transition boundary assets must be ready.")
+        model = self.require_model(model_id, "video")
+        if not (model.supports_i2v and model.supports_last_frame):
+            raise XframeToolRetryableError(
+                f"Model '{model.id}' cannot honor both transition boundaries. Choose a "
+                "video model with i2v and last-frame support."
+            )
+        duration_s = self.check_duration(model, float(row["duration_ms"]) / 1000)
+
+        from app.jobs.worker import SupabaseStorage
+        from app.storage import sign_reference
+
+        from_url = str(await sign_reference(str(row["from_url"])))
+        to_url = str(await sign_reference(str(row["to_url"])))
+        with tempfile.TemporaryDirectory(prefix="xframe-transition-") as tmp:
+            from_path = str(Path(tmp) / "from-last.png")
+            to_path = str(Path(tmp) / "to-first.png")
+            await _extract_boundary_frame(from_url, from_path, last=True)
+            await _extract_boundary_frame(to_url, to_path, last=False)
+            storage = SupabaseStorage()
+            from_ref = await storage.put(
+                project_id=self.ctx.project_id, job_id=f"transition-{transition_id}",
+                filename="from-last.png", data=Path(from_path).read_bytes(), content_type="image/png",
+            )
+            to_ref = await storage.put(
+                project_id=self.ctx.project_id, job_id=f"transition-{transition_id}",
+                filename="to-first.png", data=Path(to_path).read_bytes(), content_type="image/png",
+            )
+
+        parameters = dict(row["parameters"] or {})
+        preserve_ids = set(parameters.get("preserve_element_ids") or [])
+        req = GenerationRequest(
+            modality="video", model_id=model.id,
+            prompt=str(parameters.get("prompt") or "A seamless visual bridge between the exact boundary frames."),
+            duration_s=duration_s,
+            init_image_url=from_ref, last_frame_url=to_ref, seed=int(row["seed"]),
+            elements=self.resolve_elements(
+                [element.name for element in self.snap.elements if element.id in preserve_ids]
+            ),
+            camera_motion=parameters.get("motion_direction"),
+            extra={
+                "transition_id": transition_id,
+                "transition_signature": row["signature"],
+                "operation_id": str(row["operation_id"]) if row["operation_id"] else None,
+            },
+        )
+        adapter, credits = await self.quote(req)
+        self.assert_affordable(credits)
+        job = await self.enqueue(req, adapter=adapter)
+        await db.execute(
+            "update public.timeline_transitions set status='queued', model_id=$2, updated_at=now() where id=$1::uuid",
+            transition_id, model.id,
+        )
+        if row["operation_id"]:
+            await db.execute(
+                "update public.asset_operations set status='queued', provider=$2, model_id=$3, job_id=$4::uuid where id=$1::uuid",
+                row["operation_id"], adapter.provider_id, model.id, job.job_id,
+            )
+        return (
+            f"Deterministic transition {transition_id} queued from exact boundary frames "
+            f"with seed {row['seed']}. Job {job.job_id}; {job.credits_reserved} credits reserved.",
+            {"job_id": job.job_id, "transition_id": transition_id, "signature": row["signature"], "seed": row["seed"], "credits": job.credits_reserved},
+        )
+
+    @classmethod
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> GenerateTransitionTool | None:
+        models = tuple(
+            model for model in snap.models_for("video")
+            if model.supports_i2v and model.supports_last_frame
+        )
+        if not models:
+            return None
+        tool = cls(
+            args_schema=build_args(
+                "GenerateTransitionArgs",
+                transition_id=described(str, "Id returned by plan_transition."),
+                model_id=described(literal_of([model.id for model in models]), "Model supporting exact first and last frames."),
+            ),
+            description=(
+                "Render a planned generated transition from the exact last frame of asset A "
+                "to the exact first frame of asset B. USE THIS only after plan_transition "
+                "and cost approval. DO NOT change its stored seed or endpoints.\n\nCompatible models:\n"
+                + enumerate_for_prompt(models)
+            ),
+        )
+        return tool.bind_context(ctx).bind_snapshot(snap)  # type: ignore[return-value]
+
+
+async def _extract_boundary_frame(source: str, output: str, *, last: bool) -> None:
+    """Extract a boundary frame before any paid provider call."""
+    from app.config import get_settings
+
+    args = [get_settings().ffmpeg_path, "-hide_banner", "-nostdin", "-y"]
+    if last:
+        args += ["-sseof", "-0.05"]
+    args += ["-i", source, "-frames:v", "1", "-f", "image2", output]
+    proc = await asyncio.create_subprocess_exec(
+        *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0 or not Path(output).exists():
+        raise XframeToolRetryableError(
+            "Could not extract a transition boundary frame before generation. "
+            + stderr.decode(errors="replace")[-1200:]
+        )
+
+
 class AssembleVideoArgs(BaseModel):
     shot_ids: list[str] = Field(
         ...,
@@ -807,6 +1176,13 @@ class AssembleVideoArgs(BaseModel):
     )
     audio_asset_id: str | None = Field(
         None, description="Optional music or voice-over track to lay under the cut."
+    )
+    use_audio_plan: bool = Field(
+        True,
+        description=(
+            "Mix the project's structured dialogue/music/SFX/ambience cues. Keep true "
+            "unless the user explicitly requests a picture-only or legacy single-track cut."
+        ),
     )
     title: str = Field("Montaje", description="Name for the resulting cut asset.")
 
@@ -835,6 +1211,7 @@ class AssembleVideoTool(_GenerationTool):
         self,
         shot_ids: list[str],
         audio_asset_id: str | None = None,
+        use_audio_plan: bool = True,
         title: str = "Montaje",
         **_: Any,
     ) -> tuple[str, Any]:
@@ -863,7 +1240,7 @@ class AssembleVideoTool(_GenerationTool):
 
         from app.artifacts.manager import ArtifactManager
         from app.artifacts.types import AssetRefBlock, CutArtifactContent
-        from app.assembly import AssemblySpec, TimelineClip, assemble_cut
+        from app.assembly import AssemblySpec, AudioTimelineClip, TimelineClip, assemble_cut
         from app.assembly.ffmpeg import default_output_path
         from app.storage import sign_reference
 
@@ -877,24 +1254,132 @@ class AssembleVideoTool(_GenerationTool):
                 str((await _asset_or_raise(self.ctx.project_id, audio_asset_id, kind="audio"))["url"])
             )
 
+        audio_cues: list[AudioTimelineClip] = []
+        target_lufs = -14.0
+        true_peak_dbtp = -1.0
+        if use_audio_plan:
+            cue_rows = await db.fetch(
+                """
+                select c.asset_id, a.url, c.track_kind, c.start_ms, c.end_ms,
+                       c.source_in_ms, c.source_out_ms, c.gain_db, c.fade_in_ms,
+                       c.fade_out_ms, c.pan, c.loop
+                       , c.ducking_group, c.ducking_db
+                  from public.audio_cues c
+                  join public.assets a on a.id=c.asset_id
+                 where c.project_id=$1::uuid and a.status='ready'
+                 order by c.start_ms, c.priority desc
+                """,
+                self.ctx.project_id,
+            )
+            for cue in cue_rows:
+                audio_cues.append(
+                    AudioTimelineClip(
+                        asset_id=str(cue["asset_id"]),
+                        src=str(await sign_reference(str(cue["url"]))),
+                        track_kind=str(cue["track_kind"]),
+                        start_s=float(cue["start_ms"]) / 1000,
+                        end_s=float(cue["end_ms"]) / 1000,
+                        source_in_s=float(cue["source_in_ms"]) / 1000,
+                        source_out_s=(
+                            float(cue["source_out_ms"]) / 1000
+                            if cue["source_out_ms"] is not None
+                            else None
+                        ),
+                        gain_db=float(cue["gain_db"]),
+                        fade_in_s=float(cue["fade_in_ms"]) / 1000,
+                        fade_out_s=float(cue["fade_out_ms"]) / 1000,
+                        pan=float(cue["pan"]),
+                        loop=bool(cue["loop"]),
+                        ducking_group=cue["ducking_group"],
+                        ducking_db=(
+                            float(cue["ducking_db"])
+                            if cue["ducking_db"] is not None
+                            else None
+                        ),
+                    )
+                )
+            audio_plan = await db.fetchrow(
+                """
+                select content from public.artifacts
+                 where project_id=$1::uuid and kind='audio_plan'
+                 order by version desc limit 1
+                """,
+                self.ctx.project_id,
+            )
+            if audio_plan:
+                content = dict(audio_plan["content"] or {})
+                target_lufs = float(content.get("target_lufs", target_lufs))
+                true_peak_dbtp = float(content.get("true_peak_dbtp", true_peak_dbtp))
+
         manager = ArtifactManager(self.ctx.project_id)
         # El corte se versiona como el guion y el timeline: regenerarlo es una versión
         # nueva, no una sobrescritura. La versión entra en la ruta de salida para que dos
         # montajes concurrentes no se pisen el fichero temporal.
         version = len(await manager.alist("cut")) + 1
 
-        spec = AssemblySpec(
-            clips=[
+        ordered_assets = [str(by_shot[s]["asset_id"]) for s in shot_ids]
+        transition_rows = await db.fetch(
+            """
+            select t.from_asset_id, t.to_asset_id, t.kind, t.duration_ms, t.status,
+                   t.signature, t.generated_asset_id, a.url as generated_url,
+                   a.status as generated_status
+              from public.timeline_transitions t
+         left join public.assets a on a.id=t.generated_asset_id
+             where t.project_id=$1::uuid
+               and t.from_asset_id=any($2::uuid[])
+               and t.to_asset_id=any($2::uuid[])
+            """,
+            self.ctx.project_id,
+            ordered_assets,
+        )
+        transition_by_pair = {
+            (str(row["from_asset_id"]), str(row["to_asset_id"])): row
+            for row in transition_rows
+        }
+        timeline_clips: list[TimelineClip] = []
+        for index, shot_id in enumerate(shot_ids):
+            current_asset = str(by_shot[shot_id]["asset_id"])
+            transition_in = "cut"
+            transition_duration = 0.5
+            if index:
+                previous_asset = str(by_shot[shot_ids[index - 1]]["asset_id"])
+                transition = transition_by_pair.get((previous_asset, current_asset))
+                if transition and transition["kind"] == "crossfade":
+                    transition_in = "crossfade"
+                    transition_duration = float(transition["duration_ms"]) / 1000
+                elif transition and transition["kind"] == "generated":
+                    if transition["status"] != "ready" or not transition["generated_url"]:
+                        raise XframeToolRetryableError(
+                            "Generated transition "
+                            f"{transition['signature']} between assets {previous_asset} and "
+                            f"{current_asset} is not ready. Render/approve it or switch the "
+                            "structured transition to cut/crossfade before assembly."
+                        )
+                    timeline_clips.append(
+                        TimelineClip(
+                            asset_id=str(transition["generated_asset_id"]),
+                            src=str(await sign_reference(str(transition["generated_url"]))),
+                            status="ready",
+                        )
+                    )
+            timeline_clips.append(
                 TimelineClip(
-                    asset_id=str(by_shot[s]["asset_id"]),
-                    src=str(await sign_reference(str(by_shot[s]["url"]))),
-                    shot_id=s,
+                    asset_id=current_asset,
+                    src=str(await sign_reference(str(by_shot[shot_id]["url"]))),
+                    shot_id=shot_id,
                     status="ready",
+                    transition_in=transition_in,
+                    transition_duration_s=transition_duration,
                 )
-                for s in shot_ids
-            ],
+            )
+
+        spec = AssemblySpec(
+            clips=timeline_clips,
             output_path=default_output_path(self.ctx.project_id, version),
             audio_track=audio_track,
+            audio_cues=audio_cues,
+            target_lufs=target_lufs,
+            true_peak_dbtp=true_peak_dbtp,
             version=version,
         )
         result = await assemble_cut(spec)

@@ -57,6 +57,8 @@ for _var in (
     "HIGGSFIELD_KEY_ID",
     "HIGGSFIELD_KEY_SECRET",
     "BFL_API_KEY",
+    "ELEVENLABS_API_KEY",
+    "SYNC_API_KEY",
 ):
     os.environ.setdefault(_var, f"test-{_var.lower()}")
 
@@ -68,6 +70,7 @@ from app.providers.base import (  # noqa: E402
     ModelSpec,
     ProviderJobRef,
 )
+from app.providers.elevenlabs import ElevenLabsAdapter  # noqa: E402
 from app.providers.flux import FluxAdapter  # noqa: E402
 from app.providers.hailuo import HailuoAdapter  # noqa: E402
 from app.providers.higgsfield import HiggsfieldAdapter  # noqa: E402
@@ -77,6 +80,7 @@ from app.providers.registry import DbAdapterRegistry, UnknownProviderError  # no
 from app.providers.seed import MODELS, MOTIONS, STYLES, credits_per_unit  # noqa: E402
 from app.providers.seedance import SeedanceAdapter  # noqa: E402
 from app.providers.sora import SoraAdapter  # noqa: E402
+from app.providers.sync_labs import SyncLabsAdapter  # noqa: E402
 from app.providers.veo import VeoAdapter  # noqa: E402
 from app.providers.wan import WanAdapter  # noqa: E402
 from app.tools.errors import (  # noqa: E402
@@ -95,6 +99,8 @@ ALL_ADAPTERS: tuple[type[GenerationAdapter], ...] = (
     HiggsfieldAdapter,
     FluxAdapter,
     OpenAIImageAdapter,
+    ElevenLabsAdapter,
+    SyncLabsAdapter,
 )
 
 

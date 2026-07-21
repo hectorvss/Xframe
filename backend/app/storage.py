@@ -170,6 +170,19 @@ async def sign_request_references(request: Any, *, ttl_s: int | None = None) -> 
     extra = dict(request.extra or {})
     if extra.get("audio_url"):
         extra["audio_url"] = await sign_reference(extra["audio_url"], ttl_s=ttl_s)
+    if isinstance(extra.get("segments"), list):
+        signed_segments: list[Any] = []
+        for segment in extra["segments"]:
+            if not isinstance(segment, dict):
+                signed_segments.append(segment)
+                continue
+            signed_segment = dict(segment)
+            if signed_segment.get("audio_url"):
+                signed_segment["audio_url"] = await sign_reference(
+                    signed_segment["audio_url"], ttl_s=ttl_s
+                )
+            signed_segments.append(signed_segment)
+        extra["segments"] = signed_segments
 
     return replace(
         request,

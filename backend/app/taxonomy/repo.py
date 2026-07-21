@@ -28,6 +28,7 @@ from decimal import Decimal
 from typing import Any, TypeVar
 
 from app import db
+from app.config import get_settings
 from app.providers.base import Modality
 
 # --------------------------------------------------------------------------- #
@@ -89,6 +90,7 @@ class GenModel:
     min_plan: str
     status: str
     sunset_at: datetime | None
+    capabilities: tuple[str, ...] = ()
 
     @property
     def is_sunsetting(self) -> bool:
@@ -116,6 +118,8 @@ class GenModel:
         ]
         if caps:
             bits.append("+".join(caps))
+        if self.capabilities:
+            bits.append("capabilities=" + ",".join(self.capabilities))
         bits.append(f"{self.credits_per_unit} credits/unit")
         if self.status == "deprecated":
             bits.append("DEPRECATED, prefer another model")
@@ -334,6 +338,8 @@ async def active_models(plan: str, modality: Modality | None = None) -> list[Gen
         for r in rows:
             if plan_rank(r["min_plan"]) > rank:
                 continue
+            if not get_settings().provider_is_configured(r["provider"]):
+                continue
             out.append(
                 GenModel(
                     id=r["id"],
@@ -350,6 +356,7 @@ async def active_models(plan: str, modality: Modality | None = None) -> list[Gen
                     supports_last_frame=bool(r["supports_last_frame"]),
                     supports_char_ref=bool(r["supports_char_ref"]),
                     supports_audio=bool(r["supports_audio"]),
+                    capabilities=_tuple(r.get("capabilities") if hasattr(r, "get") else r["capabilities"]),
                     cost_per_second=Decimal(str(r["cost_per_second"])),
                     cost_per_image=_decimal(r["cost_per_image"]),
                     credits_per_unit=int(r["credits_per_unit"]),

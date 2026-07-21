@@ -35,11 +35,13 @@ from app.artifacts.types import (
     CONTENT_BY_KIND,
     AssetBlock,
     AssetRefBlock,
+    AudioPlanArtifactContent,
     CutArtifactContent,
     EnrichedBlock,
     ErrorBlock,
     LoadingBlock,
     PlanArtifactContent,
+    ScreenplayArtifactContent,
     ScriptArtifactContent,
     ShotBlock,
     ShotRefBlock,
@@ -265,10 +267,29 @@ class ScriptHandler(_BlockDocumentHandler[ScriptArtifactContent]):
 
 
 @register_handler
+class ScreenplayHandler(_BlockDocumentHandler[ScreenplayArtifactContent]):
+    content_class = ScreenplayArtifactContent
+    db_kind = "screenplay"
+    extra_fields = (
+        "scene_ids", "cast_element_ids", "scenes", "language", "target_duration_s"
+    )
+
+
+@register_handler
 class TimelineHandler(_BlockDocumentHandler[TimelineArtifactContent]):
     content_class = TimelineArtifactContent
     db_kind = "timeline"
     extra_fields = ("total_duration_s",)
+
+
+@register_handler
+class AudioPlanHandler(_BlockDocumentHandler[AudioPlanArtifactContent]):
+    content_class = AudioPlanArtifactContent
+    db_kind = "audio_plan"
+    extra_fields = (
+        "cue_ids", "cue_snapshot", "buses", "target_lufs", "true_peak_dbtp",
+        "total_duration_s",
+    )
 
 
 @register_handler

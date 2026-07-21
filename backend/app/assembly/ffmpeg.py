@@ -164,6 +164,30 @@ class TimelineClip:
         return self.shot_id or self.asset_id
 
 
+@dataclass(slots=True)
+class AudioTimelineClip:
+    """One independently placeable item in the multitrack sound plan."""
+
+    asset_id: str
+    src: str
+    track_kind: str
+    start_s: float
+    end_s: float
+    source_in_s: float = 0.0
+    source_out_s: float | None = None
+    gain_db: float = 0.0
+    fade_in_s: float = 0.0
+    fade_out_s: float = 0.0
+    pan: float = 0.0
+    loop: bool = False
+    ducking_group: str | None = None
+    ducking_db: float | None = None
+
+    @property
+    def duration_s(self) -> float:
+        return self.end_s - self.start_s
+
+
 @dataclass(slots=True, frozen=True)
 class TargetFormat:
     """Formato al que se normaliza todo. Explícito para que sea auditable y fijable."""
@@ -196,6 +220,13 @@ class AssemblySpec:
     #: produce una locución tapada por la música, y esa decisión no es nuestra.
     audio_track: str | None = None
     audio_fade_out_s: float = 0.0
+
+    #: Independent dialogue/music/SFX/ambience clips. Unlike ``audio_track`` these keep
+    #: their exact position and gain envelope and are mixed instead of replacing native
+    #: clip audio.
+    audio_cues: list[AudioTimelineClip] = field(default_factory=list)
+    target_lufs: float = -14.0
+    true_peak_dbtp: float = -1.0
 
     #: Ruta a un .srt/.ass. Se queman en la imagen, porque un `cut` es un entregable
     #: plano: no todos los reproductores de destino leen subtítulos incrustados.
@@ -595,6 +626,15 @@ def _build_command(
         audio_input_index = len(clips)
         args += ["-i", spec.audio_track]
 
+    cue_input_indices: list[int] = []
+    next_input_index = len(clips) + (1 if spec.audio_track else 0)
+    for cue in spec.audio_cues:
+        if cue.loop:
+            args += ["-stream_loop", "-1"]
+        args += ["-i", cue.src]
+        cue_input_indices.append(next_input_index)
+        next_input_index += 1
+
     filters: list[str] = [
         _normalise_clip_filter(i, clip, probe, target)
         for i, (clip, probe) in enumerate(zip(clips, probes, strict=True))
@@ -611,6 +651,7 @@ def _build_command(
         final_video = "vsub"
 
     audio_label: str | None = None
+    audio_sources: list[str] = []
     if spec.audio_track and audio_input_index is not None:
         audio_filter = f"[{audio_input_index}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
         if spec.audio_fade_out_s > 0:
@@ -620,9 +661,58 @@ def _build_command(
         # corte dejaría silencio sin declarar, y una más larga alargaría el fichero.
         audio_filter += f",apad,atrim=0:{duration:.3f},asetpts=PTS-STARTPTS"
         filters.append(f"{audio_filter}[aout]")
-        audio_label = "aout"
-    elif spec.include_clip_audio and any(p.has_audio for p in probes):
-        audio_label = _chain_audio(filters, clips, probes, target)
+        audio_sources.append("aout")
+
+    if (
+        spec.include_clip_audio
+        and any(p.has_audio for p in probes)
+        and (not spec.audio_track or bool(spec.audio_cues))
+    ):
+        audio_sources.append(_chain_audio(filters, clips, probes, target))
+
+    cue_sources: list[tuple[AudioTimelineClip, str]] = []
+    for index, (cue, input_index) in enumerate(
+        zip(spec.audio_cues, cue_input_indices, strict=True)
+    ):
+        label = _audio_cue_filter(filters, cue, input_index, index, duration)
+        cue_sources.append((cue, label))
+
+    # Deterministic dialogue ducking. The dialogue/voice-over bus drives a sidechain
+    # compressor on music cues that explicitly opted into ducking. This is encoded in
+    # the render graph, not left to an LLM at playback time, so identical plans produce
+    # identical gain movement.
+    speech = [label for cue, label in cue_sources if cue.track_kind in {"dialogue", "voiceover"}]
+    if speech:
+        if len(speech) == 1:
+            speech_key = speech[0]
+        else:
+            inputs = "".join(f"[{label}]" for label in speech)
+            filters.append(f"{inputs}amix=inputs={len(speech)}:normalize=0[aduckkey]")
+            speech_key = "aduckkey"
+        for index, (cue, label) in enumerate(cue_sources):
+            if cue.track_kind != "music" or cue.ducking_db is None:
+                continue
+            # A deeper requested reduction produces a steeper compression ratio.
+            ratio = min(20.0, max(2.0, abs(cue.ducking_db) / 1.5))
+            ducked = f"aducked{index}"
+            filters.append(
+                f"[{label}][{speech_key}]sidechaincompress=threshold=0.035:"
+                f"ratio={ratio:.2f}:attack=20:release=250[{ducked}]"
+            )
+            cue_sources[index] = (cue, ducked)
+
+    audio_sources.extend(label for _, label in cue_sources)
+
+    if len(audio_sources) == 1:
+        audio_label = audio_sources[0]
+    elif audio_sources:
+        inputs = "".join(f"[{label}]" for label in audio_sources)
+        filters.append(
+            f"{inputs}amix=inputs={len(audio_sources)}:duration=longest:dropout_transition=0,"
+            f"loudnorm=I={spec.target_lufs:g}:TP={spec.true_peak_dbtp:g}:LRA=11,"
+            f"alimiter=limit=0.98,atrim=0:{duration:.3f}[amaster]"
+        )
+        audio_label = "amaster"
 
     args += ["-filter_complex", ";".join(filters)]
     args += ["-map", f"[{final_video}]"]
@@ -644,6 +734,59 @@ def _build_command(
         spec.output_path,
     ]
     return args, duration
+
+
+def _audio_cue_filter(
+    filters: list[str],
+    cue: AudioTimelineClip,
+    input_index: int,
+    cue_index: int,
+    cut_duration_s: float,
+) -> str:
+    if cue.start_s < 0 or cue.end_s <= cue.start_s or cue.end_s > cut_duration_s + 0.001:
+        raise AssemblyError(
+            f"Audio cue '{cue.asset_id}' has invalid range {cue.start_s:.3f}-"
+            f"{cue.end_s:.3f}s for a {cut_duration_s:.3f}s cut."
+        )
+    if cue.fade_in_s < 0 or cue.fade_out_s < 0 or cue.fade_in_s + cue.fade_out_s > cue.duration_s:
+        raise AssemblyError(f"Audio cue '{cue.asset_id}' has invalid fades.")
+    if not -1.0 <= cue.pan <= 1.0:
+        raise AssemblyError(f"Audio cue '{cue.asset_id}' pan must be between -1 and 1.")
+
+    source_end = cue.source_out_s
+    if source_end is None:
+        source_end = cue.source_in_s + cue.duration_s
+    if source_end <= cue.source_in_s:
+        raise AssemblyError(f"Audio cue '{cue.asset_id}' has an empty source range.")
+
+    steps = [
+        "aresample=48000",
+        "aformat=sample_fmts=fltp:channel_layouts=stereo",
+        f"atrim=start={cue.source_in_s:.3f}:end={source_end:.3f}",
+        "asetpts=PTS-STARTPTS",
+        f"volume={cue.gain_db:g}dB",
+    ]
+    if cue.pan:
+        left = 1.0 - max(cue.pan, 0.0)
+        right = 1.0 + min(cue.pan, 0.0)
+        steps.append(f"pan=stereo|c0={left:.4f}*c0|c1={right:.4f}*c1")
+    if cue.fade_in_s:
+        steps.append(f"afade=t=in:st=0:d={cue.fade_in_s:.3f}")
+    if cue.fade_out_s:
+        start = cue.duration_s - cue.fade_out_s
+        steps.append(f"afade=t=out:st={start:.3f}:d={cue.fade_out_s:.3f}")
+    delay_ms = round(cue.start_s * 1000)
+    steps.extend(
+        [
+            f"apad=pad_dur={cue.duration_s:.3f}",
+            f"atrim=0:{cue.duration_s:.3f}",
+            f"adelay={delay_ms}|{delay_ms}",
+            f"apad,atrim=0:{cut_duration_s:.3f}",
+        ]
+    )
+    label = f"acue{cue_index}"
+    filters.append(f"[{input_index}:a]{','.join(steps)}[{label}]")
+    return label
 
 
 def _normalise_clip_filter(

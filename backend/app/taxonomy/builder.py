@@ -229,7 +229,7 @@ def _tool_classes() -> list[type[SnapshotTool]]:
     Importación perezosa: los módulos de tools importan de aquí (`SnapshotTool`,
     `literal_of`), así que importarlos arriba sería un ciclo.
     """
-    from app.tools import brief, elements, generation, meta, project, shots
+    from app.tools import brief, elements, generation, meta, production, project, shots
 
     return [
         # Lectura y planificación
@@ -244,11 +244,15 @@ def _tool_classes() -> list[type[SnapshotTool]]:
         shots.ReorderShotsTool,
         shots.DeleteShotTool,
         elements.DefineElementTool,
+        # Structured screenplay, cast, sound and edit intent
+        *production.PRODUCTION_TOOL_CLASSES,
         # Generación
         generation.GenerateImageTool,
         generation.GenerateVideoTool,
         generation.GenerateShotBatchTool,
+        generation.GenerateAudioTool,
         generation.GenerateLipsyncTool,
+        generation.GenerateTransitionTool,
         # `UpscaleAssetTool` retirada: no hay modelo de upscale en `gen_models` ni
         # adaptador que lo sirva. El porqué, en `app/tools/generation.py`.
         generation.AssembleVideoTool,

@@ -160,6 +160,16 @@ already exists costs nothing to reuse and credits to remake.
 """.strip()
 
 
+PRODUCTION_TEMPLATE = """
+<production>
+The approved/current screenplay, cast voices, multitrack sound cues and deterministic
+transitions. Exact dialogue is authoritative: never paraphrase it during voice or
+lip-sync generation. Use cue timing/gain as data, not as suggestions.
+{body}
+</production>
+""".strip()
+
+
 SELECTION_TEMPLATE = """
 <selection>
 What the user has selected right now. If the request uses "this", "these" or "it, it
