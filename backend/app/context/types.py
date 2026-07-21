@@ -247,6 +247,56 @@ class GenSettings(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Guía del usuario: conocimiento y habilidades                                 #
+# --------------------------------------------------------------------------- #
+
+
+class KnowledgeSource(BaseModel):
+    """Una fuente de conocimiento: nota, página web leída o archivo subido."""
+
+    title: str = ""
+    kind: str = "note"  # note | url | file
+    url: str | None = None
+    excerpt: str = ""
+    """
+    Resumen corto, NO el contenido entero. Una fuente puede tener 40.000 caracteres
+    y meterlos en cada turno arruinaría el presupuesto de contexto. El extracto da el
+    tema; si hiciera falta el texto completo, sería con una tool.
+    """
+
+
+class ProjectSkill(BaseModel):
+    """Una habilidad activa: instrucción reutilizable que el usuario ha definido."""
+
+    name: str = ""
+    description: str = ""
+    instructions: str = ""
+    triggers: list[str] = Field(default_factory=list)
+
+
+class Guidance(BaseModel):
+    """
+    Lo que el usuario define en Ajustes → Conocimiento y Habilidades.
+
+    Es autoría del dueño de la cuenta, no material raspado: son sus INSTRUCCIONES
+    permanentes. La biblia de estilo (memoria) las refina a partir de lo que aprueba;
+    esto es lo que declara de entrada y se aplica desde el primer turno. Las fuentes
+    web sí son contenido externo, y por eso se presentan como material de referencia,
+    no como órdenes.
+    """
+
+    knowledge: str = ""
+    """Instrucciones generales del espacio (y del proyecto, si las hay)."""
+
+    sources: list[KnowledgeSource] = Field(default_factory=list)
+    skills: list[ProjectSkill] = Field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.knowledge.strip() or self.sources or self.skills)
+
+
+# --------------------------------------------------------------------------- #
 # El contexto completo                                                         #
 # --------------------------------------------------------------------------- #
 
@@ -280,6 +330,9 @@ class XframeUIContext(BaseModel):
 
     total_assets: int = 0
     """Total real en BD. `recent_assets` es una ventana; esto es el censo."""
+
+    guidance: Guidance = Field(default_factory=Guidance)
+    """Conocimiento y habilidades definidos por el usuario en Ajustes."""
 
 
 def narrative_sort_key(shot: ShotContext) -> tuple[int, float, float, float]:

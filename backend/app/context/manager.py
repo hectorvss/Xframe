@@ -47,7 +47,10 @@ from app.context.types import (
     CameraSpec,
     ElementContext,
     GenSettings,
+    Guidance,
+    KnowledgeSource,
     OpenTab,
+    ProjectSkill,
     ShotContext,
     XframeUIContext,
     narrative_sort_key,
@@ -526,6 +529,63 @@ def _shrink_plan(n_assets: int, n_shots: int) -> Iterable[tuple[int, int]]:
         yield 0, shots_limit
 
 
+# Topes de la guía del usuario. Son directrices, no un volcado: se acotan aquí para que
+# ni un texto de conocimiento largo ni veinte fuentes puedan desbordar el presupuesto.
+_GUIDANCE_KNOWLEDGE_CHARS = 4_000
+_GUIDANCE_SKILL_INSTR_CHARS = 600
+_GUIDANCE_SOURCE_EXCERPT_CHARS = 400
+_GUIDANCE_MAX_SOURCES = 12
+
+
+def _format_guidance(guidance: Guidance) -> str:
+    """Conocimiento + habilidades + fuentes del usuario → XML acotado, o cadena vacía."""
+    if guidance.is_empty:
+        return ""
+
+    parts: list[str] = []
+
+    if text := guidance.knowledge.strip():
+        parts.append(
+            P.KNOWLEDGE_TEMPLATE.format(text=_body(_clip(text, _GUIDANCE_KNOWLEDGE_CHARS)))
+        )
+
+    if guidance.skills:
+        rendered = "\n".join(
+            _format_skill(skill) for skill in guidance.skills if skill.name
+        )
+        if rendered:
+            parts.append(P.SKILLS_TEMPLATE.format(skills=rendered))
+
+    if guidance.sources:
+        rendered = "\n".join(
+            _format_source(source)
+            for source in guidance.sources[:_GUIDANCE_MAX_SOURCES]
+        )
+        if rendered:
+            parts.append(P.SOURCES_TEMPLATE.format(sources=rendered))
+
+    if not parts:
+        return ""
+    return P.GUIDANCE_TEMPLATE.format(sections="\n".join(parts))
+
+
+def _format_skill(skill: ProjectSkill) -> str:
+    triggers = ", ".join(skill.triggers) if skill.triggers else ""
+    attrs = f' triggers="{_attr(triggers)}"' if triggers else ""
+    desc = f"{skill.description.strip()}\n" if skill.description.strip() else ""
+    instr = _body(_clip(skill.instructions.strip(), _GUIDANCE_SKILL_INSTR_CHARS))
+    return f'<skill name="{_attr(skill.name)}"{attrs}>\n{desc}{instr}\n</skill>'
+
+
+def _format_source(source: KnowledgeSource) -> str:
+    url = f' url="{_attr(source.url)}"' if source.url else ""
+    excerpt = _body(_clip(source.excerpt.strip(), _GUIDANCE_SOURCE_EXCERPT_CHARS))
+    return (
+        f'<source kind="{_attr(source.kind)}" title="{_attr(source.title)}"{url}>\n'
+        f"{excerpt}\n</source>"
+    )
+
+
 def _render(
     ctx: XframeUIContext,
     detail: ContextDetail,
@@ -545,6 +605,13 @@ def _render(
 
     if gen := _format_gen_settings(ctx.gen_settings):
         sections.append(gen)
+
+    # La guía del usuario va alta, junto a los ajustes: son directrices permanentes que
+    # enmarcan todo el turno, como la memoria. No entra en la escalera de recorte —está
+    # acotada en origen— porque perder las instrucciones del usuario por presupuesto es
+    # peor que perder el asset número cuarenta.
+    if guidance_xml := _format_guidance(ctx.guidance):
+        sections.append(guidance_xml)
 
     brief_xml, brief_truncated = _format_brief(ctx.brief, detail)
     if brief_xml:
@@ -675,10 +742,14 @@ class XframeContextManager:
             self._load_assets(),
             self._load_sheets(),
             self._load_profile(),
+            self._load_guidance(),
             return_exceptions=True,
         )
-        project, brief, shots, assets_bundle, sheets, profile = [
-            self._or_default(r, default) for r, default in zip(results, ({}, [], [], ([], 0), {}, {}))
+        project, brief, shots, assets_bundle, sheets, profile, guidance = [
+            self._or_default(r, default)
+            for r, default in zip(
+                results, ({}, [], [], ([], 0), {}, {}, Guidance())
+            )
         ]
 
         assets, total_assets = assets_bundle
@@ -701,6 +772,7 @@ class XframeContextManager:
             gen_settings=self._build_gen_settings(project, profile),
             credits=int(profile.get("credits", 0) or 0),
             total_assets=total_assets,
+            guidance=guidance,
         )
 
     @staticmethod
@@ -722,6 +794,87 @@ class XframeContextManager:
             "select credits, settings from public.profiles where id = $1::uuid", self._user_id
         )
         return dict(row) if row else {}
+
+    async def _load_guidance(self) -> Guidance:
+        """
+        Conocimiento y habilidades que el usuario define en Ajustes.
+
+        Están en el ámbito del espacio de trabajo, no del proyecto, y el espacio es el
+        que posee este usuario. Se cargan las tres tablas a la vez; cada una que falle
+        deja su parte vacía. Se recorta agresivamente al serializar: son instrucciones,
+        no un volcado —una fuente web puede tener 40.000 caracteres y aquí solo entra su
+        extracto—.
+        """
+        knowledge_rows, source_rows, skill_rows = await asyncio.gather(
+            db.fetch(
+                """
+                select content, project_id
+                  from public.knowledge
+                 where workspace_id in (
+                         select id from public.workspaces where owner_id = $1::uuid
+                       )
+                   and (project_id is null or project_id = $2::uuid)
+                   and content <> ''
+                 order by (project_id = $2::uuid) desc
+                """,
+                self._user_id,
+                self._project_id,
+            ),
+            db.fetch(
+                """
+                select title, kind, url, excerpt
+                  from public.knowledge_sources
+                 where workspace_id in (
+                         select id from public.workspaces where owner_id = $1::uuid
+                       )
+                   and enabled and status = 'ready'
+                 order by created_at desc
+                 limit 20
+                """,
+                self._user_id,
+            ),
+            db.fetch(
+                """
+                select name, description, instructions, triggers
+                  from public.skills
+                 where workspace_id in (
+                         select id from public.workspaces where owner_id = $1::uuid
+                       )
+                   and enabled
+                 order by is_builtin, name
+                """,
+                self._user_id,
+            ),
+            return_exceptions=True,
+        )
+
+        knowledge = "\n\n".join(
+            (r["content"] or "").strip()
+            for r in (self._or_default(knowledge_rows, []) or [])
+            if (r["content"] or "").strip()
+        )
+
+        sources = [
+            KnowledgeSource(
+                title=(r["title"] or "").strip() or "Sin título",
+                kind=r["kind"] or "note",
+                url=r["url"],
+                excerpt=(r["excerpt"] or "").strip(),
+            )
+            for r in (self._or_default(source_rows, []) or [])
+        ]
+
+        skills = [
+            ProjectSkill(
+                name=(r["name"] or "").strip(),
+                description=(r["description"] or "").strip(),
+                instructions=(r["instructions"] or "").strip(),
+                triggers=list(r["triggers"] or []),
+            )
+            for r in (self._or_default(skill_rows, []) or [])
+        ]
+
+        return Guidance(knowledge=knowledge, sources=sources, skills=skills)
 
     async def _load_brief(self) -> list[BriefBlock]:
         rows = await db.fetch(
