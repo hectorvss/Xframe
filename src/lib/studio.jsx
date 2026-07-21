@@ -53,27 +53,43 @@ export function StudioProvider({ children }) {
       setProfile(null);
       setProjects([]);
       setWorkspace(null);
+      setWorkspaces([]);
       setReady(true);
       return null;
     }
 
-    // Cada dato accesorio se captura por separado: que falle la lista de proyectos, el
-    // espacio de trabajo o el saldo NO puede impedir que el perfil se muestre. Antes un
+    // Cada dato accesorio se captura por separado: que falle la lista de proyectos, los
+    // espacios de trabajo o el saldo NO puede impedir que el perfil se muestre. Antes un
     // `Promise.all` sin protección en `listProjects` tumbaba toda la carga —y el perfil
     // quedaba en null— por un fallo secundario como firmar la portada de un proyecto.
-    const [list, ws, balance] = await Promise.all([
+    const [list, all, balance] = await Promise.all([
       db.listProjects(loadedProfile.id).catch(() => []),
-      db.getWorkspace(loadedProfile.id).catch(() => null),
+      db.listWorkspaces(loadedProfile.id).catch(() => []),
       db.getCreditBalance(loadedProfile).catch(() => loadedProfile.credits),
     ]);
+
+    // El espacio activo se recuerda en las preferencias; si no, el primero.
+    const activeId = loadedProfile.preferences?.active_workspace_id;
+    const active = all.find((w) => w.id === activeId) ?? all[0] ?? null;
+
     // El saldo que ve el usuario sale del libro mayor, no de profiles.credits,
     // que es un espejo derivado y puede ir por detrás de una reserva en curso.
     setProfile({ ...loadedProfile, credits: balance });
     setProjects(list);
-    setWorkspace(ws);
+    setWorkspaces(all);
+    setWorkspace(active);
     setReady(true);
     return loadedProfile;
   }, []);
+
+  // Créditos en vivo: el backend gasta al generar y reescribe profiles.credits;
+  // suscribirse a esa fila mantiene el contador al día sin recargar la página.
+  useEffect(() => {
+    if (!profile?.id) return;
+    return db.subscribeProfile(profile.id, (row) =>
+      setProfile((p) => (p ? { ...p, ...row } : p)),
+    );
+  }, [profile?.id]);
 
   useEffect(() => {
     let alive = true;
@@ -222,12 +238,43 @@ export function StudioProvider({ children }) {
     setProjects((list) => list.filter((p) => p.id !== id));
   }, []);
 
+  /* ----------------------------------------------- espacios de trabajo */
+
+  const switchWorkspace = useCallback(
+    async (id) => {
+      const next = workspaces.find((w) => w.id === id);
+      if (!next || next.id === workspace?.id) return;
+      setWorkspace(next);
+      // Se recuerda el activo en las preferencias para el próximo arranque.
+      await updateProfile({
+        preferences: { ...preferences, active_workspace_id: id },
+      });
+    },
+    [workspaces, workspace, preferences, updateProfile],
+  );
+
+  const createWorkspace = useCallback(
+    async (name) => {
+      const created = await db.createWorkspace(profile.id, name);
+      setWorkspaces((list) => [...list, created]);
+      setWorkspace(created);
+      await updateProfile({
+        preferences: { ...preferences, active_workspace_id: created.id },
+      });
+      return created;
+    },
+    [profile, preferences, updateProfile],
+  );
+
   const value = useMemo(
     () => ({
       ready,
       profile,
       projects,
       workspace,
+      workspaces,
+      switchWorkspace,
+      createWorkspace,
       genSettings,
       setGenSettings,
       preferences,
@@ -249,6 +296,9 @@ export function StudioProvider({ children }) {
       profile,
       projects,
       workspace,
+      workspaces,
+      switchWorkspace,
+      createWorkspace,
       genSettings,
       setGenSettings,
       preferences,

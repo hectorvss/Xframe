@@ -2391,6 +2391,187 @@ function UserMenu() {
     </DropdownMenu>
   );
 }
+const workspaceColorClass = (color) =>
+  ({
+    pink: "bg-pink-600",
+    violet: "bg-violet-600",
+    blue: "bg-blue-600",
+    green: "bg-green-600",
+    amber: "bg-amber-500",
+    neutral: "bg-neutral-800",
+  })[color] ?? "bg-primary";
+
+// Créditos incluidos por plan: sirven de referencia para la barra de saldo.
+const planAllowance = { free: 200, pro: 1000, business: 3000, enterprise: 10000 };
+
+/**
+ * Conmutador de espacios de trabajo, con el saldo de créditos, los miembros y
+ * el acceso a invitar, ajustes y mejorar plan. Reemplaza el botón fijo del
+ * sidebar por un desplegable real.
+ */
+function WorkspaceSwitcher({ collapsed }) {
+  const { profile, workspace, workspaces, switchWorkspace, createWorkspace } =
+    useStudio();
+  const [members, setMembers] = useState(1);
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    if (workspace?.id) db.countMembers(workspace.id).then(setMembers).catch(() => {});
+  }, [workspace?.id]);
+
+  if (!workspace || !profile) return null;
+
+  const initial = (workspace.name || "?").charAt(0).toUpperCase();
+  const allowance = planAllowance[profile.plan] ?? 200;
+  const pct = Math.min(100, Math.round((profile.credits / allowance) * 100));
+  const low = profile.credits < 30;
+
+  const addWorkspace = async () => {
+    const name = window.prompt("Nombre del nuevo espacio de trabajo");
+    if (!name?.trim()) return;
+    setCreating(true);
+    try {
+      await createWorkspace(name.trim());
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          title={workspace.name}
+          className={cn(
+            "mt-2 flex items-center rounded-md text-sm outline-none transition-colors hover:bg-accent",
+            collapsed ? "size-9 justify-center" : "gap-2 p-2",
+          )}
+        >
+          <span
+            className={cn(
+              "flex size-6 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-white",
+              workspaceColorClass(workspace.avatar_color),
+            )}
+          >
+            {initial}
+          </span>
+          {!collapsed && (
+            <>
+              <span className="flex-1 truncate text-left font-medium">
+                {workspace.name}
+              </span>
+              <ChevronDown className="size-4 text-muted-foreground" />
+            </>
+          )}
+        </button>
+      </DropdownMenuTrigger>
+
+      <DropdownMenuContent align="start" className="w-72">
+        <div className="flex items-center gap-2.5 p-2">
+          <span
+            className={cn(
+              "flex size-9 shrink-0 items-center justify-center rounded-md text-sm font-semibold text-white",
+              workspaceColorClass(workspace.avatar_color),
+            )}
+          >
+            {initial}
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{workspace.name}</p>
+            <p className="text-xs capitalize text-muted-foreground">
+              Plan {profile.plan} · {members}{" "}
+              {members === 1 ? "miembro" : "miembros"}
+            </p>
+          </div>
+        </div>
+
+        <div className="px-2 pb-1">
+          <UIButton
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => go("/settings/people")}
+          >
+            <UserPlus /> Invitar miembros
+          </UIButton>
+        </div>
+
+        <DropdownMenuSeparator />
+
+        {/* Créditos */}
+        <button
+          onClick={() => go("/settings/billing")}
+          className="flex w-full items-center justify-between px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+        >
+          <span className="font-medium">Créditos</span>
+          <span
+            className={cn(
+              "flex items-center gap-1 text-muted-foreground",
+              low && "text-destructive",
+            )}
+          >
+            <span className="tabular-nums">
+              {profile.credits.toLocaleString("es-ES")}
+            </span>{" "}
+            restantes
+            <ChevronRight className="size-3.5" />
+          </span>
+        </button>
+        <div className="px-2 pb-2">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all",
+                low ? "bg-destructive" : "bg-blue-600",
+              )}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {allowance.toLocaleString("es-ES")} créditos al mes en el plan{" "}
+            <span className="capitalize">{profile.plan}</span>.
+          </p>
+        </div>
+
+        <DropdownMenuSeparator />
+
+        <p className="px-2 py-1 text-xs font-medium text-muted-foreground">
+          Espacios de trabajo
+        </p>
+        {workspaces.map((w) => (
+          <DropdownMenuItem key={w.id} onClick={() => switchWorkspace(w.id)}>
+            <span
+              className={cn(
+                "mr-2 flex size-5 items-center justify-center rounded text-[10px] font-semibold text-white",
+                workspaceColorClass(w.avatar_color),
+              )}
+            >
+              {(w.name || "?").charAt(0).toUpperCase()}
+            </span>
+            <span className="truncate">{w.name}</span>
+            {w.id === workspace.id && <Check className="ml-auto size-3.5" />}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuItem disabled={creating} onClick={addWorkspace}>
+          <Plus className="mr-2 size-3.5" /> Nuevo espacio de trabajo
+        </DropdownMenuItem>
+
+        <DropdownMenuSeparator />
+
+        <DropdownMenuItem onClick={() => go("/settings/workspace")}>
+          <Settings className="mr-2 size-3.5" /> Configuración
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => go("/es/pricing")}>
+          <Zap className="mr-2 size-3.5" /> Mejorar plan
+          <Badge variant="secondary" className="ml-auto rounded">
+            Pro
+          </Badge>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function DashboardSide({ width, onResize }) {
   const { projects, profile, workspace } = useStudio();
   const recentProjects = projects.slice(0, 5);
@@ -2428,25 +2609,7 @@ function DashboardSide({ width, onResize }) {
         </div>
       )}
 
-      <button
-        title={workspace?.name ?? "Espacio de trabajo"}
-        className={cn(
-          "mt-2 flex items-center rounded-md text-sm transition-colors hover:bg-accent",
-          collapsed ? "size-9 justify-center" : "gap-2 p-2",
-        )}
-      >
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
-          H
-        </span>
-        {!collapsed && (
-          <>
-            <span className="flex-1 truncate text-left font-medium">
-              {workspace?.name ?? "Espacio de trabajo"}
-            </span>
-            <ChevronDown className="size-4 text-muted-foreground" />
-          </>
-        )}
-      </button>
+      <WorkspaceSwitcher collapsed={collapsed} />
 
       <nav className="mt-2 flex w-full flex-col gap-1">
         {navItems.map(([id, I, l]) => {
@@ -6420,12 +6583,13 @@ function Editor({ projectId }) {
   } = data;
 
   const [tab, setTab] = useState("preview");
-  // Ancho por defecto calibrado para que el Director Panel quepa entero en UNA fila
-  // (slots de frame + movimiento + curva + ramp + duración ≈ 640px). El usuario puede
-  // estrecharlo — el panel parte en dos filas con flex-wrap — pero la disposición de
-  // fábrica no debe salir rota. La clave de storage lleva -v2 para que quien ya tenía
-  // guardado el ancho viejo (380) reciba el nuevo defecto una vez.
-  const [chatW, resizeChat] = useResizableWidth("xf-editor-chat-v2", 660, 300, 900);
+  // Ancho por defecto calibrado para que el Director Panel renderice entero en UNA
+  // fila CON margen (slots de frame + movimiento + curva + ramp + duración ≈ 640px,
+  // más aire para no rozar el límite del wrap). El usuario puede estrecharlo — el
+  // panel parte en dos filas con flex-wrap — pero la disposición de fábrica no debe
+  // salir rota ni justa. La clave de storage se versiona para que quien tenía
+  // guardado un ancho anterior reciba el defecto nuevo una vez.
+  const [chatW, resizeChat] = useResizableWidth("xf-editor-chat-v3", 720, 300, 960);
   // Ocultar el chat lateral (botón PanelLeft del header). Se oculta con CSS, sin
   // desmontar, para que borrador y scroll del hilo no se pierdan.
   const [chatHidden, setChatHidden] = useState(false);
