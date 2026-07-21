@@ -533,22 +533,24 @@ const styleGroups = {
 // Movimientos de cámara del compositor de VÍDEO. Los ids son EXACTAMENTE los del
 // catálogo `camera_motions` del backend: así el agente puede pasarlos tal cual al
 // argumento camera_motion de generate_video sin traducir nada.
+// El tercer campo es el PROPÓSITO cinematográfico del movimiento — se enseña como
+// tooltip para que elegir cámara sea una decisión de dirección, no de menú.
 const CAMERA_MOVES = [
-  ["static-lockoff", "Estática"],
-  ["handheld-follow", "Handheld"],
-  ["zoom-in", "Zoom in"],
-  ["push-to-glass", "Push in"],
-  ["dolly-zoom", "Dolly zoom"],
-  ["pan-left", "Pan izq."],
-  ["pan-right", "Pan dcha."],
-  ["tilt-up", "Tilt arriba"],
-  ["tilt-down", "Tilt abajo"],
-  ["crane-up", "Crane up"],
-  ["crane-down", "Crane down"],
-  ["truck-left", "Truck izq."],
-  ["truck-right", "Truck dcha."],
-  ["orbit-360", "Órbita 360"],
-  ["head-tracking", "Tracking"],
+  ["static-lockoff", "Estática", "Compostura: el encuadre espera y la acción lo cruza"],
+  ["handheld-follow", "Handheld", "Urgencia y subjetividad — respiración documental"],
+  ["zoom-in", "Zoom in", "Atención creciente sobre un detalle, sin mover el punto de vista"],
+  ["push-to-glass", "Push in", "Acercamiento físico: intimidad o amenaza que crece"],
+  ["dolly-zoom", "Dolly zoom", "El efecto Vértigo: revelación, vértigo — resérvalo para un punto de giro"],
+  ["pan-left", "Pan izq.", "Barrido que explora o sigue la acción hacia la izquierda"],
+  ["pan-right", "Pan dcha.", "Barrido que explora o sigue la acción hacia la derecha"],
+  ["tilt-up", "Tilt arriba", "Revelar escala: de lo humano a lo monumental"],
+  ["tilt-down", "Tilt abajo", "Descender a la consecuencia: del cielo al suelo"],
+  ["crane-up", "Crane up", "Abandonar la escena o concederle perspectiva — cierre clásico"],
+  ["crane-down", "Crane down", "Comprometerse con la escena: de dios a testigo"],
+  ["truck-left", "Truck izq.", "Viajar CON la acción, en paralelo, hacia la izquierda"],
+  ["truck-right", "Truck dcha.", "Viajar CON la acción, en paralelo, hacia la derecha"],
+  ["orbit-360", "Órbita 360", "Celebrar o atrapar al sujeto — el mundo gira a su alrededor"],
+  ["head-tracking", "Tracking", "Anclados a la experiencia de un personaje"],
 ];
 const MOVE_ICONS = {
   "static-lockoff": Square,
@@ -570,14 +572,107 @@ const MOVE_ICONS = {
 
 // Rampas de velocidad. No hay parámetro nativo en los proveedores: el agente las
 // escribe DENTRO del prompt como dirección de ritmo, y por eso son etiquetas legibles.
+// Cada preset lleva su curva (5 multiplicadores a lo largo del clip) para pintarla y
+// para que al arrastrar un punto el usuario parta de una forma con sentido.
 const SPEED_RAMPS = [
-  "Ninguno",
-  "Lento → Rápido",
-  "Rápido → Lento",
-  "Impacto (ramp al golpe)",
-  "Slow motion 0.5x",
-  "Timelapse 2x",
+  ["Ninguno", [1, 1, 1, 1, 1]],
+  ["Lento → Rápido", [0.4, 0.55, 0.85, 1.3, 1.8]],
+  ["Rápido → Lento", [1.8, 1.3, 0.85, 0.55, 0.4]],
+  ["Impacto (ramp al golpe)", [1, 1.4, 0.3, 1.2, 1]],
+  ["Slow motion 0.5x", [0.5, 0.5, 0.5, 0.5, 0.5]],
+  ["Timelapse 2x", [2, 2, 2, 2, 2]],
 ];
+const RAMP_MIN = 0.25;
+const RAMP_MAX = 2;
+const rampLabelFor = (curve) =>
+  "Custom: " +
+  curve.map((v, i) => `${+v.toFixed(2)}x@${i * 25}%`).join(" ");
+
+/**
+ * Editor de curva de speed ramp: 5 puntos fijos en el tiempo (0-100% del clip) cuya
+ * altura es el multiplicador de velocidad (0.25x-2x). Se arrastran en vertical, en
+ * vivo, como en un panel de dirección de verdad. La línea discontinua es 1x.
+ */
+function RampCurve({ curve, onChange, onCommit }) {
+  const ref = useRef(null);
+  const W = 116;
+  const H = 34;
+  const PAD = 7;
+  const xFor = (i) => PAD + (i * (W - 2 * PAD)) / (curve.length - 1);
+  const yFor = (v) => H - PAD - ((v - RAMP_MIN) / (RAMP_MAX - RAMP_MIN)) * (H - 2 * PAD);
+  const vFor = (y) => {
+    const t = (H - PAD - y) / (H - 2 * PAD);
+    const v = RAMP_MIN + Math.min(1, Math.max(0, t)) * (RAMP_MAX - RAMP_MIN);
+    return Math.round(v * 20) / 20; // pasos de 0.05x
+  };
+  const path = curve.map((v, i) => `${i ? "L" : "M"} ${xFor(i)} ${yFor(v)}`).join(" ");
+
+  const startDrag = (i) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const svg = ref.current;
+    // El commit recibe la curva FINAL como argumento: leerla del estado en el
+    // pointerup usaría el closure de cuando empezó el arrastre, no el último punto.
+    let latest = curve;
+    const move = (ev) => {
+      const r = svg.getBoundingClientRect();
+      const y = ((ev.clientY - r.top) / r.height) * H;
+      const next = [...latest];
+      next[i] = vFor(y);
+      latest = next;
+      onChange(next);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      onCommit?.(latest);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    move(e);
+  };
+
+  return (
+    <svg
+      ref={ref}
+      viewBox={`0 0 ${W} ${H}`}
+      className="h-9 w-[116px] shrink-0 cursor-ns-resize touch-none select-none"
+    >
+      {/* línea base 1x */}
+      <line
+        x1={PAD}
+        x2={W - PAD}
+        y1={yFor(1)}
+        y2={yFor(1)}
+        stroke="currentColor"
+        strokeOpacity="0.25"
+        strokeWidth="1"
+        strokeDasharray="3 3"
+      />
+      {/* relleno bajo la curva */}
+      <path
+        d={`${path} L ${xFor(curve.length - 1)} ${H - PAD} L ${xFor(0)} ${H - PAD} Z`}
+        fill="#38bdf8"
+        fillOpacity="0.12"
+      />
+      <path d={path} fill="none" stroke="#38bdf8" strokeWidth="2" strokeLinejoin="round" />
+      {curve.map((v, i) => (
+        <circle
+          key={i}
+          cx={xFor(i)}
+          cy={yFor(v)}
+          r="3.5"
+          fill="#38bdf8"
+          stroke="#0c4a6e"
+          strokeWidth="1"
+          onPointerDown={startDrag(i)}
+        >
+          <title>{`${+v.toFixed(2)}x al ${i * 25}% del clip`}</title>
+        </circle>
+      ))}
+    </svg>
+  );
+}
 
 function SettingsSlider({ label, value, options, onChange }) {
   const trackRef = useRef(null);
@@ -868,6 +963,27 @@ function DirectorPanel({ assets = [] }) {
   const moveLabel = CAMERA_MOVES.find(([id]) => id === cameraMove)?.[1] ?? "Auto";
   const MoveIcon = MOVE_ICONS[cameraMove] ?? CameraIcon;
 
+  // La curva de velocidad que se pinta y se arrastra. Fuente de verdad: speed_curve
+  // (si el usuario la ha tocado), si no la del preset elegido, si no plana a 1x.
+  const presetCurve = SPEED_RAMPS.find(([label]) => label === speedRamp)?.[1];
+  const curve = s.speed_curve ?? presetCurve ?? [1, 1, 1, 1, 1];
+  const rampLabel = speedRamp
+    ? speedRamp.startsWith("Custom")
+      ? "Custom"
+      : speedRamp
+    : "Ninguno";
+  const commitCurve = (c) => {
+    if (!c) return;
+    if (c.every((v) => v === 1))
+      return setGenSettings({ speed_ramp: null, speed_curve: null });
+    // Si la curva arrastrada coincide con un preset, se queda su nombre legible;
+    // si no, la etiqueta Custom lleva los multiplicadores exactos para el agente.
+    const preset = SPEED_RAMPS.find(
+      ([label, pc]) => label !== "Ninguno" && pc.every((v, i) => Math.abs(v - c[i]) < 0.03),
+    );
+    setGenSettings({ speed_curve: c, speed_ramp: preset ? preset[0] : rampLabelFor(c) });
+  };
+
   return (
     <div className="relative mb-2 rounded-xl border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-white shadow-lg">
       <div className="flex items-center gap-2">
@@ -946,6 +1062,19 @@ function DirectorPanel({ assets = [] }) {
               </div>
             </button>
 
+            {/* La curva de velocidad, editable EN VIVO: arrastra cualquier punto en
+                vertical. La discontinua es 1x; encima acelera, debajo ralentiza. */}
+            <div
+              className="shrink-0 rounded-lg border border-neutral-700 bg-neutral-800 px-1"
+              title="Speed ramp del clip: arrastra los puntos — arriba acelera, abajo ralentiza"
+            >
+              <RampCurve
+                curve={curve}
+                onChange={(next) => setGenSettings({ speed_curve: next })}
+                onCommit={commitCurve}
+              />
+            </div>
+
             <button
               onClick={() => setPop(pop === "ramp" ? null : "ramp")}
               className={cn(
@@ -958,7 +1087,7 @@ function DirectorPanel({ assets = [] }) {
                 <p className="text-[8px] uppercase leading-none tracking-wide text-neutral-400">
                   Speed ramp
                 </p>
-                <p className="truncate text-xs leading-tight">{speedRamp ?? "Ninguno"}</p>
+                <p className="truncate text-xs leading-tight">{rampLabel}</p>
               </div>
             </button>
 
@@ -986,11 +1115,12 @@ function DirectorPanel({ assets = [] }) {
           <div className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-[340px] rounded-xl border bg-background p-2 text-foreground shadow-2xl">
             {pop === "move" && (
               <div className="grid grid-cols-3 gap-1">
-                {CAMERA_MOVES.map(([id, label]) => {
+                {CAMERA_MOVES.map(([id, label, purpose]) => {
                   const I = MOVE_ICONS[id] ?? CameraIcon;
                   return (
                     <button
                       key={id}
+                      title={purpose}
                       onClick={() => {
                         setGenSettings({ camera_move: cameraMove === id ? null : id });
                         setPop(null);
@@ -1008,11 +1138,14 @@ function DirectorPanel({ assets = [] }) {
               </div>
             )}
             {pop === "ramp" &&
-              SPEED_RAMPS.map((r) => (
+              SPEED_RAMPS.map(([r, presetPts]) => (
                 <button
                   key={r}
                   onClick={() => {
-                    setGenSettings({ speed_ramp: r === "Ninguno" ? null : r });
+                    setGenSettings({
+                      speed_ramp: r === "Ninguno" ? null : r,
+                      speed_curve: r === "Ninguno" ? null : [...presetPts],
+                    });
                     setPop(null);
                   }}
                   className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
