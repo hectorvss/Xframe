@@ -3528,32 +3528,62 @@ const fmt = (s) =>
     ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
     : "0:00";
 
-function EditorPreview({ assets = [], onAssemble }) {
+// Segundos que dura una imagen del timeline al reproducir la secuencia completa.
+const IMAGE_CLIP_S = 3;
+
+function EditorPreview({ assets = [], onAssemble, timeline = null, onTimelineChange }) {
   const [exporting, setExporting] = useState(false);
   // Nada de demos ni guiones de ejemplo: la vista previa reproduce SOLO material real
-  // del proyecto. Prioridad: (1) el corte final montado por el agente (asset 'cut'),
-  // (2) los fragmentos de vídeo listos, encadenados en secuencia, (3) las imágenes como
-  // visor de planos. Vacío de verdad si no hay nada — mentir aquí era enseñar el vídeo
-  // de otro proyecto.
+  // del proyecto. La secuencia sale del TIMELINE del proyecto — el orden que el usuario
+  // edita arrastrando abajo, persistido en projects.settings — y, si aún no lo ha
+  // tocado, del montaje por defecto: el corte final del agente, o los fragmentos de
+  // vídeo por orden de creación, o las imágenes. Vacío de verdad si no hay nada.
   const ready = assets.filter((a) => a.url && a.status === "ready");
   const isVideoKind = (a) => /video|cut/i.test(String(a.type));
+  const byId = new Map(ready.map((a) => [String(a.id), a]));
   const cut =
     [...ready.filter((a) => /cut/i.test(String(a.type)))].sort(
       (x, y) => new Date(y.created_at ?? 0) - new Date(x.created_at ?? 0),
     )[0] ?? null;
-  const clips = cut
-    ? [cut]
-    : [...ready.filter(isVideoKind)].sort(
-        (x, y) => new Date(x.created_at ?? 0) - new Date(y.created_at ?? 0),
-      );
+  const videos = [...ready.filter((a) => isVideoKind(a) && a !== cut)].sort(
+    (x, y) => new Date(x.created_at ?? 0) - new Date(y.created_at ?? 0),
+  );
   const stills = ready.filter((a) => !isVideoKind(a) && !/audio/i.test(String(a.type)));
-  const reel = clips.length ? clips : stills;
-  const mode = clips.length ? "video" : stills.length ? "image" : "empty";
+  const hasTimeline = Array.isArray(timeline) && timeline.length > 0;
+  const savedSeq = hasTimeline
+    ? timeline.map((id) => byId.get(String(id))).filter(Boolean)
+    : null;
+  const seq = savedSeq ?? (cut ? [cut] : videos.length ? videos : stills);
 
+  // Reordenación en vivo: mientras se arrastra, el orden vive en local (fluido, sin
+  // esperar a la base); al soltar se persiste una sola vez en el proyecto.
+  const [draftOrder, setDraftOrder] = useState(null);
+  const [dragIdx, setDragIdx] = useState(null);
+  const shown = draftOrder ?? seq;
+  const commit = (items) => {
+    // El orden local se mantiene hasta que la persistencia vuelva reflejada en las
+    // props (el efecto de abajo lo limpia): soltarlo ya haría parpadear la tira al
+    // orden viejo durante el viaje a la base.
+    setDraftOrder(items);
+    onTimelineChange?.(items.map((a) => String(a.id)));
+  };
+  useEffect(() => {
+    setDraftOrder(null);
+  }, [timeline]);
+  const moveItem = (from, to) =>
+    setDraftOrder((prev) => {
+      const next = [...(prev ?? seq)];
+      next.splice(to, 0, next.splice(from, 1)[0]);
+      return next;
+    });
+  const addToTimeline = (asset) => commit([...shown, asset]);
+  const removeFromTimeline = (i) => commit(shown.filter((_, n) => n !== i));
+
+  const mode = shown.length ? "reel" : "empty";
   const videoRef = useRef(null);
   const barRef = useRef(null);
-  // Encadenado automático: al terminar un fragmento entra el siguiente sin tocar nada,
-  // que es como se ve un montaje. El ref sobrevive al remount del <video> (key=clip).
+  // Encadenado automático: al terminar un clip entra el siguiente sin tocar nada, que
+  // es como se ve un montaje. El ref sobrevive al remount del <video> (key=clip.id).
   const autoNext = useRef(false);
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -3562,20 +3592,62 @@ function EditorPreview({ assets = [], onAssemble }) {
   const [time, setTime] = useState(0);
   const [dur, setDur] = useState(0);
   const [aspect, setAspect] = useState("16:9");
+  const [adding, setAdding] = useState(false);
 
-  const safeIdx = Math.min(idx, Math.max(0, reel.length - 1));
-  const clip = mode === "video" ? clips[safeIdx] : null;
+  const safeIdx = Math.min(idx, Math.max(0, shown.length - 1));
+  const item = shown[safeIdx] ?? null;
+  const itemIsVideo = item ? isVideoKind(item) : false;
   useEffect(() => {
     if (idx !== safeIdx) setIdx(safeIdx);
   }, [idx, safeIdx]);
 
+  const advance = () => {
+    if (safeIdx < shown.length - 1) {
+      autoNext.current = playing;
+      setIdx(safeIdx + 1);
+    } else if (loop && shown.length > 1) {
+      autoNext.current = playing;
+      setIdx(0);
+    } else {
+      setPlaying(false);
+    }
+  };
+
+  // Reloj de las imágenes: en la secuencia, una imagen "dura" IMAGE_CLIP_S segundos y
+  // avanza sola, para que un timeline mixto (fotos + vídeos) se reproduzca de corrido.
+  useEffect(() => {
+    if (!item || itemIsVideo) return undefined;
+    setDur(IMAGE_CLIP_S);
+    setTime(0);
+    if (autoNext.current) {
+      autoNext.current = false;
+      setPlaying(true);
+    }
+    return undefined;
+  }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!item || itemIsVideo || !playing) return undefined;
+    const iv = setInterval(() => setTime((t) => t + 0.1), 100);
+    return () => clearInterval(iv);
+  }, [item?.id, itemIsVideo, playing]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!item || itemIsVideo) return;
+    if (time >= IMAGE_CLIP_S) advance();
+  }, [time]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // seek/toggle entienden ambos tipos de clip: un vídeo delega en el <video>; una
+  // imagen mueve su reloj sintético.
   const seek = (t) => {
+    if (!Number.isFinite(dur)) return;
+    const clamped = Math.min(dur, Math.max(0, t));
+    if (!itemIsVideo) return setTime(clamped);
     const v = videoRef.current;
-    if (!v || !Number.isFinite(dur)) return;
-    v.currentTime = Math.min(dur, Math.max(0, t));
+    if (!v) return;
+    v.currentTime = clamped;
     setTime(v.currentTime);
   };
   const toggle = () => {
+    if (!itemIsVideo) return setPlaying((p) => !p);
     const v = videoRef.current;
     if (!v) return;
     v.paused ? v.play() : v.pause();
@@ -3624,13 +3696,11 @@ function EditorPreview({ assets = [], onAssemble }) {
           ))}
         </div>
         <Badge variant="secondary" className="font-normal">
-          {cut
-            ? "Corte final"
-            : mode === "video"
-              ? `${clips.length} fragmento${clips.length === 1 ? "" : "s"} de vídeo`
-              : mode === "image"
-                ? `${stills.length} plano${stills.length === 1 ? "" : "s"} (imágenes)`
-                : "Sin material aún"}
+          {mode === "empty"
+            ? "Sin material aún"
+            : !hasTimeline && cut
+              ? "Corte final"
+              : `${shown.length} clip${shown.length === 1 ? "" : "s"} en el timeline`}
         </Badge>
         <div className="flex-1" />
         {/* Compartir vive en el header del editor (ShareMenu); duplicarlo aquí solo
@@ -3642,13 +3712,13 @@ function EditorPreview({ assets = [], onAssemble }) {
 
       <div className="flex min-h-0 flex-1 flex-col rounded-xl border bg-background">
         <div className="flex min-h-0 flex-1 items-center justify-center bg-neutral-950 p-4">
-          {mode === "video" && clip ? (
+          {item && itemIsVideo ? (
             <video
-              key={clip.id}
+              key={item.id}
               ref={videoRef}
-              src={clip.url}
+              src={item.url}
               playsInline
-              loop={loop && clips.length === 1}
+              loop={loop && shown.length === 1}
               muted={muted}
               onClick={toggle}
               onPlay={() => setPlaying(true)}
@@ -3662,28 +3732,19 @@ function EditorPreview({ assets = [], onAssemble }) {
                   e.currentTarget.play().catch(() => {});
                 }
               }}
-              onEnded={() => {
-                if (safeIdx < clips.length - 1) {
-                  autoNext.current = true;
-                  setIdx(safeIdx + 1);
-                } else if (loop && clips.length > 1) {
-                  autoNext.current = true;
-                  setIdx(0);
-                } else {
-                  setPlaying(false);
-                }
-              }}
+              onEnded={advance}
               className={cn(
                 "max-h-full cursor-pointer rounded-lg bg-black object-contain",
                 previewAspects.find(([id]) => id === aspect)[1],
               )}
             />
-          ) : mode === "image" ? (
+          ) : item ? (
             <img
-              src={reel[safeIdx]?.url}
-              alt={reel[safeIdx]?.name ?? ""}
+              src={item.url}
+              alt={item.name ?? ""}
+              onClick={toggle}
               className={cn(
-                "max-h-full rounded-lg bg-black object-contain",
+                "max-h-full cursor-pointer rounded-lg bg-black object-contain",
                 previewAspects.find(([id]) => id === aspect)[1],
               )}
             />
@@ -3699,7 +3760,7 @@ function EditorPreview({ assets = [], onAssemble }) {
           )}
         </div>
 
-        {mode === "video" && (
+        {mode === "reel" && (
         <div className="border-t px-3 py-2">
           <div
             ref={barRef}
@@ -3740,21 +3801,21 @@ function EditorPreview({ assets = [], onAssemble }) {
             </button>
             <button
               onClick={() => {
-                if (safeIdx < clips.length - 1) {
+                if (safeIdx < shown.length - 1) {
                   autoNext.current = playing;
                   setIdx(safeIdx + 1);
                 } else {
                   seek(dur);
                 }
               }}
-              title="Fragmento siguiente"
+              title="Clip siguiente"
               className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
             >
               <SkipForward className="size-4" />
             </button>
             <span className="ml-1 text-xs tabular-nums text-muted-foreground">
               {fmt(time)} / {fmt(dur)}
-              {clips.length > 1 && ` · plano ${safeIdx + 1}/${clips.length}`}
+              {shown.length > 1 && ` · clip ${safeIdx + 1}/${shown.length}`}
             </span>
             <div className="flex-1" />
             <button
@@ -3794,43 +3855,133 @@ function EditorPreview({ assets = [], onAssemble }) {
         />
       )}
 
-      {reel.length > 0 && (
+      {/* EL TIMELINE. Cada clip se arrastra para reordenar (estilo CapCut: el hueco se
+          abre en vivo mientras arrastras y se persiste al soltar), se quita con la X y
+          se añade material con el botón del final. La secuencia de arriba reproduce
+          exactamente este orden. */}
+      {(ready.length > 0 || shown.length > 0) && (
         <div className="shrink-0 rounded-xl border bg-background p-2">
-          <div className="flex gap-2 overflow-x-auto">
-            {reel.map((a, i) => (
-              <button
-                key={a.id}
-                onClick={() => {
-                  autoNext.current = mode === "video" && playing;
-                  setIdx(i);
+          <div className="flex items-stretch gap-2 overflow-x-auto">
+            {shown.map((a, i) => (
+              <div
+                key={`${a.id}-${i}`}
+                draggable
+                onDragStart={(e) => {
+                  setDragIdx(i);
+                  e.dataTransfer.effectAllowed = "move";
                 }}
-                title={a.meta || a.name}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (dragIdx !== null && dragIdx !== i) {
+                    moveItem(dragIdx, i);
+                    setDragIdx(i);
+                  }
+                }}
+                onDragEnd={() => {
+                  setDragIdx(null);
+                  if (draftOrder) commit(draftOrder);
+                }}
                 className={cn(
-                  "w-32 shrink-0 overflow-hidden rounded-lg border text-left transition-shadow hover:shadow-md",
+                  "group/clip relative w-32 shrink-0 cursor-grab overflow-hidden rounded-lg border text-left transition-shadow hover:shadow-md active:cursor-grabbing",
                   safeIdx === i && "ring-2 ring-primary",
+                  dragIdx === i && "opacity-40",
                 )}
               >
-                {isVideoKind(a) ? (
-                  <video
-                    src={a.url}
-                    muted
-                    preload="metadata"
-                    className="aspect-video w-full bg-muted object-cover"
-                  />
-                ) : (
-                  <div
-                    className="aspect-video bg-muted bg-cover bg-center"
-                    style={{ backgroundImage: `url(${a.url})` }}
-                  />
-                )}
-                <div className="px-2 py-1.5">
-                  <p className="truncate text-xs font-medium">{a.name}</p>
-                  <p className="text-[10px] tabular-nums text-muted-foreground">
-                    {mode === "video" ? `Plano ${i + 1}` : "Imagen"}
-                  </p>
-                </div>
-              </button>
+                <button
+                  onClick={() => {
+                    autoNext.current = playing;
+                    setIdx(i);
+                  }}
+                  title={a.meta || a.name}
+                  className="block w-full text-left"
+                >
+                  {isVideoKind(a) ? (
+                    <video
+                      src={a.url}
+                      muted
+                      preload="metadata"
+                      className="pointer-events-none aspect-video w-full bg-muted object-cover"
+                    />
+                  ) : (
+                    <div
+                      className="aspect-video bg-muted bg-cover bg-center"
+                      style={{ backgroundImage: `url(${a.url})` }}
+                    />
+                  )}
+                  <div className="px-2 py-1.5">
+                    <p className="truncate text-xs font-medium">{a.name}</p>
+                    <p className="text-[10px] tabular-nums text-muted-foreground">
+                      {isVideoKind(a) ? `Clip ${i + 1}` : `Imagen · ${IMAGE_CLIP_S}s`}
+                    </p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => removeFromTimeline(i)}
+                  title="Quitar del timeline"
+                  className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-md bg-black/55 text-white opacity-0 transition-opacity group-hover/clip:opacity-100"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
             ))}
+
+            {/* Añadir material al timeline: cualquier asset listo que no esté ya. */}
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setAdding((v) => !v)}
+                title="Añadir un asset al timeline"
+                className="flex h-full min-h-[90px] w-16 flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <Plus className="size-4" />
+                <span className="text-[10px]">Añadir</span>
+              </button>
+              {adding && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setAdding(false)} />
+                  <div className="absolute bottom-full right-0 z-50 mb-2 max-h-64 w-64 overflow-y-auto rounded-xl border bg-background p-1 shadow-2xl">
+                    {ready.filter((a) => !shown.some((s) => String(s.id) === String(a.id)))
+                      .length === 0 && (
+                      <p className="p-3 text-xs text-muted-foreground">
+                        Todo el material listo ya está en el timeline. Genera más assets
+                        con el agente.
+                      </p>
+                    )}
+                    {ready
+                      .filter((a) => !shown.some((s) => String(s.id) === String(a.id)))
+                      .map((a) => (
+                        <button
+                          key={a.id}
+                          onClick={() => {
+                            addToTimeline(a);
+                            setAdding(false);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-md p-1.5 text-left transition-colors hover:bg-accent"
+                        >
+                          {isVideoKind(a) ? (
+                            <video
+                              src={a.url}
+                              muted
+                              preload="metadata"
+                              className="pointer-events-none aspect-video w-14 shrink-0 rounded bg-muted object-cover"
+                            />
+                          ) : (
+                            <div
+                              className="aspect-video w-14 shrink-0 rounded bg-muted bg-cover bg-center"
+                              style={{ backgroundImage: `url(${a.url})` }}
+                            />
+                          )}
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-medium">{a.name}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {isVideoKind(a) ? "Vídeo" : "Imagen"}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -5910,6 +6061,12 @@ function Editor({ projectId }) {
           {tab === "preview" && (
             <EditorPreview
               assets={assets}
+              timeline={project.settings?.timeline ?? null}
+              onTimelineChange={(ids) =>
+                updateProject(projectId, {
+                  settings: { ...(project.settings ?? {}), timeline: ids },
+                })
+              }
               onAssemble={() =>
                 handleSend(
                   "Monta el corte final del proyecto con todos los fragmentos de vídeo listos, en orden narrativo, con transiciones limpias.",
