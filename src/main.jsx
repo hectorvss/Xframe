@@ -5160,10 +5160,14 @@ function EditorCanvas({ data, assets = [] }) {
               selected === n.id && "ring-2 ring-primary",
             )}
           >
-            {n.thumb && (
+            {/* Un nodo es UNA cosa: o media o texto, nunca ambas. Un nodo con media
+                muestra solo su imagen (los controles salen al pasar el ratón); un nodo
+                de texto muestra su título y un texto que CRECE con el contenido — nada
+                de scroll interno dentro de una tarjeta del lienzo. */}
+            {n.thumb ? (
               <div className="relative">
                 <div
-                  className="aspect-video rounded-t-xl bg-muted bg-cover bg-center"
+                  className="aspect-video rounded-xl bg-muted bg-cover bg-center"
                   style={{ backgroundImage: `url(${n.thumb})` }}
                 />
                 <button
@@ -5175,37 +5179,46 @@ function EditorCanvas({ data, assets = [] }) {
                   <X className="size-3" />
                 </button>
                 {n.media && (
-                  <span className="absolute bottom-1 left-1 max-w-[85%] truncate rounded bg-black/55 px-1.5 py-0.5 text-[9px] text-white">
+                  <span className="absolute bottom-1 left-1 max-w-[85%] truncate rounded bg-black/55 px-1.5 py-0.5 text-[9px] text-white opacity-0 transition-opacity group-hover:opacity-100">
                     {n.media}
                   </span>
                 )}
+                <button
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => setPicking(n.id)}
+                  title="Cambiar media"
+                  className="absolute bottom-1 right-1 flex size-5 items-center justify-center rounded-md bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                >
+                  <Paperclip className="size-3" />
+                </button>
+              </div>
+            ) : (
+              <div className="p-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {n.title}
+                </p>
+                <AutoTextarea
+                  value={n.text}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onChange={(e) =>
+                    setNodes((ns) =>
+                      ns.map((x) =>
+                        x.id === n.id ? { ...x, text: e.target.value } : x,
+                      ),
+                    )
+                  }
+                  className="mt-1 text-[10px] leading-relaxed"
+                />
+                <button
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => setPicking(n.id)}
+                  className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+                >
+                  <Paperclip className="size-3" />
+                  Añadir asset, elemento o foto
+                </button>
               </div>
             )}
-            <div className="p-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {n.title}
-              </p>
-              <textarea
-                value={n.text}
-                onPointerDown={(e) => e.stopPropagation()}
-                onChange={(e) =>
-                  setNodes((ns) =>
-                    ns.map((x) =>
-                      x.id === n.id ? { ...x, text: e.target.value } : x,
-                    ),
-                  )
-                }
-                className="mt-1 h-14 w-full resize-none bg-transparent text-[10px] leading-relaxed outline-none"
-              />
-              <button
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => setPicking(n.id)}
-                className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
-              >
-                <Paperclip className="size-3" />
-                {n.thumb ? "Cambiar media" : "Añadir asset, elemento o foto"}
-              </button>
-            </div>
             <span
               onPointerDown={(e) => startLink(e, n.id)}
               title="Arrastra para conectar"
