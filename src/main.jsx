@@ -1975,8 +1975,8 @@ function OAuthConsentPage() {
     email: "Correo electrónico",
   };
   const accessPermissions = {
-    readonly: ["Ver los proyectos autorizados", "Leer briefs, contexto, planos y assets", "Consultar trabajos y resultados"],
-    editor: ["Todo el acceso de lectura", "Crear y editar proyectos, briefs y planos", "Añadir y actualizar assets"],
+    readonly: ["Ver los proyectos autorizados", "Leer briefs, contexto, planos y assets", "Ver el estado de assets y resultados"],
+    editor: ["Todo el acceso de lectura", "Crear y editar proyectos y briefs", "Añadir planos al canvas"],
     full: ["Todo el acceso de lectura y edición", "Ejecutar el agente de Xframe", "Crear imágenes, vídeo y otros assets consumiendo créditos"],
   };
   const toggleProject = (projectId) => {
