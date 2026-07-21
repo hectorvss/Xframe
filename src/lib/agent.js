@@ -39,8 +39,20 @@
 
 import { supabase } from "./supabase";
 
+// El backend por defecto según dónde corra el frontend:
+// - `VITE_AGENT_URL` manda siempre; es lo que se pondrá el día que haya dominio propio.
+// - Sin ella, en desarrollo (localhost) se habla con el backend local; en cualquier otro
+//   host —Vercel— con la instancia de producción. Así el despliegue funciona sin
+//   configurar nada en Vercel, y basta cambiar la variable cuando el dominio cambie.
+const DEFAULT_AGENT_URL =
+  typeof window !== "undefined" &&
+  window.location.hostname !== "localhost" &&
+  window.location.hostname !== "127.0.0.1"
+    ? "https://80.225.185.31.sslip.io"
+    : "http://localhost:8000";
+
 export const AGENT_URL = (
-  import.meta.env.VITE_AGENT_URL || "http://localhost:8000"
+  import.meta.env.VITE_AGENT_URL || DEFAULT_AGENT_URL
 ).replace(/\/+$/, "");
 
 /** Mensaje único de degradado: si el backend no está, se dice y no se rompe nada. */

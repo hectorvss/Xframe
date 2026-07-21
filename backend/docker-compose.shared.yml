@@ -1,0 +1,74 @@
+# Despliegue de Xframe en una instancia que YA tiene otro servicio con Caddy delante.
+#
+# Es el caso de la instancia de Oracle de greeksdesk: el puerto 443 ya lo ocupa su
+# Caddy, así que Xframe **no puede levantar el suyo** —dos procesos no comparten un
+# puerto—. En vez de eso, Xframe corre api + worker + redis sin Caddy, expone la API solo
+# en el loopback del host, y el Caddy que ya existe le hace de proxy con un bloque nuevo.
+#
+# Frente a `docker-compose.prod.yml`, aquí falta el servicio `caddy` y la API publica en
+# `127.0.0.1:8000` en vez de en una red interna cerrada. Todo lo demás es idéntico.
+#
+# Arranque:
+#     docker compose -f docker-compose.shared.yml up -d --build
+#
+# Y luego, UNA sola vez, engancharlo al Caddy de greeksdesk (ver DESPLIEGUE-COMPARTIDO.md).
+
+name: xframe
+
+x-app: &app
+  build:
+    context: .
+    target: base
+  env_file: .env
+  environment:
+    REDIS_URL: redis://redis:6379/0
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  api:
+    <<: *app
+    command: python run_api.py --host 0.0.0.0 --port 8000
+    # Solo en el loopback del host, nunca en 0.0.0.0: el puerto no debe quedar expuesto a
+    # internet sin TLS ni saltándose el rate limit. Quien habla con él es el Caddy que ya
+    # corre en la máquina, y desde el host `127.0.0.1:8000` le basta.
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=4).status == 200 else 1)"
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    <<: *app
+    command: python -m app.jobs
+    volumes:
+      - assembly-work:/tmp/xframe
+    deploy:
+      replicas: 2
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  assembly-work:
