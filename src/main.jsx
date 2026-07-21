@@ -6589,7 +6589,7 @@ function Editor({ projectId }) {
   // panel parte en dos filas con flex-wrap — pero la disposición de fábrica no debe
   // salir rota ni justa. La clave de storage se versiona para que quien tenía
   // guardado un ancho anterior reciba el defecto nuevo una vez.
-  const [chatW, resizeChat] = useResizableWidth("xf-editor-chat-v3", 720, 300, 960);
+  const [chatW, resizeChat] = useResizableWidth("xf-editor-chat-v4", 700, 300, 960);
   // Ocultar el chat lateral (botón PanelLeft del header). Se oculta con CSS, sin
   // desmontar, para que borrador y scroll del hilo no se pierdan.
   const [chatHidden, setChatHidden] = useState(false);
