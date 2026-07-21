@@ -1969,6 +1969,16 @@ function OAuthConsentPage() {
     editor: "Consultar y editar proyectos, briefs y planos.",
     full: "Todo lo anterior, incluida la ejecución del agente y las generaciones.",
   };
+  const identityScopeLabel = {
+    openid: "Identificador de tu cuenta",
+    profile: "Nombre y datos básicos del perfil",
+    email: "Correo electrónico",
+  };
+  const accessPermissions = {
+    readonly: ["Ver los proyectos autorizados", "Leer briefs, contexto, planos y assets", "Consultar trabajos y resultados"],
+    editor: ["Todo el acceso de lectura", "Crear y editar proyectos, briefs y planos", "Añadir y actualizar assets"],
+    full: ["Todo el acceso de lectura y edición", "Ejecutar el agente de Xframe", "Crear imágenes, vídeo y otros assets consumiendo créditos"],
+  };
   const toggleProject = (projectId) => {
     setProjectIds((current) => current.includes(projectId)
       ? current.filter((id) => id !== projectId)
@@ -2005,7 +2015,7 @@ function OAuthConsentPage() {
         <Separator className="my-6" />
         <p className="text-sm"><span className="text-muted-foreground">Aplicación: </span><strong>{client.name || "Cliente MCP"}</strong></p>
         {client?.uri && <p className="mt-1 break-all text-xs text-muted-foreground">{client.uri}</p>}
-        <div className="mt-5 rounded-lg border bg-muted/40 p-4"><p className="text-sm font-medium">Permisos solicitados</p><ul className="mt-2 space-y-1 text-sm text-muted-foreground">{scopes.map((scope) => <li key={scope}>• {scope}</li>)}</ul></div>
+        <div className="mt-5 rounded-lg border bg-muted/40 p-4"><p className="text-sm font-medium">Datos usados para iniciar sesión</p><p className="mt-1 text-xs text-muted-foreground">Estos datos identifican tu cuenta; no conceden acceso a tus proyectos.</p><ul className="mt-3 space-y-1 text-sm text-muted-foreground">{scopes.map((scope) => <li key={scope}>• {identityScopeLabel[scope] || scope}</li>)}</ul></div>
         <div className="mt-5">
           <label className="text-sm font-medium">Acceso de este cliente</label>
           <Select value={accessLevel} onValueChange={setAccessLevel}>
@@ -2017,6 +2027,7 @@ function OAuthConsentPage() {
             </SelectContent>
           </Select>
           <p className="mt-2 text-xs text-muted-foreground">{accessDescription[accessLevel]}</p>
+          <div className="mt-3 rounded-lg border p-3"><p className="text-sm font-medium">Este cliente podrá</p><ul className="mt-2 space-y-1 text-sm text-muted-foreground">{accessPermissions[accessLevel].map((permission) => <li key={permission}>• {permission}</li>)}</ul></div>
         </div>
         <div className="mt-5">
           <div className="flex items-center justify-between gap-3">
