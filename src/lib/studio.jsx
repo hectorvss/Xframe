@@ -319,6 +319,45 @@ export function useProjectData(projectId) {
     };
   }, [projectId]);
 
+  // Mientras haya algún asset generándose, se sondea la base cada pocos segundos.
+  //
+  // Por qué un sondeo y no solo el evento SSE: el worker termina el render MINUTOS
+  // después de que el turno del chat cierre su stream, así que `asset_ready` llega cuando
+  // el frontend ya dejó de escuchar y se perdía —la imagen solo aparecía al recargar—. La
+  // base es la fuente de verdad (el worker escribe ahí el asset ya listo, con su ruta), y
+  // `listAssets` firma las URLs, así que releerla es lo que hace aparecer la imagen sola.
+  // El sondeo se apaga en cuanto no queda nada generándose, así que no hay tráfico ocioso.
+  const anyGenerating = assets.some((a) => a.status === "generating");
+  useEffect(() => {
+    if (!anyGenerating) return undefined;
+    let alive = true;
+    const tick = async () => {
+      let fresh;
+      try {
+        fresh = await db.listAssets(projectId);
+      } catch {
+        return;
+      }
+      if (!alive) return;
+      const byId = new Map(fresh.map((a) => [String(a.id), a]));
+      setAssets((list) =>
+        list.map((a) => {
+          if (a.status !== "generating") return a;
+          const updated = byId.get(String(a.id));
+          // Solo se adopta el estado de la base cuando el worker ya lo cerró
+          // (ready o failed); mientras siga "generating" ahí, se deja el placeholder.
+          return updated && updated.status !== "generating" ? { ...a, ...updated } : a;
+        }),
+      );
+    };
+    tick(); // una lectura inmediata, sin esperar al primer intervalo
+    const interval = setInterval(tick, 3500);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+    };
+  }, [anyGenerating, projectId]);
+
   /* ------------------------------------------------------------ assets */
 
   /**
