@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,7 +14,7 @@ from pydantic import BaseModel, Field
 from app import db
 from app.auth import AuthUser, current_user
 from app.config import get_settings
-from app.mcp_server import ALL_SCOPES
+from app.mcp_server import ALL_SCOPES, OAUTH_ACCESS_LEVELS
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 oauth_router = APIRouter(tags=["oauth"])
@@ -24,6 +25,12 @@ class CredentialCreate(BaseModel):
     scopes: list[str] = Field(min_length=1, max_length=12)
     project_ids: list[str] = Field(default_factory=list, max_length=100)
     expires_in_days: int | None = Field(default=None, ge=1, le=365)
+
+
+class OAuthGrantCreate(BaseModel):
+    client_id: str = Field(min_length=1, max_length=300)
+    access_level: Literal["readonly", "editor", "full"]
+    project_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 def _mcp_url() -> str:
@@ -82,6 +89,107 @@ async def status(user: AuthUser = Depends(current_user)) -> dict[str, object]:
             "update_project", "add_brief_block", "create_shot", "run_xframe_agent",
         ],
     }
+
+
+async def _available_projects(user_id: str) -> list[dict[str, object]]:
+    rows = await db.fetch(
+        """
+        select p.id, p.title, p.updated_at
+          from public.projects p
+         where p.owner_id = $1::uuid
+            or exists (
+              select 1 from public.project_collaborators c
+               where c.project_id = p.id and c.user_id = $1::uuid
+                 and coalesce(c.status, 'accepted') = 'accepted'
+            )
+            or exists (
+              select 1 from public.workspaces w
+              join public.workspace_members m on m.workspace_id = w.id
+               where w.owner_id = p.owner_id and m.user_id = $1::uuid
+            )
+         order by p.updated_at desc
+         limit 100
+        """,
+        user_id,
+    )
+    return [dict(row) for row in rows]
+
+
+@router.get("/oauth-grants/projects")
+async def oauth_grant_projects(user: AuthUser = Depends(current_user)) -> list[dict[str, object]]:
+    """Proyectos que el usuario puede delegar a un cliente OAuth."""
+    return await _available_projects(user.id)
+
+
+@router.get("/oauth-grants")
+async def list_oauth_grants(user: AuthUser = Depends(current_user)) -> list[dict[str, object]]:
+    rows = await db.fetch(
+        """
+        select client_id, scopes, project_ids, created_at, updated_at
+          from public.oauth_mcp_grants
+         where owner_id = $1::uuid and revoked_at is null
+         order by updated_at desc
+        """,
+        user.id,
+    )
+    return [dict(row) for row in rows]
+
+
+@router.post("/oauth-grants", status_code=201)
+async def create_oauth_grant(
+    body: OAuthGrantCreate, request: Request, user: AuthUser = Depends(current_user)
+) -> dict[str, object]:
+    """Guarda la delegaciÃ³n elegida antes de que Supabase emita el token OAuth."""
+    accessible_ids = {str(project["id"]) for project in await _available_projects(user.id)}
+    requested_ids = set(body.project_ids)
+    if not requested_ids.issubset(accessible_ids):
+        raise HTTPException(404, "Uno o mÃ¡s proyectos no estÃ¡n disponibles.")
+
+    scopes = sorted(OAUTH_ACCESS_LEVELS[body.access_level])
+    row = await db.fetchrow(
+        """
+        insert into public.oauth_mcp_grants (owner_id, client_id, scopes, project_ids, revoked_at)
+        values ($1::uuid, $2, $3::text[], $4::uuid[], null)
+        on conflict (owner_id, client_id) do update
+          set scopes = excluded.scopes,
+              project_ids = excluded.project_ids,
+              revoked_at = null,
+              updated_at = now()
+        returning client_id, scopes, project_ids, created_at, updated_at
+        """,
+        user.id,
+        body.client_id.strip(),
+        scopes,
+        sorted(requested_ids),
+    )
+    try:
+        await db.execute(
+            """
+            insert into public.agent_audit_events (owner_id, action, outcome, detail)
+            values ($1::uuid, 'grant_oauth_mcp', 'ok', jsonb_build_object('client_id', $2, 'ip', $3))
+            """,
+            user.id,
+            body.client_id.strip(),
+            request.client.host if request.client else None,
+        )
+    except Exception:
+        pass
+    return dict(row)
+
+
+@router.delete("/oauth-grants/{client_id}")
+async def revoke_oauth_grant(client_id: str, user: AuthUser = Depends(current_user)) -> dict[str, bool]:
+    result = await db.execute(
+        """
+        update public.oauth_mcp_grants set revoked_at = now(), updated_at = now()
+         where owner_id = $1::uuid and client_id = $2 and revoked_at is null
+        """,
+        user.id,
+        client_id,
+    )
+    if result.endswith("0"):
+        raise HTTPException(404, "ConcesiÃ³n OAuth no encontrada.")
+    return {"ok": True}
 
 
 @router.get("/credentials")
@@ -147,4 +255,15 @@ async def revoke_credential(credential_id: str, user: AuthUser = Depends(current
     )
     if result.endswith("0"):
         raise HTTPException(404, "Credencial no encontrada.")
+    try:
+        await db.execute(
+            """
+            insert into public.agent_audit_events (owner_id, api_key_id, action, outcome)
+            values ($1::uuid, $2::uuid, 'revoke_credential', 'ok')
+            """,
+            user.id,
+            credential_id,
+        )
+    except Exception:
+        pass
     return {"ok": True}

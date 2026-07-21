@@ -1918,6 +1918,9 @@ function AuthModal({ redirectTo = "/dashboard" }) {
 function OAuthConsentPage() {
   const authorizationId = new URLSearchParams(location.search).get("authorization_id");
   const [details, setDetails] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [projectIds, setProjectIds] = useState([]);
+  const [accessLevel, setAccessLevel] = useState("readonly");
   const [error, setError] = useState("");
   const [hasSession, setHasSession] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1938,7 +1941,10 @@ function OAuthConsentPage() {
           window.location.assign(next.redirect_url);
           return;
         }
+        const availableProjects = await mcpApi("/oauth-grants/projects");
+        if (!active) return;
         setDetails(next);
+        setProjects(availableProjects);
         setHasSession(true);
       } catch {
         if (active) setError("La solicitud ha caducado o no se puede autorizar.");
@@ -1957,10 +1963,32 @@ function OAuthConsentPage() {
 
   const client = details?.client ?? {};
   const scopes = String(details?.scope ?? "").split(" ").filter(Boolean);
+  const clientId = client.client_id || client.id;
+  const accessDescription = {
+    readonly: "Consultar proyectos, contexto y assets.",
+    editor: "Consultar y editar proyectos, briefs y planos.",
+    full: "Todo lo anterior, incluida la ejecución del agente y las generaciones.",
+  };
+  const toggleProject = (projectId) => {
+    setProjectIds((current) => current.includes(projectId)
+      ? current.filter((id) => id !== projectId)
+      : [...current, projectId]);
+  };
   const decide = async (approved) => {
     setBusy(true);
     setError("");
     try {
+      if (approved) {
+        if (!clientId) throw new Error("Falta client_id");
+        await mcpApi("/oauth-grants", {
+          method: "POST",
+          body: JSON.stringify({
+            client_id: clientId,
+            access_level: accessLevel,
+            project_ids: projectIds,
+          }),
+        });
+      }
       const result = await oauthAuthorizationDecision(authorizationId, approved);
       if (!result?.redirect_url) throw new Error("Falta redirect_url");
       window.location.assign(result.redirect_url);
@@ -1978,6 +2006,26 @@ function OAuthConsentPage() {
         <p className="text-sm"><span className="text-muted-foreground">Aplicación: </span><strong>{client.name || "Cliente MCP"}</strong></p>
         {client?.uri && <p className="mt-1 break-all text-xs text-muted-foreground">{client.uri}</p>}
         <div className="mt-5 rounded-lg border bg-muted/40 p-4"><p className="text-sm font-medium">Permisos solicitados</p><ul className="mt-2 space-y-1 text-sm text-muted-foreground">{scopes.map((scope) => <li key={scope}>• {scope}</li>)}</ul></div>
+        <div className="mt-5">
+          <label className="text-sm font-medium">Acceso de este cliente</label>
+          <Select value={accessLevel} onValueChange={setAccessLevel}>
+            <SelectTrigger className="mt-2 w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="readonly">Solo lectura</SelectItem>
+              <SelectItem value="editor">Lectura y edición</SelectItem>
+              <SelectItem value="full">Acceso completo y generaciones</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="mt-2 text-xs text-muted-foreground">{accessDescription[accessLevel]}</p>
+        </div>
+        <div className="mt-5">
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-sm font-medium">Proyectos autorizados</label>
+            <UIButton type="button" size="sm" variant={projectIds.length ? "outline" : "secondary"} onClick={() => setProjectIds([])}>Todos</UIButton>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">Sin selección equivale a todos los proyectos a los que tienes acceso.</p>
+          {projects.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{projects.map((project) => <UIButton type="button" size="sm" variant={projectIds.includes(String(project.id)) ? "secondary" : "outline"} key={project.id} onClick={() => toggleProject(String(project.id))}>{projectIds.includes(String(project.id)) ? "✓ " : ""}{project.title}</UIButton>)}</div>}
+        </div>
         {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
         <div className="mt-6 flex justify-end gap-3"><UIButton variant="outline" disabled={busy} onClick={() => decide(false)}>Cancelar</UIButton><UIButton disabled={busy} onClick={() => decide(true)}>{busy ? "Conectando…" : "Permitir acceso"}</UIButton></div>
       </Card>

@@ -26,6 +26,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import db
+from app.auth.ratelimit import check_rate_limit
 from app.auth.supabase import AuthError, verify_token
 from app.storage import StorageError, get_signer
 
@@ -35,6 +36,14 @@ READ_SCOPES = {"projects:read", "assets:read", "context:read", "jobs:read"}
 WRITE_SCOPES = {"projects:write", "assets:write"}
 GENERATION_SCOPE = "generation:run"
 ALL_SCOPES = READ_SCOPES | WRITE_SCOPES | {GENERATION_SCOPE}
+
+# Supabase OAuth solo emite los scopes estÃ¡ndar de identidad. La capacidad real
+# del MCP se guarda por usuario y cliente, no se infiere de openid/profile/email.
+OAUTH_ACCESS_LEVELS: dict[str, frozenset[str]] = {
+    "readonly": frozenset(READ_SCOPES),
+    "editor": frozenset(READ_SCOPES | WRITE_SCOPES),
+    "full": frozenset(ALL_SCOPES),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,7 +214,25 @@ class McpBearerAuth:
         # puede reutilizar como token MCP fuera de Xframe.
         if not user.claims.get("client_id"):
             return None
-        return McpPrincipal(user_id=user.id, scopes=frozenset(ALL_SCOPES))
+        client_id = user.claims.get("client_id")
+        if not isinstance(client_id, str) or not client_id:
+            return None
+        grant = await db.fetchrow(
+            """
+            select scopes, project_ids
+              from public.oauth_mcp_grants
+             where owner_id = $1::uuid and client_id = $2 and revoked_at is null
+            """,
+            user.id,
+            client_id,
+        )
+        if grant is None:
+            return None
+        return McpPrincipal(
+            user_id=user.id,
+            scopes=frozenset(grant["scopes"] or []),
+            project_ids=frozenset(str(value) for value in (grant["project_ids"] or [])),
+        )
 
     @staticmethod
     async def _reject(send: Send, detail: str) -> None:
@@ -254,15 +281,27 @@ async def list_projects(limit: int = 50) -> list[dict[str, Any]]:
         """
         select p.id, p.title, p.prompt, p.cover_url, p.settings, p.updated_at, p.created_at
           from public.projects p
-         where p.owner_id = $1::uuid
-         order by p.updated_at desc
-         limit $2
+          where (
+            p.owner_id = $1::uuid
+            or exists (
+              select 1 from public.project_collaborators c
+               where c.project_id = p.id and c.user_id = $1::uuid
+                 and coalesce(c.status, 'accepted') = 'accepted'
+            )
+            or exists (
+              select 1 from public.workspaces w
+              join public.workspace_members m on m.workspace_id = w.id
+               where w.owner_id = p.owner_id and m.user_id = $1::uuid
+            )
+          )
+            and (cardinality($2::uuid[]) = 0 or p.id = any($2::uuid[]))
+          order by p.updated_at desc
+          limit $3
         """,
         principal.user_id,
+        list(principal.project_ids),
         limit,
     )
-    if principal.project_ids:
-        rows = [row for row in rows if str(row["id"]) in principal.project_ids]
     return [dict(row) for row in rows]
 
 
@@ -316,6 +355,8 @@ async def list_assets(project_id: str, status: str | None = None, limit: int = 1
 async def create_project(title: str, prompt: str = "") -> dict[str, Any]:
     """Crea un proyecto vacío para la persona propietaria de la credencial."""
     principal = await _assert_scope("projects:write")
+    if principal.project_ids:
+        raise PermissionError("Una credencial limitada a proyectos no puede crear proyectos nuevos.")
     title = title.strip()
     if not title or len(title) > 200:
         raise ValueError("El título debe tener entre 1 y 200 caracteres.")
@@ -405,6 +446,7 @@ async def create_shot(project_id: str, title: str, description: str, position: i
 async def run_xframe_agent(project_id: str, instruction: str, mode: str = "production") -> dict[str, Any]:
     """Ejecuta el agente nativo de Xframe: puede planificar, generar y montar usando las herramientas del SaaS."""
     principal = await _assert_project(project_id, GENERATION_SCOPE)
+    await check_rate_limit(principal.user_id, bucket="mcp-agent")
     if not instruction.strip() or len(instruction) > 20_000:
         raise ValueError("La instrucción debe tener entre 1 y 20.000 caracteres.")
     if mode not in {"preproduction", "production", "edit"}:
