@@ -38,7 +38,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent.state import PartialXframeState, XframeState
-from app.config import get_settings
 from app.context.manager import is_context_message
 from app.memory.prompts import MEMORY_COLLECTOR_PROMPT, MEMORY_COLLECTOR_TOOL_ERROR_PROMPT
 from app.memory.store import MemoryKind, ProjectMemoryStore
@@ -270,8 +269,7 @@ class MemoryCollectorNode:
         """
         if self._model is not None:
             return self._model
-    
-        settings = get_settings()
+
         from app import llm
 
         self._model = llm.chat_model(

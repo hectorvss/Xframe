@@ -19,6 +19,17 @@ lanzarse como subproceso asíncrono con este bucle— está en `app/runtime.py`.
 
 from __future__ import annotations
 
+import pytest
+
+from app.config import get_settings
 from app.runtime import configure_event_loop
 
 configure_event_loop()
+
+
+@pytest.fixture(autouse=True)
+def clear_settings_cache() -> None:
+    """Cada test empieza con su entorno, no con la configuración de otro módulo."""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()

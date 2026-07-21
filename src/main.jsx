@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { Suspense, useState, useRef, useEffect, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
@@ -124,22 +124,6 @@ import { cn } from "@/lib/utils";
 import { uploadAsset } from "@/lib/supabase";
 import { db } from "@/lib/db";
 import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  ChartLegend,
-  ChartLegendContent,
-} from "@/components/ui/chart";
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -161,6 +145,8 @@ import {
 import { buildUIContext } from "@/lib/uiContext";
 import "./index.css";
 import "./styles.css";
+
+const UsageChart = React.lazy(() => import("./components/usage-chart"));
 
 const go = (p) => {
   history.pushState({}, "", p);
@@ -368,7 +354,11 @@ const templates = [
     "Producto en primer plano con luz de estudio",
     "/assets/personal-blog.png",
   ],
-  ["Moda editorial", "Cámara lenta, texturas y luz natural", "/assets/vesper.webp"],
+  [
+    "Moda editorial",
+    "Cámara lenta, texturas y luz natural",
+    "/assets/vesper.webp",
+  ],
   [
     "Documental",
     "Tono sobrio, planos largos y voz en off",
@@ -391,7 +381,11 @@ const templates = [
   ],
 ];
 const cinematicModels = [
-  ["Cinema Studio 3.5", "Selección de cámara, presets de estilo y director IA", "NEW"],
+  [
+    "Cinema Studio 3.5",
+    "Selección de cámara, presets de estilo y director IA",
+    "NEW",
+  ],
   ["Cinema Studio 3.0", "Control avanzado de cámara y speed ramp"],
   ["Cinema Studio 2.5", "Movimientos de cámara con fotograma inicial"],
 ];
@@ -412,80 +406,154 @@ const featuredModels = [
 ];
 // [familia, dominio, descripción, [variantes]]
 const modelFamilies = [
-  ["Minimax Hailuo", "minimax.io", "Alta dinámica, listo para VFX, el más rápido y asequible", [
-    ["Minimax Hailuo 2.3 Fast", "1080p", "6s-10s"],
-    ["Minimax Hailuo 2.3", "1080p", "6s-10s", "PREMIUM"],
-    ["Minimax Hailuo 02 Fast", "512p", "6s-10s"],
-    ["Minimax Hailuo 02", "1080p", "6s-10s", "PREMIUM"],
-  ]],
-  ["Kling", "klingai.com", "Movimiento perfecto con control de vídeo avanzado", [
-    ["Kling 3.0", "4K", "3s-15s"],
-    ["Kling 3.0 Turbo", "1080p", "3s-15s", "NEW"],
-    ["Kling 3.0 Motion Control", "1080p", "3s-30s"],
-    ["Kling 2.5 Turbo", "1080p", "5s-10s"],
-    ["Kling 2.1 Master", "1080p", "5s-10s", "PREMIUM"],
-  ]],
-  ["OpenAI Sora", "openai.com", "Vídeo multiplano con generación de sonido", [
-    ["OpenAI Sora 2 Pro", "1080p", "4s-12s", "PREMIUM"],
-    ["OpenAI Sora 2", "1080p", "4s-12s"],
-  ]],
-  ["Google Veo", "deepmind.google", "Vídeo de precisión con control de sonido", [
-    ["Google Veo 3.1", "4K", "4s-8s", "PREMIUM"],
-    ["Google Veo 3.1 Lite", "1080p", "4s-8s", "NEW"],
-    ["Google Veo 3 Fast", "1080p", "4s-8s"],
-  ]],
-  ["Gemini", "gemini.google.com", "Generación rápida multimodal", [
-    ["Gemini Omni Flash", "720p", "4s-10s", "NEW"],
-  ]],
-  ["Wan", "wan.video", "Vídeo con control de cámara y sonido, más libertad", [
-    ["Wan 2.7", "1080p", "2s-15s", "NEW"],
-    ["Wan 2.5", "1080p", "5s-10s"],
-    ["Wan 2.2 Turbo", "720p", "5s"],
-  ]],
-  ["Seedance", "bytedance.com", "Creación de vídeo cinematográfico multiplano", [
-    ["Seedance 2.0", "4K", "4s-15s"],
-    ["Seedance 2.0 Mini", "720p", "4s-15s", "NEW"],
-    ["Seedance 2.0 Fast", "720p", "4s-15s"],
-    ["Seedance 1.0 Pro", "1080p", "5s-10s"],
-  ]],
-  ["Grok Imagine", "x.ai", "Movimiento perfecto con control de vídeo avanzado", [
-    ["Grok Imagine 1.5", "720p", "1s-15s", "NEW"],
-    ["Grok Imagine", "720p", "1s-15s"],
-  ]],
-  ["Runway", "runwayml.com", "Control de movimiento y referencias de estilo", [
-    ["Runway Gen-4 Turbo", "1080p", "5s-10s"],
-    ["Runway Gen-4", "1080p", "5s-10s", "PREMIUM"],
-  ]],
-  ["Luma", "lumalabs.ai", "Dream Machine, movimiento natural y fluido", [
-    ["Luma Ray 3", "1080p", "5s-9s", "NEW"],
-    ["Luma Ray 2", "1080p", "5s-9s"],
-  ]],
-  ["Pika", "pika.art", "Efectos y transformaciones creativas", [
-    ["Pika 2.2", "1080p", "5s-10s"],
-    ["Pika Turbo", "720p", "3s-5s"],
-  ]],
-  ["HappyHorse", null, "Modelo con sonido nativo y alta consistencia", [
-    ["HappyHorse", "1080p", "3s-15s", "NEW"],
-  ]],
+  [
+    "Minimax Hailuo",
+    "minimax.io",
+    "Alta dinámica, listo para VFX, el más rápido y asequible",
+    [
+      ["Minimax Hailuo 2.3 Fast", "1080p", "6s-10s"],
+      ["Minimax Hailuo 2.3", "1080p", "6s-10s", "PREMIUM"],
+      ["Minimax Hailuo 02 Fast", "512p", "6s-10s"],
+      ["Minimax Hailuo 02", "1080p", "6s-10s", "PREMIUM"],
+    ],
+  ],
+  [
+    "Kling",
+    "klingai.com",
+    "Movimiento perfecto con control de vídeo avanzado",
+    [
+      ["Kling 3.0", "4K", "3s-15s"],
+      ["Kling 3.0 Turbo", "1080p", "3s-15s", "NEW"],
+      ["Kling 3.0 Motion Control", "1080p", "3s-30s"],
+      ["Kling 2.5 Turbo", "1080p", "5s-10s"],
+      ["Kling 2.1 Master", "1080p", "5s-10s", "PREMIUM"],
+    ],
+  ],
+  [
+    "OpenAI Sora",
+    "openai.com",
+    "Vídeo multiplano con generación de sonido",
+    [
+      ["OpenAI Sora 2 Pro", "1080p", "4s-12s", "PREMIUM"],
+      ["OpenAI Sora 2", "1080p", "4s-12s"],
+    ],
+  ],
+  [
+    "Google Veo",
+    "deepmind.google",
+    "Vídeo de precisión con control de sonido",
+    [
+      ["Google Veo 3.1", "4K", "4s-8s", "PREMIUM"],
+      ["Google Veo 3.1 Lite", "1080p", "4s-8s", "NEW"],
+      ["Google Veo 3 Fast", "1080p", "4s-8s"],
+    ],
+  ],
+  [
+    "Gemini",
+    "gemini.google.com",
+    "Generación rápida multimodal",
+    [["Gemini Omni Flash", "720p", "4s-10s", "NEW"]],
+  ],
+  [
+    "Wan",
+    "wan.video",
+    "Vídeo con control de cámara y sonido, más libertad",
+    [
+      ["Wan 2.7", "1080p", "2s-15s", "NEW"],
+      ["Wan 2.5", "1080p", "5s-10s"],
+      ["Wan 2.2 Turbo", "720p", "5s"],
+    ],
+  ],
+  [
+    "Seedance",
+    "bytedance.com",
+    "Creación de vídeo cinematográfico multiplano",
+    [
+      ["Seedance 2.0", "4K", "4s-15s"],
+      ["Seedance 2.0 Mini", "720p", "4s-15s", "NEW"],
+      ["Seedance 2.0 Fast", "720p", "4s-15s"],
+      ["Seedance 1.0 Pro", "1080p", "5s-10s"],
+    ],
+  ],
+  [
+    "Grok Imagine",
+    "x.ai",
+    "Movimiento perfecto con control de vídeo avanzado",
+    [
+      ["Grok Imagine 1.5", "720p", "1s-15s", "NEW"],
+      ["Grok Imagine", "720p", "1s-15s"],
+    ],
+  ],
+  [
+    "Runway",
+    "runwayml.com",
+    "Control de movimiento y referencias de estilo",
+    [
+      ["Runway Gen-4 Turbo", "1080p", "5s-10s"],
+      ["Runway Gen-4", "1080p", "5s-10s", "PREMIUM"],
+    ],
+  ],
+  [
+    "Luma",
+    "lumalabs.ai",
+    "Dream Machine, movimiento natural y fluido",
+    [
+      ["Luma Ray 3", "1080p", "5s-9s", "NEW"],
+      ["Luma Ray 2", "1080p", "5s-9s"],
+    ],
+  ],
+  [
+    "Pika",
+    "pika.art",
+    "Efectos y transformaciones creativas",
+    [
+      ["Pika 2.2", "1080p", "5s-10s"],
+      ["Pika Turbo", "720p", "3s-5s"],
+    ],
+  ],
+  [
+    "HappyHorse",
+    null,
+    "Modelo con sonido nativo y alta consistencia",
+    [["HappyHorse", "1080p", "3s-15s", "NEW"]],
+  ],
 ];
 // Catálogo de IMAGEN, separado del de vídeo: en modo foto el selector debe ofrecer
 // modelos de foto, no un Sora que no genera stills.
 const imageModelFamilies = [
-  ["OpenAI GPT Image", "openai.com", "Imagen fotorrealista con texto legible y referencias", [
-    ["GPT Image 2", "4K", "1-4 img"],
-    ["GPT Image 1", "1080p", "1-4 img"],
-  ]],
-  ["Flux", "bfl.ai", "Fotorrealismo y control de composición", [
-    ["Flux 2 Pro", "4K", "1-4 img", "PREMIUM"],
-    ["Flux 2", "1080p", "1-4 img"],
-  ]],
-  ["Nano Banana", "deepmind.google", "Edición y consistencia de personaje", [
-    ["Nano Banana Pro", "4K", "1-4 img", "NEW"],
-    ["Nano Banana", "1080p", "1-4 img"],
-  ]],
-  ["Seedream", "bytedance.com", "Ilustración y realismo de alta fidelidad", [
-    ["Seedream 4.0", "4K", "1-4 img"],
-  ]],
+  [
+    "OpenAI GPT Image",
+    "openai.com",
+    "Imagen fotorrealista con texto legible y referencias",
+    [
+      ["GPT Image 2", "4K", "1-4 img"],
+      ["GPT Image 1", "1080p", "1-4 img"],
+    ],
+  ],
+  [
+    "Flux",
+    "bfl.ai",
+    "Fotorrealismo y control de composición",
+    [
+      ["Flux 2 Pro", "4K", "1-4 img", "PREMIUM"],
+      ["Flux 2", "1080p", "1-4 img"],
+    ],
+  ],
+  [
+    "Nano Banana",
+    "deepmind.google",
+    "Edición y consistencia de personaje",
+    [
+      ["Nano Banana Pro", "4K", "1-4 img", "NEW"],
+      ["Nano Banana", "1080p", "1-4 img"],
+    ],
+  ],
+  [
+    "Seedream",
+    "bytedance.com",
+    "Ilustración y realismo de alta fidelidad",
+    [["Seedream 4.0", "4K", "1-4 img"]],
+  ],
 ];
 function ModelLogo({ domain, name, className = "size-5" }) {
   if (domain) {
@@ -525,14 +593,42 @@ const durationList = ["4s", "6s", "8s", "10s", "15s"];
 const aspectList = ["Auto", "16:9", "9:16", "1:1", "2.39:1"];
 const cameraGroups = {
   Cámara: ["Auto", "Handheld", "Steadicam", "Dron", "Grúa", "Dolly"],
-  Lente: ["Auto", "Extreme Macro", "Gran angular", "Estándar", "Teleobjetivo", "Anamórfica"],
+  Lente: [
+    "Auto",
+    "Extreme Macro",
+    "Gran angular",
+    "Estándar",
+    "Teleobjetivo",
+    "Anamórfica",
+  ],
   Focal: ["24mm", "35mm", "50mm", "75mm", "100mm"],
   Apertura: ["f/1.4 Shallow", "f/2.8", "f/5.6", "f/11 Deep Focus"],
 };
 const styleGroups = {
-  "Paleta de color": ["Auto", "Teal & Orange", "Monocromo", "Pastel", "Neón", "Sepia"],
-  Iluminación: ["Auto", "Hora dorada", "Low key", "High key", "Neón", "Contraluz"],
-  "Movimiento de cámara": ["Auto", "Estático", "Push lento", "Órbita", "Handheld", "Crash zoom"],
+  "Paleta de color": [
+    "Auto",
+    "Teal & Orange",
+    "Monocromo",
+    "Pastel",
+    "Neón",
+    "Sepia",
+  ],
+  Iluminación: [
+    "Auto",
+    "Hora dorada",
+    "Low key",
+    "High key",
+    "Neón",
+    "Contraluz",
+  ],
+  "Movimiento de cámara": [
+    "Auto",
+    "Estático",
+    "Push lento",
+    "Órbita",
+    "Handheld",
+    "Crash zoom",
+  ],
 };
 
 // Movimientos de cámara del compositor de VÍDEO. Los ids son EXACTAMENTE los del
@@ -541,20 +637,72 @@ const styleGroups = {
 // El tercer campo es el PROPÓSITO cinematográfico del movimiento — se enseña como
 // tooltip para que elegir cámara sea una decisión de dirección, no de menú.
 const CAMERA_MOVES = [
-  ["static-lockoff", "Estática", "Compostura: el encuadre espera y la acción lo cruza"],
-  ["handheld-follow", "Handheld", "Urgencia y subjetividad — respiración documental"],
-  ["zoom-in", "Zoom in", "Atención creciente sobre un detalle, sin mover el punto de vista"],
-  ["push-to-glass", "Push in", "Acercamiento físico: intimidad o amenaza que crece"],
-  ["dolly-zoom", "Dolly zoom", "El efecto Vértigo: revelación, vértigo — resérvalo para un punto de giro"],
-  ["pan-left", "Pan izq.", "Barrido que explora o sigue la acción hacia la izquierda"],
-  ["pan-right", "Pan dcha.", "Barrido que explora o sigue la acción hacia la derecha"],
+  [
+    "static-lockoff",
+    "Estática",
+    "Compostura: el encuadre espera y la acción lo cruza",
+  ],
+  [
+    "handheld-follow",
+    "Handheld",
+    "Urgencia y subjetividad — respiración documental",
+  ],
+  [
+    "zoom-in",
+    "Zoom in",
+    "Atención creciente sobre un detalle, sin mover el punto de vista",
+  ],
+  [
+    "push-to-glass",
+    "Push in",
+    "Acercamiento físico: intimidad o amenaza que crece",
+  ],
+  [
+    "dolly-zoom",
+    "Dolly zoom",
+    "El efecto Vértigo: revelación, vértigo — resérvalo para un punto de giro",
+  ],
+  [
+    "pan-left",
+    "Pan izq.",
+    "Barrido que explora o sigue la acción hacia la izquierda",
+  ],
+  [
+    "pan-right",
+    "Pan dcha.",
+    "Barrido que explora o sigue la acción hacia la derecha",
+  ],
   ["tilt-up", "Tilt arriba", "Revelar escala: de lo humano a lo monumental"],
-  ["tilt-down", "Tilt abajo", "Descender a la consecuencia: del cielo al suelo"],
-  ["crane-up", "Crane up", "Abandonar la escena o concederle perspectiva — cierre clásico"],
-  ["crane-down", "Crane down", "Comprometerse con la escena: de dios a testigo"],
-  ["truck-left", "Truck izq.", "Viajar CON la acción, en paralelo, hacia la izquierda"],
-  ["truck-right", "Truck dcha.", "Viajar CON la acción, en paralelo, hacia la derecha"],
-  ["orbit-360", "Órbita 360", "Celebrar o atrapar al sujeto — el mundo gira a su alrededor"],
+  [
+    "tilt-down",
+    "Tilt abajo",
+    "Descender a la consecuencia: del cielo al suelo",
+  ],
+  [
+    "crane-up",
+    "Crane up",
+    "Abandonar la escena o concederle perspectiva — cierre clásico",
+  ],
+  [
+    "crane-down",
+    "Crane down",
+    "Comprometerse con la escena: de dios a testigo",
+  ],
+  [
+    "truck-left",
+    "Truck izq.",
+    "Viajar CON la acción, en paralelo, hacia la izquierda",
+  ],
+  [
+    "truck-right",
+    "Truck dcha.",
+    "Viajar CON la acción, en paralelo, hacia la derecha",
+  ],
+  [
+    "orbit-360",
+    "Órbita 360",
+    "Celebrar o atrapar al sujeto — el mundo gira a su alrededor",
+  ],
   ["head-tracking", "Tracking", "Anclados a la experiencia de un personaje"],
 ];
 const MOVE_ICONS = {
@@ -590,8 +738,7 @@ const SPEED_RAMPS = [
 const RAMP_MIN = 0.25;
 const RAMP_MAX = 2;
 const rampLabelFor = (curve) =>
-  "Custom: " +
-  curve.map((v, i) => `${+v.toFixed(2)}x@${i * 25}%`).join(" ");
+  "Custom: " + curve.map((v, i) => `${+v.toFixed(2)}x@${i * 25}%`).join(" ");
 
 /**
  * Editor de curva de speed ramp: 5 puntos fijos en el tiempo (0-100% del clip) cuya
@@ -604,13 +751,16 @@ function RampCurve({ curve, onChange, onCommit }) {
   const H = 48;
   const PAD = 7;
   const xFor = (i) => PAD + (i * (W - 2 * PAD)) / (curve.length - 1);
-  const yFor = (v) => H - PAD - ((v - RAMP_MIN) / (RAMP_MAX - RAMP_MIN)) * (H - 2 * PAD);
+  const yFor = (v) =>
+    H - PAD - ((v - RAMP_MIN) / (RAMP_MAX - RAMP_MIN)) * (H - 2 * PAD);
   const vFor = (y) => {
     const t = (H - PAD - y) / (H - 2 * PAD);
     const v = RAMP_MIN + Math.min(1, Math.max(0, t)) * (RAMP_MAX - RAMP_MIN);
     return Math.round(v * 20) / 20; // pasos de 0.05x
   };
-  const path = curve.map((v, i) => `${i ? "L" : "M"} ${xFor(i)} ${yFor(v)}`).join(" ");
+  const path = curve
+    .map((v, i) => `${i ? "L" : "M"} ${xFor(i)} ${yFor(v)}`)
+    .join(" ");
 
   const startDrag = (i) => (e) => {
     e.preventDefault();
@@ -886,43 +1036,53 @@ function ModelPicker({ value, onChange, mode = "video" }) {
               />
             </div>
             <div className="max-h-[380px] overflow-y-auto overscroll-contain p-2">
-              {mode === "video" && cinematicModels.filter(([n]) => match(n)).length > 0 && (
-                <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-                  Modelos cinematográficos
-                </p>
-              )}
-              {mode === "video" && cinematicModels
-                .filter(([n]) => match(n))
-                .map(([n, d, badge]) => (
-                  <button key={n} onClick={() => pick(n)} className={rowCls}>
-                    <img src="/lovable-logo.svg" alt="" className="size-5 shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-medium">{n}</span>
-                        {badgeEl(badge)}
+              {mode === "video" &&
+                cinematicModels.filter(([n]) => match(n)).length > 0 && (
+                  <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                    Modelos cinematográficos
+                  </p>
+                )}
+              {mode === "video" &&
+                cinematicModels
+                  .filter(([n]) => match(n))
+                  .map(([n, d, badge]) => (
+                    <button key={n} onClick={() => pick(n)} className={rowCls}>
+                      <img
+                        src="/lovable-logo.svg"
+                        alt=""
+                        className="size-5 shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium">{n}</span>
+                          {badgeEl(badge)}
+                        </div>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {d}
+                        </p>
                       </div>
-                      <p className="truncate text-xs text-muted-foreground">{d}</p>
-                    </div>
-                    {n === value && <Check className="size-4 shrink-0" />}
-                  </button>
-                ))}
+                      {n === value && <Check className="size-4 shrink-0" />}
+                    </button>
+                  ))}
 
-              {mode === "video" && featuredModels.filter(([n]) => match(n)).length > 0 && (
-                <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-                  Modelos destacados
-                </p>
-              )}
-              {mode === "video" && featuredModels
-                .filter(([n]) => match(n))
-                .map(([n, domain, res, dur, badge]) => (
-                  <button key={n} onClick={() => pick(n)} className={rowCls}>
-                    <ModelLogo domain={domain} name={n} />
-                    <span className="truncate text-sm font-medium">{n}</span>
-                    {badgeEl(badge)}
-                    {meta(res, dur)}
-                    {n === value && <Check className="size-4 shrink-0" />}
-                  </button>
-                ))}
+              {mode === "video" &&
+                featuredModels.filter(([n]) => match(n)).length > 0 && (
+                  <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                    Modelos destacados
+                  </p>
+                )}
+              {mode === "video" &&
+                featuredModels
+                  .filter(([n]) => match(n))
+                  .map(([n, domain, res, dur, badge]) => (
+                    <button key={n} onClick={() => pick(n)} className={rowCls}>
+                      <ModelLogo domain={domain} name={n} />
+                      <span className="truncate text-sm font-medium">{n}</span>
+                      {badgeEl(badge)}
+                      {meta(res, dur)}
+                      {n === value && <Check className="size-4 shrink-0" />}
+                    </button>
+                  ))}
 
               <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
                 Todos los modelos
@@ -968,7 +1128,9 @@ function ModelPicker({ value, onChange, mode = "video" }) {
                               <span className="truncate text-sm">{n}</span>
                               {badgeEl(badge)}
                               {meta(res, dur)}
-                              {n === value && <Check className="size-4 shrink-0" />}
+                              {n === value && (
+                                <Check className="size-4 shrink-0" />
+                              )}
                             </button>
                           ))}
                     </div>
@@ -1007,9 +1169,11 @@ function DirectorPanel({ assets = [] }) {
     end_frame: s.end_frame ?? null,
   };
   const frameCandidates = assets.filter(
-    (a) => a.url && a.status === "ready" && !/video|cut|audio/i.test(String(a.type)),
+    (a) =>
+      a.url && a.status === "ready" && !/video|cut|audio/i.test(String(a.type)),
   );
-  const moveLabel = CAMERA_MOVES.find(([id]) => id === cameraMove)?.[1] ?? "Auto";
+  const moveLabel =
+    CAMERA_MOVES.find(([id]) => id === cameraMove)?.[1] ?? "Auto";
   const MoveIcon = MOVE_ICONS[cameraMove] ?? CameraIcon;
 
   // La curva de velocidad que se pinta y se arrastra. Fuente de verdad: speed_curve
@@ -1028,9 +1192,13 @@ function DirectorPanel({ assets = [] }) {
     // Si la curva arrastrada coincide con un preset, se queda su nombre legible;
     // si no, la etiqueta Custom lleva los multiplicadores exactos para el agente.
     const preset = SPEED_RAMPS.find(
-      ([label, pc]) => label !== "Ninguno" && pc.every((v, i) => Math.abs(v - c[i]) < 0.03),
+      ([label, pc]) =>
+        label !== "Ninguno" && pc.every((v, i) => Math.abs(v - c[i]) < 0.03),
     );
-    setGenSettings({ speed_curve: c, speed_ramp: preset ? preset[0] : rampLabelFor(c) });
+    setGenSettings({
+      speed_curve: c,
+      speed_ramp: preset ? preset[0] : rampLabelFor(c),
+    });
   };
 
   return (
@@ -1045,7 +1213,9 @@ function DirectorPanel({ assets = [] }) {
           title="Director Panel: frames de anclaje, movimiento, speed ramp y duración"
         >
           <Video className="size-3.5" />
-          <ChevronDown className={cn("size-3 transition-transform", !open && "-rotate-90")} />
+          <ChevronDown
+            className={cn("size-3 transition-transform", !open && "-rotate-90")}
+          />
         </button>
 
         {open && (
@@ -1176,7 +1346,9 @@ function DirectorPanel({ assets = [] }) {
                       );
                       const at = i >= 0 ? i : 0;
                       const [r, pc] =
-                        SPEED_RAMPS[(at + dir + SPEED_RAMPS.length) % SPEED_RAMPS.length];
+                        SPEED_RAMPS[
+                          (at + dir + SPEED_RAMPS.length) % SPEED_RAMPS.length
+                        ];
                       setGenSettings({
                         speed_ramp: r === "Ninguno" ? null : r,
                         speed_curve: r === "Ninguno" ? null : [...pc],
@@ -1184,7 +1356,9 @@ function DirectorPanel({ assets = [] }) {
                     }}
                     className="flex flex-1 items-center justify-center px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   >
-                    <ChevronDown className={cn("size-2.5", dir === -1 && "rotate-180")} />
+                    <ChevronDown
+                      className={cn("size-2.5", dir === -1 && "rotate-180")}
+                    />
                   </button>
                 ))}
               </div>
@@ -1197,7 +1371,9 @@ function DirectorPanel({ assets = [] }) {
                 <p className="text-[7px] uppercase leading-none tracking-wide text-muted-foreground">
                   Duración
                 </p>
-                <p className="text-[11px] font-medium leading-none tabular-nums">{s.dur}</p>
+                <p className="text-[11px] font-medium leading-none tabular-nums">
+                  {s.dur}
+                </p>
               </div>
               <input
                 type="range"
@@ -1205,7 +1381,9 @@ function DirectorPanel({ assets = [] }) {
                 max={durationList.length - 1}
                 step={1}
                 value={Math.max(0, durationList.indexOf(s.dur))}
-                onChange={(e) => setGenSettings({ dur: durationList[+e.target.value] })}
+                onChange={(e) =>
+                  setGenSettings({ dur: durationList[+e.target.value] })
+                }
                 className="mt-1.5 h-1 w-[88px] cursor-pointer appearance-none rounded-full bg-muted accent-foreground [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-foreground"
               />
             </div>
@@ -1234,7 +1412,9 @@ function DirectorPanel({ assets = [] }) {
                     purpose={purpose}
                     selected={cameraMove === id}
                     onClick={() => {
-                      setGenSettings({ camera_move: cameraMove === id ? null : id });
+                      setGenSettings({
+                        camera_move: cameraMove === id ? null : id,
+                      });
                       setPop(null);
                     }}
                   />
@@ -1255,18 +1435,21 @@ function DirectorPanel({ assets = [] }) {
                   className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
                 >
                   {r}
-                  {(speedRamp ?? "Ninguno") === r && <Check className="size-3.5" />}
+                  {(speedRamp ?? "Ninguno") === r && (
+                    <Check className="size-3.5" />
+                  )}
                 </button>
               ))}
             {(pop === "start_frame" || pop === "end_frame") && (
               <>
                 <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {pop === "start_frame" ? "Frame inicial" : "Frame final"} — imágenes del proyecto
+                  {pop === "start_frame" ? "Frame inicial" : "Frame final"} —
+                  imágenes del proyecto
                 </p>
                 {frameCandidates.length === 0 && (
                   <p className="p-2 text-xs text-muted-foreground">
-                    No hay imágenes listas en el proyecto. Genera una escena o un
-                    personaje primero: los frames de anclaje salen de ahí.
+                    No hay imágenes listas en el proyecto. Genera una escena o
+                    un personaje primero: los frames de anclaje salen de ahí.
                   </p>
                 )}
                 <div className="grid max-h-56 grid-cols-3 gap-1 overflow-y-auto">
@@ -1296,7 +1479,8 @@ function DirectorPanel({ assets = [] }) {
 
 function GenSettingsBar({ trailing, onMention, onAttach }) {
   const { genSettings: s, setGenSettings } = useStudio();
-  const { mode, model, aspect, res, dur, count, sound, genre, style, camera } = s;
+  const { mode, model, aspect, res, dur, count, sound, genre, style, camera } =
+    s;
   const setMode = (v) => setGenSettings({ mode: v });
   const setModel = (v) => setGenSettings({ model: v });
   const setAspect = (v) => setGenSettings({ aspect: v });
@@ -1312,15 +1496,21 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
   const summarize = (o) =>
     Object.values(o).every((v) => v === "Auto")
       ? "Auto"
-      : Object.values(o).filter((v) => v !== "Auto").join(", ");
+      : Object.values(o)
+          .filter((v) => v !== "Auto")
+          .join(", ");
 
   // Al cambiar de modo, el modelo elegido debe existir en el catálogo de ese modo:
   // quedarse con "OpenAI Sora 2" seleccionado en modo foto es pedir un imposible.
   useEffect(() => {
     const families = mode === "image" ? imageModelFamilies : modelFamilies;
-    const names = families.flatMap(([, , , variants]) => variants.map(([n]) => n));
+    const names = families.flatMap(([, , , variants]) =>
+      variants.map(([n]) => n),
+    );
     if (!names.includes(model)) {
-      setGenSettings({ model: mode === "image" ? "GPT Image 2" : "OpenAI Sora 2" });
+      setGenSettings({
+        model: mode === "image" ? "GPT Image 2" : "OpenAI Sora 2",
+      });
     }
   }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1403,7 +1593,9 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
                   >
                     <I className="size-3.5 shrink-0 text-muted-foreground" />
                     <span className="text-muted-foreground">{label}</span>
-                    <span className="ml-auto max-w-[120px] truncate">{value}</span>
+                    <span className="ml-auto max-w-[120px] truncate">
+                      {value}
+                    </span>
                     <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
                   </button>
                 ))}
@@ -1411,10 +1603,25 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
                 {/* Ajustes por modo: una foto no tiene duración ni sonido, y la
                     cantidad de variaciones es un ajuste de foto (los vídeos se
                     generan de uno en uno: cada segundo cuesta créditos). */}
-                <SettingsSlider label="Aspecto" value={aspect} options={aspectList} onChange={setAspect} />
-                <SettingsSlider label="Resolución" value={res} options={resolutionList} onChange={setRes} />
+                <SettingsSlider
+                  label="Aspecto"
+                  value={aspect}
+                  options={aspectList}
+                  onChange={setAspect}
+                />
+                <SettingsSlider
+                  label="Resolución"
+                  value={res}
+                  options={resolutionList}
+                  onChange={setRes}
+                />
                 {mode === "video" && (
-                  <SettingsSlider label="Duración" value={dur} options={durationList} onChange={setDur} />
+                  <SettingsSlider
+                    label="Duración"
+                    value={dur}
+                    options={durationList}
+                    onChange={setDur}
+                  />
                 )}
                 {mode === "image" && (
                   <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm">
@@ -1426,7 +1633,9 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
                       >
                         <Minus className="size-3" />
                       </button>
-                      <span className="w-8 text-center tabular-nums">{count}/4</span>
+                      <span className="w-8 text-center tabular-nums">
+                        {count}/4
+                      </span>
                       <button
                         onClick={() => setCount(Math.min(4, count + 1))}
                         className="flex size-6 items-center justify-center rounded hover:bg-accent"
@@ -1887,9 +2096,11 @@ function Landing() {
           Equipos de empresas líderes crean con Xframe
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-x-12 gap-y-6 text-lg font-semibold text-muted-foreground/60">
-          {["NVIDIA", "HCA Healthcare", "HEARST", "UDACITY", "asana"].map((x) => (
-            <span key={x}>{x}</span>
-          ))}
+          {["NVIDIA", "HCA Healthcare", "HEARST", "UDACITY", "asana"].map(
+            (x) => (
+              <span key={x}>{x}</span>
+            ),
+          )}
         </div>
       </section>
 
@@ -1968,7 +2179,9 @@ function Landing() {
       </section>
 
       <section className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-6 py-24 text-center">
-        <h2 className="text-3xl font-bold tracking-tight">¿Listo para crear?</h2>
+        <h2 className="text-3xl font-bold tracking-tight">
+          ¿Listo para crear?
+        </h2>
         <PromptBox />
       </section>
 
@@ -2085,7 +2298,9 @@ function PricingCard({ p, i, annual = false }) {
   return (
     <Card className="flex flex-col p-6">
       <h3 className="text-xl font-semibold">{p.name}</h3>
-      <p className="mt-2 min-h-[56px] text-sm text-muted-foreground">{p.desc}</p>
+      <p className="mt-2 min-h-[56px] text-sm text-muted-foreground">
+        {p.desc}
+      </p>
       <div className="mt-4 flex min-h-[44px] items-end">
         <span
           className={cn(
@@ -2291,7 +2506,8 @@ function Pricing() {
           onClick={() => go("/dashboard/resources")}
           className="mt-3 flex w-full items-center justify-between rounded-xl border p-4 text-left text-sm transition-colors hover:bg-accent"
         >
-          Planes y créditos <ExternalLink className="size-4 text-muted-foreground" />
+          Planes y créditos{" "}
+          <ExternalLink className="size-4 text-muted-foreground" />
         </button>
       </section>
 
@@ -2407,7 +2623,12 @@ const workspaceColorClass = (color) =>
   })[color] ?? "bg-primary";
 
 // Créditos incluidos por plan: sirven de referencia para la barra de saldo.
-const planAllowance = { free: 200, pro: 1000, business: 3000, enterprise: 10000 };
+const planAllowance = {
+  free: 200,
+  pro: 1000,
+  business: 3000,
+  enterprise: 10000,
+};
 
 /**
  * Conmutador de espacios de trabajo, con el saldo de créditos, los miembros y
@@ -2421,7 +2642,10 @@ function WorkspaceSwitcher({ collapsed }) {
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    if (workspace?.id) db.countMembers(workspace.id).then(setMembers).catch(() => {});
+    if (workspace?.id)
+      db.countMembers(workspace.id)
+        .then(setMembers)
+        .catch(() => {});
   }, [workspace?.id]);
 
   if (!workspace || !profile) return null;
@@ -2628,9 +2852,7 @@ function DashboardSide({ width, onResize }) {
               key={id}
               title={l}
               className={navCls(active)}
-              onClick={() =>
-                isOverlay ? openOverlay(id) : go(id)
-              }
+              onClick={() => (isOverlay ? openOverlay(id) : go(id))}
             >
               <I />
               {!collapsed && l}
@@ -2699,7 +2921,11 @@ function DashboardSide({ width, onResize }) {
             </button>
             <button
               onClick={() => goToPlans()}
-              title={profile ? `${profile.credits} créditos · plan ${profile.plan}` : "Plan"}
+              title={
+                profile
+                  ? `${profile.credits} créditos · plan ${profile.plan}`
+                  : "Plan"
+              }
               className="flex size-9 items-center justify-center rounded-full bg-secondary hover:bg-accent"
             >
               <Zap className="size-4" />
@@ -2724,10 +2950,14 @@ function DashboardSide({ width, onResize }) {
             >
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">
-                  {profile?.plan === "free" ? "Cambia a Pro" : "Plan " + profile?.plan}
+                  {profile?.plan === "free"
+                    ? "Cambia a Pro"
+                    : "Plan " + profile?.plan}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {profile ? `${profile.credits} créditos disponibles` : "Cargando…"}
+                  {profile
+                    ? `${profile.credits} créditos disponibles`
+                    : "Cargando…"}
                 </p>
               </div>
               <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary">
@@ -2981,7 +3211,12 @@ function ProjectGrid({ view }) {
 function Dashboard({ kind = "home" }) {
   const { profile } = useStudio();
   const [projectView, setProjectView] = useState("mine");
-  const [sidebarW, resizeSidebar] = useResizableWidth("xf-dash-sidebar", 240, 60, 420);
+  const [sidebarW, resizeSidebar] = useResizableWidth(
+    "xf-dash-sidebar",
+    240,
+    60,
+    420,
+  );
   // Solo el primer nombre, para que el saludo suene natural ("¿Cuál es la visión,
   // Marta?") en vez de soltar el nombre completo o el correo. Antes iba "Héctor"
   // escrito a mano, así que a cualquier usuario le salía ese nombre.
@@ -3016,7 +3251,9 @@ function Dashboard({ kind = "home" }) {
                 <ArrowRight className="size-4" />
               </button>
               <h1 className="text-center text-3xl font-bold tracking-tight sm:text-4xl">
-                {firstName ? `¿Cuál es la visión, ${firstName}?` : "¿Cuál es la visión?"}
+                {firstName
+                  ? `¿Cuál es la visión, ${firstName}?`
+                  : "¿Cuál es la visión?"}
               </h1>
               <PromptBox />
             </section>
@@ -3043,7 +3280,10 @@ function Dashboard({ kind = "home" }) {
                       </button>
                     ))}
                   </div>
-                  <UIButton variant="ghost" className="text-sm text-muted-foreground">
+                  <UIButton
+                    variant="ghost"
+                    className="text-sm text-muted-foreground"
+                  >
                     Explorar todo <ArrowRight />
                   </UIButton>
                 </div>
@@ -3131,34 +3371,172 @@ const connectorCategories = [
 ];
 // [name, domain, description, category, { enabled, badge, kind, icon }]
 const connectors = [
-  ["Cloud", null, "Built-in backend, ready to use", "Productivity", { enabled: true, kind: "connections", icon: Cloud }],
-  ["AI", null, "Unlock powerful AI features", "Productivity", { enabled: true, icon: Sparkles }],
+  [
+    "Cloud",
+    null,
+    "Built-in backend, ready to use",
+    "Productivity",
+    { enabled: true, kind: "connections", icon: Cloud },
+  ],
+  [
+    "AI",
+    null,
+    "Unlock powerful AI features",
+    "Productivity",
+    { enabled: true, icon: Sparkles },
+  ],
   ["Stripe", "stripe.com", "Set up payments", "Ecommerce", { enabled: true }],
-  ["Paddle", "paddle.com", "Set up payments with tax handled for you", "Ecommerce", {}],
+  [
+    "Paddle",
+    "paddle.com",
+    "Set up payments with tax handled for you",
+    "Ecommerce",
+    {},
+  ],
   ["Shopify", "shopify.com", "Build an eCommerce store", "Ecommerce", {}],
-  ["Apollo.io", "apollo.io", "Search, enrich, and engage B2B contacts and companies", "Sales", { badge: "New" }],
-  ["ClickHouse", "clickhouse.com", "Query ClickHouse databases over the HTTP interface", "Productivity", { badge: "New", kind: "connections" }],
-  ["dbt Semantic Layer", "getdbt.com", "Query governed metrics from your dbt Semantic Layer", "Productivity", { badge: "New", kind: "connections" }],
-  ["Google Search Console", "search.google.com", "Read Search Console analytics and manage sites", "Google", {}],
-  ["Firecrawl", "firecrawl.dev", "AI-powered scraper, search and retrieval tool", "Productivity", {}],
-  ["Google Sheets", "sheets.google.com", "Read and update spreadsheet data", "Google", {}],
-  ["Google Maps Platform", "mapsplatform.google.com", "Maps, geocoding, directions, and places APIs", "Google", { kind: "connections" }],
+  [
+    "Apollo.io",
+    "apollo.io",
+    "Search, enrich, and engage B2B contacts and companies",
+    "Sales",
+    { badge: "New" },
+  ],
+  [
+    "ClickHouse",
+    "clickhouse.com",
+    "Query ClickHouse databases over the HTTP interface",
+    "Productivity",
+    { badge: "New", kind: "connections" },
+  ],
+  [
+    "dbt Semantic Layer",
+    "getdbt.com",
+    "Query governed metrics from your dbt Semantic Layer",
+    "Productivity",
+    { badge: "New", kind: "connections" },
+  ],
+  [
+    "Google Search Console",
+    "search.google.com",
+    "Read Search Console analytics and manage sites",
+    "Google",
+    {},
+  ],
+  [
+    "Firecrawl",
+    "firecrawl.dev",
+    "AI-powered scraper, search and retrieval tool",
+    "Productivity",
+    {},
+  ],
+  [
+    "Google Sheets",
+    "sheets.google.com",
+    "Read and update spreadsheet data",
+    "Google",
+    {},
+  ],
+  [
+    "Google Maps Platform",
+    "mapsplatform.google.com",
+    "Maps, geocoding, directions, and places APIs",
+    "Google",
+    { kind: "connections" },
+  ],
   ["Resend", "resend.com", "Email API for developers", "Marketing", {}],
   ["Gmail", "gmail.com", "Read, send, and manage your emails", "Google", {}],
-  ["Google Drive", "drive.google.com", "Upload and download files to and from Google Drive", "Google", {}],
-  ["Google Calendar", "calendar.google.com", "Create and manage Google Calendar events", "Google", {}],
-  ["Telegram", "telegram.org", "Messaging platform with Bot API for automated interactions", "Messaging", {}],
-  ["Twilio", "twilio.com", "Cloud communications platform for SMS, voice, and messaging", "Messaging", {}],
-  ["ElevenLabs", "elevenlabs.io", "AI voice generation, text-to-speech, and speech-to-text", "Productivity", {}],
-  ["Notion", "notion.so", "Add Notion pages and databases to your app", "Productivity", {}],
-  ["Google Docs", "docs.google.com", "Create and edit Google Docs documents", "Google", {}],
-  ["Brevo", "brevo.com", "Email, SMS, CRM, and marketing automation API", "Marketing", {}],
-  ["Airtable", "airtable.com", "Spreadsheet-database hybrid and automation platform", "Productivity", {}],
-  ["Slack", "slack.com", "Send messages and interact with Slack workspaces", "Messaging", {}],
-  ["Microsoft Outlook", "outlook.com", "Read, send, and manage Outlook email", "Microsoft", {}],
+  [
+    "Google Drive",
+    "drive.google.com",
+    "Upload and download files to and from Google Drive",
+    "Google",
+    {},
+  ],
+  [
+    "Google Calendar",
+    "calendar.google.com",
+    "Create and manage Google Calendar events",
+    "Google",
+    {},
+  ],
+  [
+    "Telegram",
+    "telegram.org",
+    "Messaging platform with Bot API for automated interactions",
+    "Messaging",
+    {},
+  ],
+  [
+    "Twilio",
+    "twilio.com",
+    "Cloud communications platform for SMS, voice, and messaging",
+    "Messaging",
+    {},
+  ],
+  [
+    "ElevenLabs",
+    "elevenlabs.io",
+    "AI voice generation, text-to-speech, and speech-to-text",
+    "Productivity",
+    {},
+  ],
+  [
+    "Notion",
+    "notion.so",
+    "Add Notion pages and databases to your app",
+    "Productivity",
+    {},
+  ],
+  [
+    "Google Docs",
+    "docs.google.com",
+    "Create and edit Google Docs documents",
+    "Google",
+    {},
+  ],
+  [
+    "Brevo",
+    "brevo.com",
+    "Email, SMS, CRM, and marketing automation API",
+    "Marketing",
+    {},
+  ],
+  [
+    "Airtable",
+    "airtable.com",
+    "Spreadsheet-database hybrid and automation platform",
+    "Productivity",
+    {},
+  ],
+  [
+    "Slack",
+    "slack.com",
+    "Send messages and interact with Slack workspaces",
+    "Messaging",
+    {},
+  ],
+  [
+    "Microsoft Outlook",
+    "outlook.com",
+    "Read, send, and manage Outlook email",
+    "Microsoft",
+    {},
+  ],
   ["HubSpot", "hubspot.com", "CRM, marketing, and sales platform", "Sales", {}],
-  ["GitHub", "github.com", "Sync code and manage repositories", "Productivity", { enabled: true }],
-  ["Supabase", "supabase.com", "Postgres database, auth, and storage", "Productivity", { enabled: true, kind: "connections" }],
+  [
+    "GitHub",
+    "github.com",
+    "Sync code and manage repositories",
+    "Productivity",
+    { enabled: true },
+  ],
+  [
+    "Supabase",
+    "supabase.com",
+    "Postgres database, auth, and storage",
+    "Productivity",
+    { enabled: true, kind: "connections" },
+  ],
 ].map(([name, domain, desc, category, meta]) => ({
   name,
   domain,
@@ -3254,7 +3632,9 @@ function ConnectorDetail({ c }) {
             {c.enabled ? "Enabled" : "Not connected"}
           </p>
         </div>
-        {c.enabled && <UIButton variant="outline">Disable for workspace</UIButton>}
+        {c.enabled && (
+          <UIButton variant="outline">Disable for workspace</UIButton>
+        )}
       </Card>
 
       <h3 className="mt-6 text-lg font-semibold">Overview</h3>
@@ -3285,7 +3665,10 @@ function ConnectorDetail({ c }) {
               <FauxSelect>Ask each time</FauxSelect>
             </div>
             {permissionRows.map(([t, d]) => (
-              <div key={t} className="flex items-center justify-between gap-4 p-4">
+              <div
+                key={t}
+                className="flex items-center justify-between gap-4 p-4"
+              >
                 <div>
                   <p className="text-sm font-medium">{t}</p>
                   <p className="text-xs text-muted-foreground">{d}</p>
@@ -3312,7 +3695,9 @@ function ConnectorDetail({ c }) {
             <span className="flex size-8 items-center justify-center rounded-full border text-sm text-muted-foreground">
               i
             </span>
-            <p className="text-sm text-muted-foreground">No connections found</p>
+            <p className="text-sm text-muted-foreground">
+              No connections found
+            </p>
           </Card>
           <h3 className="mt-6 text-lg font-semibold">Features</h3>
           <Card className="mt-3 p-4">
@@ -3329,7 +3714,9 @@ function ConnectorDetail({ c }) {
                 Runs on one shared credential for every request your deployed{" "}
                 {c.name} app makes.
               </li>
-              <li>Best for data your project should always be able to reach.</li>
+              <li>
+                Best for data your project should always be able to reach.
+              </li>
             </ul>
           </Card>
         </>
@@ -3540,11 +3927,26 @@ const assetFilters = [
 ];
 // [nombre, tipo, meta, thumbnail]
 const assetItems = [
-  ["Plano 01 — Astronauta", "Vídeos", "00:08 · 4K", "/assets/prompt-frame.webp"],
+  [
+    "Plano 01 — Astronauta",
+    "Vídeos",
+    "00:08 · 4K",
+    "/assets/prompt-frame.webp",
+  ],
   ["Plano 02 — Estación", "Vídeos", "00:06 · 4K", "/assets/continuum.jpg"],
-  ["Plano 03 — Sala de control", "Vídeos", "00:05 · 1080p", "/assets/inspo.jpg"],
+  [
+    "Plano 03 — Sala de control",
+    "Vídeos",
+    "00:05 · 1080p",
+    "/assets/inspo.jpg",
+  ],
   ["Comandante Vega", "Personajes", "4 referencias", "/assets/vesper.webp"],
-  ["Ingeniera Nara", "Personajes", "3 referencias", "/assets/personal-blog.png"],
+  [
+    "Ingeniera Nara",
+    "Personajes",
+    "3 referencias",
+    "/assets/personal-blog.png",
+  ],
   ["Estación orbital", "Fondos", "2048 × 858", "/assets/maison.webp"],
   ["Pasillo de emergencia", "Fondos", "2048 × 858", "/assets/ecommerce.webp"],
   ["Nébula ámbar", "Imágenes", "2048 × 858", "/assets/lovable-slides.webp"],
@@ -3552,18 +3954,42 @@ const assetItems = [
   ["Score — Noir cálido", "Audio", "01:12", null],
 ];
 const briefSections = [
-  ["Logline", "Una frase que resuma la historia.", "Un astronauta descubre que la estación orbital que viene a rescatar lleva años vacía."],
-  ["Objetivo", "¿Qué quieres conseguir con este vídeo?", "Tráiler de 24 s para lanzamiento en redes, con corte vertical adicional."],
-  ["Audiencia", "¿A quién va dirigido?", "Público de 18-35 aficionado a la ciencia ficción."],
-  ["Tono y referencias", "Estilo visual, ritmo y referencias.", "Noir cálido: luz lateral dura, grano fino, paleta ámbar sobre negro. Referencias: Blade Runner 2049, Interstellar."],
-  ["Entregables", "Formatos y duración final.", "16:9 4K master · 9:16 para redes · subtítulos ES/EN."],
+  [
+    "Logline",
+    "Una frase que resuma la historia.",
+    "Un astronauta descubre que la estación orbital que viene a rescatar lleva años vacía.",
+  ],
+  [
+    "Objetivo",
+    "¿Qué quieres conseguir con este vídeo?",
+    "Tráiler de 24 s para lanzamiento en redes, con corte vertical adicional.",
+  ],
+  [
+    "Audiencia",
+    "¿A quién va dirigido?",
+    "Público de 18-35 aficionado a la ciencia ficción.",
+  ],
+  [
+    "Tono y referencias",
+    "Estilo visual, ritmo y referencias.",
+    "Noir cálido: luz lateral dura, grano fino, paleta ámbar sobre negro. Referencias: Blade Runner 2049, Interstellar.",
+  ],
+  [
+    "Entregables",
+    "Formatos y duración final.",
+    "16:9 4K master · 9:16 para redes · subtítulos ES/EN.",
+  ],
 ];
 const elementChars = [
   ["Comandante Vega", "Protagonista · traje EVA blanco", "/assets/vesper.webp"],
   ["Ingeniera Nara", "Secundaria · mono técnico", "/assets/personal-blog.png"],
 ];
 const elementLocations = [
-  ["Estación orbital", "Interior abandonado, luz de emergencia", "/assets/maison.webp"],
+  [
+    "Estación orbital",
+    "Interior abandonado, luz de emergencia",
+    "/assets/maison.webp",
+  ],
   ["Sala de control", "Holografías, paneles rojos", "/assets/inspo.jpg"],
   ["Exterior órbita", "Tierra al fondo, silencio", "/assets/continuum.jpg"],
 ];
@@ -3616,7 +4042,11 @@ function ShareMenu({ projectId }) {
                 onClick={copyLink}
                 className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
               >
-                {copied ? <Check className="size-4" /> : <Link className="size-4" />}
+                {copied ? (
+                  <Check className="size-4" />
+                ) : (
+                  <Link className="size-4" />
+                )}
                 {copied ? "Enlace copiado" : "Copiar enlace de invitación"}
               </button>
             </div>
@@ -3697,12 +4127,18 @@ function ShareMenu({ projectId }) {
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm">{email}</p>
-                  <p className="text-xs text-muted-foreground">Invitación enviada</p>
+                  <p className="text-xs text-muted-foreground">
+                    Invitación enviada
+                  </p>
                 </div>
               </div>
             ))}
 
-            <UIButton variant="outline" className="mt-5 w-full" onClick={copyLink}>
+            <UIButton
+              variant="outline"
+              className="mt-5 w-full"
+              onClick={copyLink}
+            >
               {copied ? <Check /> : <Link />}
               {copied ? "Enlace copiado" : "Compartir vista previa"}
             </UIButton>
@@ -3767,7 +4203,11 @@ const chatContext = {
       "Añade referencias visuales de cine noir",
       "Resume el brief en cinco puntos",
     ],
-    chips: ["Mejora el logline", "Añade referencias visuales", "Resume el brief"],
+    chips: [
+      "Mejora el logline",
+      "Añade referencias visuales",
+      "Resume el brief",
+    ],
   },
   canvas: {
     label: "Organización del canvas",
@@ -3791,7 +4231,11 @@ const chatContext = {
       "Describe a Vega con más detalle",
       "Falta una localización para el desenlace",
     ],
-    chips: ["Revisa la continuidad", "Describe a Vega", "Falta una localización"],
+    chips: [
+      "Revisa la continuidad",
+      "Describe a Vega",
+      "Falta una localización",
+    ],
   },
   chat: {
     label: "Chat de equipo",
@@ -3989,7 +4433,9 @@ function EditorChat({
                   <div
                     key={a.id}
                     className="aspect-video overflow-hidden rounded-md border bg-muted bg-cover bg-center"
-                    style={{ backgroundImage: a.url ? `url(${a.url})` : undefined }}
+                    style={{
+                      backgroundImage: a.url ? `url(${a.url})` : undefined,
+                    }}
                     title={a.name}
                   >
                     {!a.url && (
@@ -4021,19 +4467,22 @@ function EditorChat({
         <div ref={endRef} />
       </div>
 
-      {preferences.chatSuggestions && !busy && !draft.trim() && ctx.chips.length > 0 && (
-        <div className="flex flex-wrap gap-2 px-3 pb-1">
-          {ctx.chips.map((c) => (
-            <button
-              key={c}
-              onClick={() => send(c)}
-              className="rounded-full border px-3 py-1.5 text-xs transition-colors hover:bg-accent"
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-      )}
+      {preferences.chatSuggestions &&
+        !busy &&
+        !draft.trim() &&
+        ctx.chips.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-3 pb-1">
+            {ctx.chips.map((c) => (
+              <button
+                key={c}
+                onClick={() => send(c)}
+                className="rounded-full border px-3 py-1.5 text-xs transition-colors hover:bg-accent"
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
 
       <div className="relative p-3">
         {mentionAt !== null && matches.length > 0 && (
@@ -4044,13 +4493,18 @@ function EditorChat({
             {matches.map((element) => (
               <button
                 key={element.id}
-                onMouseDown={(e) => (e.preventDefault(), insertMention(element))}
+                onMouseDown={(e) => (
+                  e.preventDefault(),
+                  insertMention(element)
+                )}
                 className="flex w-full items-center gap-2 rounded-md p-1 text-left transition-colors hover:bg-accent"
               >
                 <div
                   className="size-7 shrink-0 rounded bg-muted bg-cover bg-center"
                   style={{
-                    backgroundImage: element.url ? `url(${element.url})` : undefined,
+                    backgroundImage: element.url
+                      ? `url(${element.url})`
+                      : undefined,
                   }}
                 />
                 <div className="min-w-0">
@@ -4063,11 +4517,13 @@ function EditorChat({
             ))}
           </div>
         )}
-        {mentionAt !== null && matches.length === 0 && elements.length === 0 && (
-          <div className="absolute bottom-full left-3 right-3 z-30 mb-1 rounded-xl border bg-background p-3 text-xs text-muted-foreground shadow-2xl">
-            Aún no hay elements. Genera assets y asígnalos desde All assets.
-          </div>
-        )}
+        {mentionAt !== null &&
+          matches.length === 0 &&
+          elements.length === 0 && (
+            <div className="absolute bottom-full left-3 right-3 z-30 mb-1 rounded-xl border bg-background p-3 text-xs text-muted-foreground shadow-2xl">
+              Aún no hay elements. Genera assets y asígnalos desde All assets.
+            </div>
+          )}
 
         {/* El Director Panel solo tiene sentido donde se generan las escenas (All
             assets) y cuando el compositor está en modo vídeo. */}
@@ -4162,8 +4618,6 @@ function EditorChat({
   );
 }
 
-
-
 /** Exportación del montaje: formato, resolución y progreso. */
 // Exportación REAL. El render lo hace el backend (assemble_cut → ffmpeg → bucket) y el
 // resultado es un asset type='cut' con su URL firmada: exportar es descargar ese fichero,
@@ -4199,9 +4653,9 @@ function ExportDialog({ cut, onAssemble, onClose }) {
         ) : (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Cuando los planos de vídeo estén listos, pide el montaje: el agente los
-              ensambla en orden narrativo, con transiciones y audio, y el corte aparecerá
-              aquí listo para descargar.
+              Cuando los planos de vídeo estén listos, pide el montaje: el
+              agente los ensambla en orden narrativo, con transiciones y audio,
+              y el corte aparecerá aquí listo para descargar.
             </p>
             <div className="flex justify-end gap-2">
               <UIButton variant="outline" onClick={onClose}>
@@ -4266,7 +4720,10 @@ function EditorPreview({
   );
   const hasTimeline = Array.isArray(timeline) && timeline.length > 0;
   const savedSeq = hasTimeline
-    ? timeline.map((id) => byId.get(String(id))).filter(Boolean).filter(isVideoKind)
+    ? timeline
+        .map((id) => byId.get(String(id)))
+        .filter(Boolean)
+        .filter(isVideoKind)
     : null;
   const seq = savedSeq?.length ? savedSeq : cut ? [cut] : videos;
 
@@ -4350,11 +4807,14 @@ function EditorPreview({
   // siguiente, mismos elements y estilo) y después se ensambla todo con ffmpeg.
   const assembleFromTimeline = () => {
     if (!shown.length || !onAssemble) return;
-    const order = shown.map((a, i) => `clip ${i + 1} = asset ${a.id}`).join("; ");
+    const order = shown
+      .map((a, i) => `clip ${i + 1} = asset ${a.id}`)
+      .join("; ");
     const joins = shown
       .slice(0, -1)
       .map((_, i) => {
-        const label = CLIP_TRANSITIONS.find(([id]) => id === transAt(i))?.[1] ?? "Corte";
+        const label =
+          CLIP_TRANSITIONS.find(([id]) => id === transAt(i))?.[1] ?? "Corte";
         return `unión ${i + 1}→${i + 2}: ${label}`;
       })
       .join("; ");
@@ -4434,7 +4894,11 @@ function EditorPreview({
         <div className="flex-1" />
         {/* Compartir vive en el header del editor (ShareMenu); duplicarlo aquí solo
             confundía sobre cuál era el bueno. */}
-        <UIButton variant="outline" size="sm" onClick={() => setExporting(true)}>
+        <UIButton
+          variant="outline"
+          size="sm"
+          onClick={() => setExporting(true)}
+        >
           <Download /> Exportar
         </UIButton>
       </div>
@@ -4477,16 +4941,18 @@ function EditorPreview({
                   Tu vídeo se monta aquí
                 </p>
                 <p className="mt-1.5 text-sm leading-relaxed text-neutral-400">
-                  Pídele fragmentos de vídeo al agente. Cada plano aterriza abajo como
-                  una tira: reordénalas arrastrando, reprodúcelas de corrido y, cuando
-                  te convenzan, monta el corte final.
+                  Pídele fragmentos de vídeo al agente. Cada plano aterriza
+                  abajo como una tira: reordénalas arrastrando, reprodúcelas de
+                  corrido y, cuando te convenzan, monta el corte final.
                 </p>
               </div>
               {onSeedChat && (
                 <UIButton
                   size="sm"
                   onClick={() =>
-                    onSeedChat("Genera el primer fragmento de vídeo de esta escena: ")
+                    onSeedChat(
+                      "Genera el primer fragmento de vídeo de esta escena: ",
+                    )
                   }
                 >
                   <Sparkles /> Pedir el primer fragmento
@@ -4497,89 +4963,97 @@ function EditorPreview({
         </div>
 
         {mode === "reel" && (
-        <div className="border-t px-3 py-2">
-          <div
-            ref={barRef}
-            onPointerDown={scrub}
-            className="group relative h-4 cursor-pointer touch-none"
-          >
-            <div className="absolute top-1.5 h-1 w-full rounded-full bg-muted" />
+          <div className="border-t px-3 py-2">
             <div
-              className="absolute top-1.5 h-1 rounded-full bg-primary"
-              style={{ width: `${dur ? (time / dur) * 100 : 0}%` }}
-            />
-            <div
-              className="absolute top-0.5 size-3 -translate-x-1/2 rounded-full bg-primary opacity-0 shadow transition-opacity group-hover:opacity-100"
-              style={{ left: `${dur ? (time / dur) * 100 : 0}%` }}
-            />
-          </div>
+              ref={barRef}
+              onPointerDown={scrub}
+              className="group relative h-4 cursor-pointer touch-none"
+            >
+              <div className="absolute top-1.5 h-1 w-full rounded-full bg-muted" />
+              <div
+                className="absolute top-1.5 h-1 rounded-full bg-primary"
+                style={{ width: `${dur ? (time / dur) * 100 : 0}%` }}
+              />
+              <div
+                className="absolute top-0.5 size-3 -translate-x-1/2 rounded-full bg-primary opacity-0 shadow transition-opacity group-hover:opacity-100"
+                style={{ left: `${dur ? (time / dur) * 100 : 0}%` }}
+              />
+            </div>
 
-          <div className="mt-1 flex items-center gap-1">
-            <button
-              onClick={() => {
-                // Como en cualquier reproductor: si el fragmento ya avanzó, primero se
-                // rebobina; si está al principio, se salta al fragmento anterior.
-                if (time > 1 || safeIdx === 0) return seek(0);
-                autoNext.current = playing;
-                setIdx(safeIdx - 1);
-              }}
-              title="Fragmento anterior"
-              className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
-            >
-              <SkipBack className="size-4" />
-            </button>
-            <button
-              onClick={toggle}
-              title="Reproducir / pausar (Espacio)"
-              className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
-            >
-              {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
-            </button>
-            <button
-              onClick={() => {
-                if (safeIdx < shown.length - 1) {
+            <div className="mt-1 flex items-center gap-1">
+              <button
+                onClick={() => {
+                  // Como en cualquier reproductor: si el fragmento ya avanzó, primero se
+                  // rebobina; si está al principio, se salta al fragmento anterior.
+                  if (time > 1 || safeIdx === 0) return seek(0);
                   autoNext.current = playing;
-                  setIdx(safeIdx + 1);
-                } else {
-                  seek(dur);
-                }
-              }}
-              title="Clip siguiente"
-              className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
-            >
-              <SkipForward className="size-4" />
-            </button>
-            <span className="ml-1 text-xs tabular-nums text-muted-foreground">
-              {fmt(time)} / {fmt(dur)}
-              {shown.length > 1 && ` · clip ${safeIdx + 1}/${shown.length}`}
-            </span>
-            <div className="flex-1" />
-            <button
-              onClick={() => setLoop(!loop)}
-              title="Bucle"
-              className={cn(
-                "flex size-8 items-center justify-center rounded-md hover:bg-accent",
-                loop ? "text-foreground" : "text-muted-foreground",
-              )}
-            >
-              <Repeat className="size-4" />
-            </button>
-            <button
-              onClick={() => setMuted(!muted)}
-              title={muted ? "Activar sonido" : "Silenciar"}
-              className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
-            >
-              {muted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-            </button>
-            <button
-              onClick={() => videoRef.current?.requestFullscreen?.()}
-              title="Pantalla completa"
-              className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
-            >
-              <Maximize2 className="size-4" />
-            </button>
+                  setIdx(safeIdx - 1);
+                }}
+                title="Fragmento anterior"
+                className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
+              >
+                <SkipBack className="size-4" />
+              </button>
+              <button
+                onClick={toggle}
+                title="Reproducir / pausar (Espacio)"
+                className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
+              >
+                {playing ? (
+                  <Pause className="size-4" />
+                ) : (
+                  <Play className="size-4" />
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  if (safeIdx < shown.length - 1) {
+                    autoNext.current = playing;
+                    setIdx(safeIdx + 1);
+                  } else {
+                    seek(dur);
+                  }
+                }}
+                title="Clip siguiente"
+                className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
+              >
+                <SkipForward className="size-4" />
+              </button>
+              <span className="ml-1 text-xs tabular-nums text-muted-foreground">
+                {fmt(time)} / {fmt(dur)}
+                {shown.length > 1 && ` · clip ${safeIdx + 1}/${shown.length}`}
+              </span>
+              <div className="flex-1" />
+              <button
+                onClick={() => setLoop(!loop)}
+                title="Bucle"
+                className={cn(
+                  "flex size-8 items-center justify-center rounded-md hover:bg-accent",
+                  loop ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                <Repeat className="size-4" />
+              </button>
+              <button
+                onClick={() => setMuted(!muted)}
+                title={muted ? "Activar sonido" : "Silenciar"}
+                className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
+              >
+                {muted ? (
+                  <VolumeX className="size-4" />
+                ) : (
+                  <Volume2 className="size-4" />
+                )}
+              </button>
+              <button
+                onClick={() => videoRef.current?.requestFullscreen?.()}
+                title="Pantalla completa"
+                className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
+              >
+                <Maximize2 className="size-4" />
+              </button>
+            </div>
           </div>
-        </div>
         )}
       </div>
 
@@ -4599,70 +5073,78 @@ function EditorPreview({
           cambio y el agente sabe exactamente sobre qué fragmento aplicarlo. Sin
           material aún, huecos punteados marcan dónde aterrizará cada clip. */}
       <div className="relative shrink-0 rounded-xl border bg-background p-2">
-          <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Timeline
-            </p>
-            <p className="min-w-0 truncate text-[10px] text-muted-foreground">
-              {shown.length
-                ? "Arrastra para reordenar · @ pide un cambio · el nodo entre clips elige la transición"
-                : "Los fragmentos de vídeo aterrizan aquí"}
-            </p>
-            {shown.length > 0 && (
-              <UIButton size="sm" className="h-7 shrink-0" onClick={assembleFromTimeline}>
-                <Play /> Montar vídeo
-              </UIButton>
-            )}
-          </div>
-
-          {/* Editor de transición: fila encima de la tira, nunca un popover dentro del
-              scroll (se recortaba con overflow y quedaba invisible). */}
-          {transEditing !== null && transEditing < shown.length - 1 && (
-            <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border bg-muted/40 px-2 py-1.5">
-              <span className="mr-1 text-xs text-muted-foreground">
-                Transición <b className="text-foreground">Clip {transEditing + 1} → {transEditing + 2}</b>:
-              </span>
-              {CLIP_TRANSITIONS.map(([id, label, desc]) => (
-                <button
-                  key={id}
-                  title={desc}
-                  onClick={() => {
-                    setTransition(transEditing, id);
-                    setTransEditing(null);
-                  }}
-                  className={cn(
-                    "rounded-full border px-2.5 py-1 text-xs transition-colors",
-                    transAt(transEditing) === id
-                      ? "border-primary bg-primary/10 font-medium text-primary"
-                      : "hover:bg-accent",
-                  )}
-                >
-                  {id === "bridge" && <Sparkles className="mr-1 inline size-3" />}
-                  {label}
-                </button>
-              ))}
-              <button
-                onClick={() => setTransEditing(null)}
-                className="ml-auto flex size-6 items-center justify-center rounded hover:bg-accent"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
+        <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Timeline
+          </p>
+          <p className="min-w-0 truncate text-[10px] text-muted-foreground">
+            {shown.length
+              ? "Arrastra para reordenar · @ pide un cambio · el nodo entre clips elige la transición"
+              : "Los fragmentos de vídeo aterrizan aquí"}
+          </p>
+          {shown.length > 0 && (
+            <UIButton
+              size="sm"
+              className="h-7 shrink-0"
+              onClick={assembleFromTimeline}
+            >
+              <Play /> Montar vídeo
+            </UIButton>
           )}
+        </div>
 
-          <div className="flex items-stretch gap-1.5 overflow-x-auto">
-            {!shown.length &&
-              Array.from({ length: 4 }, (_, i) => (
-                <div
-                  key={`ghost-${i}`}
-                  className="flex aspect-video w-32 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-muted-foreground/50"
-                >
-                  <Video className="size-4" />
-                  <span className="text-[10px] tabular-nums">Clip {i + 1}</span>
-                </div>
-              ))}
-            {shown.map((a, i) => (
-              <React.Fragment key={`${a.id}-${i}`}>
+        {/* Editor de transición: fila encima de la tira, nunca un popover dentro del
+              scroll (se recortaba con overflow y quedaba invisible). */}
+        {transEditing !== null && transEditing < shown.length - 1 && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border bg-muted/40 px-2 py-1.5">
+            <span className="mr-1 text-xs text-muted-foreground">
+              Transición{" "}
+              <b className="text-foreground">
+                Clip {transEditing + 1} → {transEditing + 2}
+              </b>
+              :
+            </span>
+            {CLIP_TRANSITIONS.map(([id, label, desc]) => (
+              <button
+                key={id}
+                title={desc}
+                onClick={() => {
+                  setTransition(transEditing, id);
+                  setTransEditing(null);
+                }}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                  transAt(transEditing) === id
+                    ? "border-primary bg-primary/10 font-medium text-primary"
+                    : "hover:bg-accent",
+                )}
+              >
+                {id === "bridge" && <Sparkles className="mr-1 inline size-3" />}
+                {label}
+              </button>
+            ))}
+            <button
+              onClick={() => setTransEditing(null)}
+              className="ml-auto flex size-6 items-center justify-center rounded hover:bg-accent"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
+
+        <div className="flex items-stretch gap-1.5 overflow-x-auto">
+          {!shown.length &&
+            Array.from({ length: 4 }, (_, i) => (
+              <div
+                key={`ghost-${i}`}
+                className="flex aspect-video w-32 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-muted-foreground/50"
+              >
+                <Video className="size-4" />
+                <span className="text-[10px] tabular-nums">Clip {i + 1}</span>
+              </div>
+            ))}
+          {shown.map((a, i) => (
+            <React.Fragment key={`${a.id}-${i}`}>
               <div
                 draggable
                 onDragStart={(e) => {
@@ -4733,7 +5215,8 @@ function EditorPreview({
                 <button
                   onClick={() => setTransEditing(transEditing === i ? null : i)}
                   title={`Transición clip ${i + 1} → ${i + 2}: ${
-                    CLIP_TRANSITIONS.find(([id]) => id === transAt(i))?.[1] ?? "Corte"
+                    CLIP_TRANSITIONS.find(([id]) => id === transAt(i))?.[1] ??
+                    "Corte"
                   }`}
                   className={cn(
                     "flex w-6 shrink-0 flex-col items-center justify-center self-stretch rounded-md border transition-colors",
@@ -4754,62 +5237,68 @@ function EditorPreview({
                   )}
                 </button>
               )}
-              </React.Fragment>
-            ))}
+            </React.Fragment>
+          ))}
 
-            {/* Añadir material al timeline. Solo el BOTÓN vive dentro del scroll; el
+          {/* Añadir material al timeline. Solo el BOTÓN vive dentro del scroll; el
                 desplegable se pinta fuera (abajo), anclado al bloque del timeline:
                 dentro del overflow-x-auto quedaba recortado e invisible. */}
-            <button
-              onClick={() => setAdding((v) => !v)}
-              title="Añadir un fragmento al timeline"
-              className="flex min-h-[90px] w-16 shrink-0 flex-col items-center justify-center gap-1 self-stretch rounded-lg border border-dashed text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <Plus className="size-4" />
-              <span className="text-[10px]">Añadir</span>
-            </button>
-          </div>
+          <button
+            onClick={() => setAdding((v) => !v)}
+            title="Añadir un fragmento al timeline"
+            className="flex min-h-[90px] w-16 shrink-0 flex-col items-center justify-center gap-1 self-stretch rounded-lg border border-dashed text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Plus className="size-4" />
+            <span className="text-[10px]">Añadir</span>
+          </button>
+        </div>
 
-          {adding && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setAdding(false)} />
-              <div className="absolute bottom-[calc(100%+8px)] right-2 z-50 max-h-64 w-72 overflow-y-auto rounded-xl border bg-background p-1 shadow-2xl">
-                <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Fragmentos disponibles
+        {adding && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setAdding(false)}
+            />
+            <div className="absolute bottom-[calc(100%+8px)] right-2 z-50 max-h-64 w-72 overflow-y-auto rounded-xl border bg-background p-1 shadow-2xl">
+              <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Fragmentos disponibles
+              </p>
+              {videos.filter(
+                (a) => !shown.some((s) => String(s.id) === String(a.id)),
+              ).length === 0 && (
+                <p className="p-3 pt-1 text-xs text-muted-foreground">
+                  No hay fragmentos de vídeo disponibles para añadir. Pídeselos
+                  al agente desde el chat.
                 </p>
-                {videos.filter((a) => !shown.some((s) => String(s.id) === String(a.id)))
-                  .length === 0 && (
-                  <p className="p-3 pt-1 text-xs text-muted-foreground">
-                    No hay fragmentos de vídeo disponibles para añadir. Pídeselos al
-                    agente desde el chat.
-                  </p>
-                )}
-                {videos
-                  .filter((a) => !shown.some((s) => String(s.id) === String(a.id)))
-                  .map((a) => (
-                    <button
-                      key={a.id}
-                      onClick={() => {
-                        addToTimeline(a);
-                        setAdding(false);
-                      }}
-                      className="flex w-full items-center gap-2 rounded-md p-1.5 text-left transition-colors hover:bg-accent"
-                    >
-                      <video
-                        src={a.url}
-                        muted
-                        preload="metadata"
-                        className="pointer-events-none aspect-video w-14 shrink-0 rounded bg-muted object-cover"
-                      />
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-medium">Fragmento</p>
-                        <p className="text-[10px] text-muted-foreground">Vídeo</p>
-                      </div>
-                    </button>
-                  ))}
-              </div>
-            </>
-          )}
+              )}
+              {videos
+                .filter(
+                  (a) => !shown.some((s) => String(s.id) === String(a.id)),
+                )
+                .map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => {
+                      addToTimeline(a);
+                      setAdding(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md p-1.5 text-left transition-colors hover:bg-accent"
+                  >
+                    <video
+                      src={a.url}
+                      muted
+                      preload="metadata"
+                      className="pointer-events-none aspect-video w-14 shrink-0 rounded bg-muted object-cover"
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium">Fragmento</p>
+                      <p className="text-[10px] text-muted-foreground">Vídeo</p>
+                    </div>
+                  </button>
+                ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -4818,14 +5307,23 @@ function EditorPreview({
 const elementRoles = ["Personaje", "Localización", "Objeto"];
 
 // Vista ampliada del asset.
-function AssetLightbox({ asset, onClose, onAssign, onRegenerate, onDuplicate }) {
+function AssetLightbox({
+  asset,
+  onClose,
+  onAssign,
+  onRegenerate,
+  onDuplicate,
+}) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle className="truncate pr-6">{asset.name}</DialogTitle>
           <DialogDescription className="flex items-center gap-2">
-            <Badge variant="secondary" className="rounded px-1.5 py-0 text-[10px]">
+            <Badge
+              variant="secondary"
+              className="rounded px-1.5 py-0 text-[10px]"
+            >
               {asset.type}
             </Badge>
             {asset.meta}
@@ -4861,10 +5359,18 @@ function AssetLightbox({ asset, onClose, onAssign, onRegenerate, onDuplicate }) 
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          <UIButton variant="outline" size="sm" onClick={() => onRegenerate(asset.id)}>
+          <UIButton
+            variant="outline"
+            size="sm"
+            onClick={() => onRegenerate(asset.id)}
+          >
             <RefreshCw /> Regenerar
           </UIButton>
-          <UIButton variant="outline" size="sm" onClick={() => onDuplicate(asset.id)}>
+          <UIButton
+            variant="outline"
+            size="sm"
+            onClick={() => onDuplicate(asset.id)}
+          >
             <Copy /> Duplicar
           </UIButton>
           <UIButton variant="outline" size="sm" asChild>
@@ -4878,7 +5384,9 @@ function AssetLightbox({ asset, onClose, onAssign, onRegenerate, onDuplicate }) 
               key={role}
               size="sm"
               variant={asset.role === role ? "default" : "outline"}
-              onClick={() => onAssign(asset.id, asset.role === role ? null : role)}
+              onClick={() =>
+                onAssign(asset.id, asset.role === role ? null : role)
+              }
             >
               <AtSign /> {role}
             </UIButton>
@@ -4904,8 +5412,8 @@ function CustomRoleDialog({ asset, onClose, onAssign }) {
         <DialogHeader>
           <DialogTitle>Nuevo tipo de elemento</DialogTitle>
           <DialogDescription>
-            Escribe el tipo que quieras — vehículo, criatura, prop, lo que necesite
-            tu proyecto.
+            Escribe el tipo que quieras — vehículo, criatura, prop, lo que
+            necesite tu proyecto.
           </DialogDescription>
         </DialogHeader>
         <Input
@@ -4976,10 +5484,14 @@ function AssetMenu({
               ).map((role) => (
                 <DropdownMenuItem
                   key={role}
-                  onClick={() => onAssign(asset.id, asset.role === role ? null : role)}
+                  onClick={() =>
+                    onAssign(asset.id, asset.role === role ? null : role)
+                  }
                 >
                   {role}
-                  {asset.role === role && <Check className="ml-auto size-3.5" />}
+                  {asset.role === role && (
+                    <Check className="ml-auto size-3.5" />
+                  )}
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
@@ -5096,9 +5608,12 @@ function GeneratingCard({ label }) {
           const gp = ((x / cols + y / rows) / 2 + time * 0.14) % 1;
           const [r, g, b] = gradColor(gp);
           // Parpadeo por celda: pseudo-aleatorio estable por (x,y), animado en el tiempo.
-          const flick = 0.5 + 0.5 * Math.sin(x * 12.9898 + y * 4.1414 + time * 6.0);
+          const flick =
+            0.5 + 0.5 * Math.sin(x * 12.9898 + y * 4.1414 + time * 6.0);
           const wave = Math.abs(Math.sin(x * 0.6 + y * 1.1 + time * 2.2));
-          const alpha = reduce ? 0.5 : (0.18 + 0.82 * wave) * (0.4 + 0.6 * flick);
+          const alpha = reduce
+            ? 0.5
+            : (0.18 + 0.82 * wave) * (0.4 + 0.6 * flick);
           ctx.fillStyle = `rgba(${r | 0},${g | 0},${b | 0},${alpha.toFixed(3)})`;
           ctx.fillRect(x * CELL, y * CELL, CELL - 1, CELL - 1);
         }
@@ -5130,7 +5645,8 @@ function GeneratingCard({ label }) {
       <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20" />
       <div className="absolute inset-0 flex items-center justify-center">
         <span className="rounded-full bg-black/45 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
-          Generando<span className="xf-gen-dots" />
+          Generando
+          <span className="xf-gen-dots" />
         </span>
       </div>
     </div>
@@ -5213,7 +5729,8 @@ function EditorAssets({
               onClick={() => a.status === "ready" && setOpenId(a.id)}
               className={cn(
                 "relative block w-full overflow-hidden rounded-xl transition-shadow hover:shadow-md",
-                a.role && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                a.role &&
+                  "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 a.status === "generating" && "cursor-default",
               )}
             >
@@ -5325,7 +5842,8 @@ const blockMeta = Object.fromEntries(
 // lo traducible y lo demás se trata como texto.
 const BLOCK_TYPE_ALIASES = { heading: "h1" };
 const normalizeBlock = (b) => {
-  const type = BLOCK_TYPE_ALIASES[b.type] ?? (blockMeta[b.type] ? b.type : "text");
+  const type =
+    BLOCK_TYPE_ALIASES[b.type] ?? (blockMeta[b.type] ? b.type : "text");
   return { checked: false, src: null, ...b, type, text: b.text ?? "" };
 };
 let briefUid = 0;
@@ -5371,10 +5889,20 @@ function AutoTextarea({ value, className, autoFocus, ...props }) {
   );
 }
 
-function BriefBlock({ block, focus, update, onEnter, onBackspace, onRemove, dragProps }) {
+function BriefBlock({
+  block,
+  focus,
+  update,
+  onEnter,
+  onBackspace,
+  onRemove,
+  dragProps,
+}) {
   const [menu, setMenu] = useState(false);
   const q = block.text.startsWith("/") ? block.text.slice(1).toLowerCase() : "";
-  const matches = blockTypes.filter(([, label]) => label.toLowerCase().includes(q));
+  const matches = blockTypes.filter(([, label]) =>
+    label.toLowerCase().includes(q),
+  );
 
   const setType = (type) => {
     update({ type, text: "" });
@@ -5382,7 +5910,8 @@ function BriefBlock({ block, focus, update, onEnter, onBackspace, onRemove, drag
   };
   const onKeyDown = (e) => {
     if (menu && matches.length) {
-      if (e.key === "Enter") return e.preventDefault(), setType(matches[0][0]);
+      if (e.key === "Enter")
+        return (e.preventDefault(), setType(matches[0][0]));
       if (e.key === "Escape") return setMenu(false);
     }
     if (e.key === "Enter" && !e.shiftKey) {
@@ -5429,12 +5958,20 @@ function BriefBlock({ block, focus, update, onEnter, onBackspace, onRemove, drag
       <div className="min-w-0 flex-1 py-0.5">
         {block.type === "divider" && <Separator className="my-3" />}
         {block.type === "h1" && (
-          <AutoTextarea {...shared} className="text-2xl font-bold tracking-tight" />
+          <AutoTextarea
+            {...shared}
+            className="text-2xl font-bold tracking-tight"
+          />
         )}
         {block.type === "h2" && (
-          <AutoTextarea {...shared} className="text-lg font-semibold tracking-tight" />
+          <AutoTextarea
+            {...shared}
+            className="text-lg font-semibold tracking-tight"
+          />
         )}
-        {block.type === "text" && <AutoTextarea {...shared} className="leading-relaxed" />}
+        {block.type === "text" && (
+          <AutoTextarea {...shared} className="leading-relaxed" />
+        )}
         {block.type === "bullet" && (
           <div className="flex gap-2">
             <span className="mt-2 size-1.5 shrink-0 rounded-full bg-foreground" />
@@ -5460,7 +5997,10 @@ function BriefBlock({ block, focus, update, onEnter, onBackspace, onRemove, drag
         )}
         {block.type === "quote" && (
           <div className="border-l-2 pl-3">
-            <AutoTextarea {...shared} className="italic leading-relaxed text-muted-foreground" />
+            <AutoTextarea
+              {...shared}
+              className="italic leading-relaxed text-muted-foreground"
+            />
           </div>
         )}
         {block.type === "callout" && (
@@ -5472,7 +6012,11 @@ function BriefBlock({ block, focus, update, onEnter, onBackspace, onRemove, drag
         {block.type === "image" &&
           (block.src ? (
             <figure className="my-1">
-              <img src={block.src} alt="" className="max-h-[420px] w-full rounded-lg object-cover" />
+              <img
+                src={block.src}
+                alt=""
+                className="max-h-[420px] w-full rounded-lg object-cover"
+              />
               <input
                 value={block.text}
                 onChange={onChange}
@@ -5659,9 +6203,7 @@ function ElementGrid({ title, desc, items, action, onAction }) {
 function EditorElements({ assets, onGoToAssets }) {
   const elements = assets.filter((a) => a.role);
   const byRole = (role) =>
-    elements
-      .filter((a) => a.role === role)
-      .map((a) => [a.name, a.meta, a.url]);
+    elements.filter((a) => a.role === role).map((a) => [a.name, a.meta, a.url]);
 
   return (
     <div className="h-full overflow-y-auto rounded-xl border bg-background">
@@ -5687,26 +6229,28 @@ function EditorElements({ assets, onGoToAssets }) {
             </UIButton>
           </div>
         ) : (
-          [...new Set([...elementRoles, ...elements.map((a) => a.role)])].map((role) => {
-            const items = byRole(role);
-            if (items.length === 0) return null;
-            return (
-              <ElementGrid
-                key={role}
-                title={`${role}s`}
-                desc={
-                  role === "Personaje"
-                    ? "Se mantienen consistentes en todos los planos."
-                    : role === "Localización"
-                      ? "Escenarios reutilizables del proyecto."
-                      : "Atrezo y objetos recurrentes."
-                }
-                items={items}
-                action={`Nuevo ${role.toLowerCase()}`}
-                onAction={onGoToAssets}
-              />
-            );
-          })
+          [...new Set([...elementRoles, ...elements.map((a) => a.role)])].map(
+            (role) => {
+              const items = byRole(role);
+              if (items.length === 0) return null;
+              return (
+                <ElementGrid
+                  key={role}
+                  title={`${role}s`}
+                  desc={
+                    role === "Personaje"
+                      ? "Se mantienen consistentes en todos los planos."
+                      : role === "Localización"
+                        ? "Escenarios reutilizables del proyecto."
+                        : "Atrezo y objetos recurrentes."
+                  }
+                  items={items}
+                  action={`Nuevo ${role.toLowerCase()}`}
+                  onAction={onGoToAssets}
+                />
+              );
+            },
+          )
         )}
       </div>
     </div>
@@ -5752,7 +6296,12 @@ function CanvasMediaPicker({ onPick, onClose, at, assets = [] }) {
     <div
       data-canvas-overlay
       onPointerDown={(e) => e.stopPropagation()}
-      style={{ left: at.left, top: at.top, width: PICKER_W, maxHeight: PICKER_H }}
+      style={{
+        left: at.left,
+        top: at.top,
+        width: PICKER_W,
+        maxHeight: PICKER_H,
+      }}
       className="absolute z-30 flex flex-col overflow-hidden rounded-xl border bg-background shadow-2xl"
     >
       <div className="flex items-center gap-2 border-b p-2">
@@ -5823,7 +6372,9 @@ function CanvasMediaPicker({ onPick, onClose, at, assets = [] }) {
                 />
                 <div className="min-w-0">
                   <p className="truncate text-sm">{name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{meta}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {meta}
+                  </p>
                 </div>
               </button>
             ))}
@@ -5879,7 +6430,8 @@ function EditorCanvas({ data, assets = [] }) {
       let next = h;
       for (const [id, el] of Object.entries(elsRef.current)) {
         const v = el.offsetHeight;
-        if (h[id] !== v) next = next === h ? { ...h, [id]: v } : ((next[id] = v), next);
+        if (h[id] !== v)
+          next = next === h ? { ...h, [id]: v } : ((next[id] = v), next);
       }
       return next;
     });
@@ -5916,7 +6468,11 @@ function EditorCanvas({ data, assets = [] }) {
       setNodes((ns) =>
         ns.map((x) =>
           x.id === id
-            ? { ...x, x: ox + (ev.clientX - sx) / zoom, y: oy + (ev.clientY - sy) / zoom }
+            ? {
+                ...x,
+                x: ox + (ev.clientX - sx) / zoom,
+                y: oy + (ev.clientY - sy) / zoom,
+              }
             : x,
         ),
       ),
@@ -5987,7 +6543,9 @@ function EditorCanvas({ data, assets = [] }) {
       if ((e.key === "Delete" || e.key === "Backspace") && selected) {
         if (/INPUT|TEXTAREA/.test(document.activeElement?.tagName)) return;
         setNodes((ns) => ns.filter((n) => n.id !== selected));
-        setEdges((es) => es.filter((x) => x.from !== selected && x.to !== selected));
+        setEdges((es) =>
+          es.filter((x) => x.from !== selected && x.to !== selected),
+        );
         setSelected(null);
       }
     };
@@ -6011,7 +6569,13 @@ function EditorCanvas({ data, assets = [] }) {
     const r = wrapRef.current.getBoundingClientRect();
     const z = Math.min(
       1.2,
-      Math.max(0.2, Math.min((r.width - 80) / (maxX - Math.min(...xs)), (r.height - 80) / (maxY - Math.min(...ys)))),
+      Math.max(
+        0.2,
+        Math.min(
+          (r.width - 80) / (maxX - Math.min(...xs)),
+          (r.height - 80) / (maxY - Math.min(...ys)),
+        ),
+      ),
     );
     setZoom(z);
     setPan({ x: 40 - Math.min(...xs) * z, y: 40 - Math.min(...ys) * z });
@@ -6025,7 +6589,9 @@ function EditorCanvas({ data, assets = [] }) {
     const nodeLeft = pan.x + n.x * zoom;
     const nodeRight = nodeLeft + NODE_W[n.type] * zoom;
     const left =
-      nodeRight + 8 + PICKER_W <= r.width ? nodeRight + 8 : nodeLeft - 8 - PICKER_W;
+      nodeRight + 8 + PICKER_W <= r.width
+        ? nodeRight + 8
+        : nodeLeft - 8 - PICKER_W;
     const top = pan.y + n.y * zoom;
     return {
       left: Math.min(r.width - PICKER_W - 8, Math.max(8, left)),
@@ -6063,7 +6629,14 @@ function EditorCanvas({ data, assets = [] }) {
     const id = `n${Date.now()}`;
     setNodes((ns) => [
       ...ns,
-      { id, type: "concept", x: p.x - 125, y: p.y - 60, title: "Nuevo nodo", text: "Describe esta idea…" },
+      {
+        id,
+        type: "concept",
+        x: p.x - 125,
+        y: p.y - 60,
+        title: "Nuevo nodo",
+        text: "Describe esta idea…",
+      },
     ]);
     setSelected(id);
   };
@@ -6084,7 +6657,9 @@ function EditorCanvas({ data, assets = [] }) {
     >
       <div
         className="absolute left-0 top-0 origin-top-left"
-        style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+        }}
       >
         <svg className="pointer-events-none absolute overflow-visible text-muted-foreground/50">
           {edges.map(({ from, to }, i) => {
@@ -6129,7 +6704,8 @@ function EditorCanvas({ data, assets = [] }) {
               const f = [...(e.dataTransfer?.files || [])].find((x) =>
                 x.type.startsWith("image/"),
               );
-              if (f) attach(n.id, { thumb: URL.createObjectURL(f), media: f.name });
+              if (f)
+                attach(n.id, { thumb: URL.createObjectURL(f), media: f.name });
             }}
             style={{ left: n.x, top: n.y, width: NODE_W[n.type] }}
             className={cn(
@@ -6207,7 +6783,8 @@ function EditorCanvas({ data, assets = [] }) {
       </div>
 
       <div
-        data-canvas-overlay onPointerDown={(e) => e.stopPropagation()}
+        data-canvas-overlay
+        onPointerDown={(e) => e.stopPropagation()}
         className="absolute bottom-4 left-4 flex items-center gap-1 rounded-lg border bg-background p-1 shadow-sm"
       >
         <button
@@ -6249,7 +6826,8 @@ function EditorCanvas({ data, assets = [] }) {
       </div>
 
       <div
-        data-canvas-overlay onPointerDown={(e) => e.stopPropagation()}
+        data-canvas-overlay
+        onPointerDown={(e) => e.stopPropagation()}
         className="absolute right-4 top-4 flex items-center gap-2"
       >
         {selected && (
@@ -6283,7 +6861,8 @@ function EditorCanvas({ data, assets = [] }) {
       )}
 
       <p className="pointer-events-none absolute bottom-5 right-4 text-xs text-muted-foreground">
-        Arrastra para mover · rueda para zoom · tira del punto azul para conectar
+        Arrastra para mover · rueda para zoom · tira del punto azul para
+        conectar
       </p>
     </div>
   );
@@ -6397,7 +6976,11 @@ function EditorTeamChat({ projectId }) {
               )}
             >
               {p.avatar_url ? (
-                <img src={p.avatar_url} alt="" className="size-full object-cover" />
+                <img
+                  src={p.avatar_url}
+                  alt=""
+                  className="size-full object-cover"
+                />
               ) : (
                 initials(p.name)
               )}
@@ -6418,8 +7001,8 @@ function EditorTeamChat({ projectId }) {
               <MessageCircle className="mx-auto size-7 text-muted-foreground" />
               <p className="mt-3 font-medium">Aún no hay mensajes</p>
               <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-                Habla con tu equipo sobre qué película queréis hacer. Todo el que
-                tenga acceso al proyecto lo verá aquí.
+                Habla con tu equipo sobre qué película queréis hacer. Todo el
+                que tenga acceso al proyecto lo verá aquí.
               </p>
             </div>
           )}
@@ -6427,7 +7010,10 @@ function EditorTeamChat({ projectId }) {
           {messages.map((m) => {
             const me = m.sender_id === profile?.id;
             return (
-              <div key={m.id} className={cn("flex gap-3", me && "flex-row-reverse")}>
+              <div
+                key={m.id}
+                className={cn("flex gap-3", me && "flex-row-reverse")}
+              >
                 <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-semibold">
                   {m.sender_avatar ? (
                     <img
@@ -6570,9 +7156,89 @@ function PublishDialog({ project, onClose }) {
   );
 }
 
+function ProjectSwitcher({ project, projects }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Cambiar de proyecto. Proyecto actual: ${project.title}`}
+          className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-sm font-medium transition-colors hover:bg-accent data-[state=open]:bg-accent"
+        >
+          <img src="/lovable-logo.svg" alt="" className="size-6 shrink-0" />
+          <span className="max-w-[240px] truncate">{project.title}</span>
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-80 p-1.5">
+        <div className="flex items-center justify-between px-2 py-1.5">
+          <span className="text-xs font-medium text-muted-foreground">
+            PROYECTOS
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {projects.length}
+          </span>
+        </div>
+        <div className="max-h-72 overflow-y-auto overscroll-contain">
+          {projects.map((item) => {
+            const selected = item.id === project.id;
+            const initial = (item.title || "P").trim().charAt(0).toUpperCase();
+            return (
+              <DropdownMenuItem
+                key={item.id}
+                onSelect={() => go(`/projects/${item.id}`)}
+                className={cn(
+                  "min-h-12 gap-3 px-2 py-2",
+                  selected && "bg-accent",
+                )}
+              >
+                {item.cover_url ? (
+                  <img
+                    src={item.cover_url}
+                    alt=""
+                    className="size-8 shrink-0 rounded-md object-cover"
+                  />
+                ) : (
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-violet-500 to-blue-500 text-xs font-semibold text-white">
+                    {initial}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">
+                    {item.title || "Proyecto sin título"}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {selected ? "Proyecto actual" : "Abrir proyecto"}
+                  </span>
+                </span>
+                {selected && <Check className="size-4 shrink-0 text-primary" />}
+              </DropdownMenuItem>
+            );
+          })}
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={() => go("/dashboard")}
+          className="gap-3 px-2 py-2"
+        >
+          <LayoutDashboard className="size-4 text-muted-foreground" />
+          <span className="font-medium">Volver al dashboard principal</span>
+          <DropdownMenuShortcut>⌘ D</DropdownMenuShortcut>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function Editor({ projectId }) {
-  const { projects, profile, genSettings, refreshCredits, updateProject, ready } =
-    useStudio();
+  const {
+    projects,
+    profile,
+    genSettings,
+    refreshCredits,
+    updateProject,
+    ready,
+  } = useStudio();
   const project = projects.find((p) => p.id === projectId);
   const data = useProjectData(projectId);
   const {
@@ -6594,7 +7260,12 @@ function Editor({ projectId }) {
   // panel parte en dos filas con flex-wrap — pero la disposición de fábrica no debe
   // salir rota ni justa. La clave de storage se versiona para que quien tenía
   // guardado un ancho anterior reciba el defecto nuevo una vez.
-  const [chatW, resizeChat] = useResizableWidth("xf-editor-chat-v4", 700, 300, 960);
+  const [chatW, resizeChat] = useResizableWidth(
+    "xf-editor-chat-v4",
+    700,
+    300,
+    960,
+  );
   // Ocultar el chat lateral (botón PanelLeft del header). Se oculta con CSS, sin
   // desmontar, para que borrador y scroll del hilo no se pierdan.
   const [chatHidden, setChatHidden] = useState(false);
@@ -6612,10 +7283,16 @@ function Editor({ projectId }) {
   const expandClipMentions = (text) => {
     const refs = [...text.matchAll(/@(Clip-\d+)/g)]
       .map((m) => m[1])
-      .filter((label, idx, arr) => arr.indexOf(label) === idx && clipMap.current[label]);
+      .filter(
+        (label, idx, arr) =>
+          arr.indexOf(label) === idx && clipMap.current[label],
+      );
     if (!refs.length) return text;
     const notes = refs
-      .map((label) => `@${label} es el asset ${clipMap.current[label]} del timeline`)
+      .map(
+        (label) =>
+          `@${label} es el asset ${clipMap.current[label]} del timeline`,
+      )
       .join("; ");
     return (
       `${text}\n\n[Contexto del timeline: ${notes}. Aplica el cambio SOLO a ese ` +
@@ -6650,7 +7327,9 @@ function Editor({ projectId }) {
   useEffect(() => {
     const info = ghostInfo.current;
     if (!info || !ghosts.length) return;
-    const appeared = assets.filter((a) => !info.baseline.has(String(a.id))).length;
+    const appeared = assets.filter(
+      (a) => !info.baseline.has(String(a.id)),
+    ).length;
     const remain = Math.max(0, info.total - appeared);
     if (remain < ghosts.length) setGhosts((g) => g.slice(0, remain));
   }, [assets, ghosts]);
@@ -6689,7 +7368,9 @@ function Editor({ projectId }) {
    * como assets del proyecto. Sin backend cae a una URL local temporal.
    */
   const uploadFiles = async (files) => {
-    const accepted = [...files].filter((f) => /^(image|video|audio)\//.test(f.type));
+    const accepted = [...files].filter((f) =>
+      /^(image|video|audio)\//.test(f.type),
+    );
     if (!accepted.length) return 0;
 
     const rows = await Promise.all(
@@ -6736,7 +7417,10 @@ function Editor({ projectId }) {
     if (tab === "assets") {
       const n = Math.max(1, Math.min(4, Number(genSettings?.count) || 1));
       const base = Date.now();
-      ghostInfo.current = { total: n, baseline: new Set(assets.map((a) => String(a.id))) };
+      ghostInfo.current = {
+        total: n,
+        baseline: new Set(assets.map((a) => String(a.id))),
+      };
       setGhosts(
         Array.from({ length: n }, (_, i) => ({
           id: `ghost-${base}-${i}`,
@@ -6789,7 +7473,9 @@ function Editor({ projectId }) {
         if ((e.tools ?? []).some((t) => String(t).startsWith("generate_"))) {
           sawGeneration.current = true;
         }
-        setStream((s) => (s ? { ...s, tool: first ? labelForTool(first) : null } : s));
+        setStream((s) =>
+          s ? { ...s, tool: first ? labelForTool(first) : null } : s,
+        );
       },
 
       onToolResult: () => {
@@ -6904,7 +7590,9 @@ function Editor({ projectId }) {
     const asset = assets.find((a) => a.id === id);
     if (!asset || busy) return;
     patchAsset(id, { status: "generating", url: null });
-    runTurn(`Regenera el asset "${asset.name}" manteniendo su intención original.`);
+    runTurn(
+      `Regenera el asset "${asset.name}" manteniendo su intención original.`,
+    );
   };
 
   const duplicateAsset = (id) => {
@@ -6966,14 +7654,7 @@ function Editor({ projectId }) {
         <PublishDialog project={project} onClose={() => setPublishing(false)} />
       )}
       <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3">
-        <button
-          className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm font-medium transition-colors hover:bg-accent"
-          onClick={() => go("/dashboard")}
-        >
-          <img src="/lovable-logo.svg" alt="" className="size-6" />
-          <span className="max-w-[240px] truncate">{project.title}</span>
-          <ChevronDown className="size-3.5 text-muted-foreground" />
-        </button>
+        <ProjectSwitcher project={project} projects={projects} />
         <div className="flex items-center">
           {/* Recarga real: mismo camino que la carga inicial del proyecto — assets,
               mensajes, brief y canvas se releen de la base. */}
@@ -7061,7 +7742,11 @@ function Editor({ projectId }) {
               transitions={project.settings?.transitions ?? null}
               onTimelineMeta={({ timeline: tl, transitions: tr }) =>
                 updateProject(projectId, {
-                  settings: { ...(project.settings ?? {}), timeline: tl, transitions: tr },
+                  settings: {
+                    ...(project.settings ?? {}),
+                    timeline: tl,
+                    transitions: tr,
+                  },
                 })
               }
               onClipMention={mentionClip}
@@ -7095,7 +7780,10 @@ function Editor({ projectId }) {
             />
           )}
           {tab === "elements" && (
-            <EditorElements assets={assets} onGoToAssets={() => setTab("assets")} />
+            <EditorElements
+              assets={assets}
+              onGoToAssets={() => setTab("assets")}
+            />
           )}
           {tab === "canvas" && <EditorCanvas data={data} assets={assets} />}
           {tab === "chat" && <EditorTeamChat projectId={projectId} />}
@@ -7166,69 +7854,76 @@ function SettingsSide({ page, width, onResize }) {
   return (
     <aside
       style={{ width }}
-      className="fixed inset-y-0 left-0 flex flex-col overflow-y-auto overflow-x-hidden border-r bg-muted/30 p-3"
+      className="fixed inset-y-0 left-0 flex h-dvh flex-col overflow-hidden border-r bg-muted/30 p-3"
     >
       <ResizeHandle onResize={onResize} />
-      <button
-        onClick={() => go("/dashboard")}
-        className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" />
-        Volver
-      </button>
-      <div className="relative my-2">
-        <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-        <input
-          placeholder="Buscar ajustes"
-          className="h-9 w-full rounded-md border bg-background pl-8 pr-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        />
+      <div className="shrink-0">
+        <button
+          onClick={() => go("/dashboard")}
+          className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" />
+          Volver
+        </button>
+        <div className="relative my-2">
+          <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+          <input
+            placeholder="Buscar ajustes"
+            className="h-9 w-full rounded-md border bg-background pl-8 pr-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+        </div>
       </div>
-      {settingsGroups.map((group) => (
-        <div key={group.title} className="mt-3">
-          <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-            {group.title}
-          </p>
-          {group.items.map(([id, rawLabel, Icon, badge, external]) => {
-            const label = resolveLabel(rawLabel);
-            return (
-            <button
-              key={id}
-              onClick={() => go(`/settings/${id}`)}
-              className={cn(
-                "flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground",
-                page === id
-                  ? "bg-accent font-medium text-accent-foreground"
-                  : "text-foreground/80 hover:bg-accent",
-              )}
-            >
-              {Icon === "H" ? (
-                <span className="flex size-5 items-center justify-center rounded bg-pink-600 text-[10px] font-semibold text-white">
-                  H
-                </span>
-              ) : (
-                <Icon />
-              )}
-              <span className="flex-1 truncate text-left">{label}</span>
-              {badge && (
-                <Badge
-                  variant="secondary"
+      <nav
+        aria-label="Ajustes"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3"
+      >
+        {settingsGroups.map((group) => (
+          <div key={group.title} className="mt-3">
+            <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">
+              {group.title}
+            </p>
+            {group.items.map(([id, rawLabel, Icon, badge, external]) => {
+              const label = resolveLabel(rawLabel);
+              return (
+                <button
+                  key={id}
+                  onClick={() => go(`/settings/${id}`)}
                   className={cn(
-                    "shrink-0 rounded px-1.5 py-0 text-[10px] font-normal",
-                    badge === "Enterprise" &&
-                      "bg-purple-100 text-purple-700 hover:bg-purple-100",
+                    "flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground",
+                    page === id
+                      ? "bg-accent font-medium text-accent-foreground"
+                      : "text-foreground/80 hover:bg-accent",
                   )}
                 >
-                  {badge}
-                </Badge>
-              )}
-              {external && (
-                <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
-              )}
-            </button>
-            );
-          })}
-        </div>
-      ))}
+                  {Icon === "H" ? (
+                    <span className="flex size-5 items-center justify-center rounded bg-pink-600 text-[10px] font-semibold text-white">
+                      H
+                    </span>
+                  ) : (
+                    <Icon />
+                  )}
+                  <span className="flex-1 truncate text-left">{label}</span>
+                  {badge && (
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        "shrink-0 rounded px-1.5 py-0 text-[10px] font-normal",
+                        badge === "Enterprise" &&
+                          "bg-purple-100 text-purple-700 hover:bg-purple-100",
+                      )}
+                    >
+                      {badge}
+                    </Badge>
+                  )}
+                  {external && (
+                    <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
     </aside>
   );
 }
@@ -7317,10 +8012,7 @@ const settingContent = {
     "Crea instrucciones especializadas para tus proyectos",
     [
       ["Habilidades personalizadas", "No hay habilidades instaladas todavía."],
-      [
-        "Crear una habilidad",
-        "Enseña a Xframe un flujo de trabajo repetible.",
-      ],
+      ["Crear una habilidad", "Enseña a Xframe un flujo de trabajo repetible."],
     ],
   ],
   "mcp-server": [
@@ -7470,7 +8162,12 @@ function InlineEdit({ value, onSave, placeholder, validate }) {
           placeholder={placeholder}
           className="h-9 w-56"
         />
-        <UIButton size="icon" className="size-9" disabled={saving} onClick={commit}>
+        <UIButton
+          size="icon"
+          className="size-9"
+          disabled={saving}
+          onClick={commit}
+        >
           {saving ? <RefreshCw className="animate-spin" /> : <Check />}
         </UIButton>
         <UIButton
@@ -7531,9 +8228,7 @@ function AuthBrandIcon({ provider, className = "size-6" }) {
     const Icon = brand?.icon ?? Globe;
     return <Icon className={cn(className, "text-muted-foreground")} />;
   }
-  return (
-    <img src={brandFavicon(brand.domain)} alt="" className={className} />
-  );
+  return <img src={brandFavicon(brand.domain)} alt="" className={className} />;
 }
 
 const brandLabel = (provider) =>
@@ -7571,7 +8266,9 @@ function AccountSettings() {
   const avatarRef = useRef(null);
 
   useEffect(() => {
-    db.listIdentities().then(setIdentities).catch(() => setIdentities([]));
+    db.listIdentities()
+      .then(setIdentities)
+      .catch(() => setIdentities([]));
   }, [profile?.id]);
 
   const notify = (text, kind = "ok") => {
@@ -7690,7 +8387,9 @@ function AccountSettings() {
             value={profile.name}
             placeholder="Tu nombre"
             validate={(v) => (v.length < 2 ? "Mínimo 2 caracteres" : null)}
-            onSave={(name) => updateProfile({ name }).then(() => notify("Nombre actualizado"))}
+            onSave={(name) =>
+              updateProfile({ name }).then(() => notify("Nombre actualizado"))
+            }
           />
         </SettingsRow>
         <SettingsRow
@@ -7718,7 +8417,9 @@ function AccountSettings() {
           desc="Se usa para iniciar sesión y recibir avisos."
         >
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">{profile.email}</span>
+            <span className="text-sm text-muted-foreground">
+              {profile.email}
+            </span>
             {isRemote && (
               <UIButton
                 variant="outline"
@@ -7737,7 +8438,9 @@ function AccountSettings() {
           <SettingSelect
             value={preferences.profileVisibility}
             options={visibilityOptions}
-            onChange={(profileVisibility) => setPreferences({ profileVisibility })}
+            onChange={(profileVisibility) =>
+              setPreferences({ profileVisibility })
+            }
           />
         </SettingsRow>
       </SettingsSection>
@@ -7746,10 +8449,7 @@ function AccountSettings() {
         title="Preferencias"
         desc="Personaliza cómo funciona Xframe para ti."
       >
-        <SettingsRow
-          title="Idioma"
-          desc="El idioma de la interfaz de Xframe."
-        >
+        <SettingsRow title="Idioma" desc="El idioma de la interfaz de Xframe.">
           <SettingSelect
             value={preferences.language}
             options={languageOptions}
@@ -7779,7 +8479,9 @@ function AccountSettings() {
         >
           <Switch
             checked={preferences.chatSuggestions}
-            onCheckedChange={(chatSuggestions) => setPreferences({ chatSuggestions })}
+            onCheckedChange={(chatSuggestions) =>
+              setPreferences({ chatSuggestions })
+            }
           />
         </SettingsRow>
         <SettingsRow
@@ -7788,7 +8490,9 @@ function AccountSettings() {
         >
           <Switch
             checked={preferences.reducedMotion}
-            onCheckedChange={(reducedMotion) => setPreferences({ reducedMotion })}
+            onCheckedChange={(reducedMotion) =>
+              setPreferences({ reducedMotion })
+            }
           />
         </SettingsRow>
         <SettingsRow
@@ -7797,7 +8501,9 @@ function AccountSettings() {
         >
           <Switch
             checked={preferences.autoAcceptInvites}
-            onCheckedChange={(autoAcceptInvites) => setPreferences({ autoAcceptInvites })}
+            onCheckedChange={(autoAcceptInvites) =>
+              setPreferences({ autoAcceptInvites })
+            }
           />
         </SettingsRow>
       </SettingsSection>
@@ -7836,7 +8542,10 @@ function AccountSettings() {
           </div>
         )}
         {identities.map((identity) => (
-          <div key={identity.identity_id} className="flex items-center gap-3 px-5 py-4">
+          <div
+            key={identity.identity_id}
+            className="flex items-center gap-3 px-5 py-4"
+          >
             <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border">
               <AuthBrandIcon provider={identity.provider} className="size-5" />
             </div>
@@ -8110,7 +8819,9 @@ function DeleteAccountDialog({ onClose }) {
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[440px]">
         <DialogHeader>
-          <DialogTitle className="text-destructive">Eliminar cuenta</DialogTitle>
+          <DialogTitle className="text-destructive">
+            Eliminar cuenta
+          </DialogTitle>
           <DialogDescription>
             Se borrarán tu perfil, tus {projects.length} proyectos y todo su
             material. Esta acción no se puede deshacer.
@@ -8118,8 +8829,9 @@ function DeleteAccountDialog({ onClose }) {
         </DialogHeader>
         <div className="flex flex-col gap-3">
           <p className="text-sm text-muted-foreground">
-            Escribe <span className="font-medium text-foreground">ELIMINAR</span>{" "}
-            para confirmar.
+            Escribe{" "}
+            <span className="font-medium text-foreground">ELIMINAR</span> para
+            confirmar.
           </p>
           <Input
             autoFocus
@@ -8137,7 +8849,8 @@ function DeleteAccountDialog({ onClose }) {
               disabled={confirm !== "ELIMINAR" || busy}
               onClick={submit}
             >
-              {busy && <RefreshCw className="animate-spin" />} Eliminar para siempre
+              {busy && <RefreshCw className="animate-spin" />} Eliminar para
+              siempre
             </UIButton>
           </div>
         </div>
@@ -8149,22 +8862,31 @@ function DeleteAccountDialog({ onClose }) {
 /** Lee navegador, sistema y tipo de aparato del user-agent. */
 function describeDevice(userAgent = "") {
   const ua = userAgent;
-  const browser =
-    /Edg\//.test(ua) ? "Edge"
-    : /OPR\/|Opera/.test(ua) ? "Opera"
-    : /Chrome\//.test(ua) ? "Chrome"
-    : /Safari\//.test(ua) ? "Safari"
-    : /Firefox\//.test(ua) ? "Firefox"
-    : "Navegador desconocido";
+  const browser = /Edg\//.test(ua)
+    ? "Edge"
+    : /OPR\/|Opera/.test(ua)
+      ? "Opera"
+      : /Chrome\//.test(ua)
+        ? "Chrome"
+        : /Safari\//.test(ua)
+          ? "Safari"
+          : /Firefox\//.test(ua)
+            ? "Firefox"
+            : "Navegador desconocido";
 
-  const os =
-    /Windows NT 10/.test(ua) ? "Windows"
-    : /Windows/.test(ua) ? "Windows"
-    : /iPhone|iPad/.test(ua) ? "iOS"
-    : /Android/.test(ua) ? "Android"
-    : /Mac OS X/.test(ua) ? "macOS"
-    : /Linux/.test(ua) ? "Linux"
-    : "Sistema desconocido";
+  const os = /Windows NT 10/.test(ua)
+    ? "Windows"
+    : /Windows/.test(ua)
+      ? "Windows"
+      : /iPhone|iPad/.test(ua)
+        ? "iOS"
+        : /Android/.test(ua)
+          ? "Android"
+          : /Mac OS X/.test(ua)
+            ? "macOS"
+            : /Linux/.test(ua)
+              ? "Linux"
+              : "Sistema desconocido";
 
   const mobile = /iPhone|Android|Mobile/.test(ua);
   return { browser, os, icon: mobile ? Smartphone : Monitor };
@@ -8331,7 +9053,9 @@ function AppsSettings() {
               <p className="text-sm font-medium">{key.name}</p>
               <p className="truncate font-mono text-xs text-muted-foreground">
                 {key.prefix}··········· · Creada {timeAgo(key.created_at)} ·{" "}
-                {key.last_used_at ? `Usada ${timeAgo(key.last_used_at)}` : "Sin usar"}
+                {key.last_used_at
+                  ? `Usada ${timeAgo(key.last_used_at)}`
+                  : "Sin usar"}
               </p>
             </div>
             <UIButton
@@ -8360,7 +9084,10 @@ function AppsSettings() {
             onClick={async () => {
               setCreating(true);
               try {
-                const { token } = await db.createApiKey(profile.id, keyName.trim());
+                const { token } = await db.createApiKey(
+                  profile.id,
+                  keyName.trim(),
+                );
                 setNewKey(token);
                 setKeyName("");
                 await reload();
@@ -8385,7 +9112,10 @@ function AppsSettings() {
           title="Conectores"
           desc="Gestiona las integraciones activas de tu espacio de trabajo."
         >
-          <UIButton variant="outline" onClick={() => go("/dashboard?connectors=1")}>
+          <UIButton
+            variant="outline"
+            onClick={() => go("/dashboard?connectors=1")}
+          >
             Ver conectores <ArrowRight />
           </UIButton>
         </SettingsRow>
@@ -8501,7 +9231,9 @@ function WorkspaceSettings() {
     db.getWorkspace(profile.id).then((w) => {
       setWorkspace(w);
       setName(w?.name ?? "");
-      setLimit(w?.member_credit_limit == null ? "" : String(w.member_credit_limit));
+      setLimit(
+        w?.member_credit_limit == null ? "" : String(w.member_credit_limit),
+      );
     });
   }, [profile?.id]);
 
@@ -8575,7 +9307,9 @@ function WorkspaceSettings() {
               {workspaceColors.map(([id, cls, label]) => (
                 <DropdownMenuItem
                   key={id}
-                  onClick={() => save({ avatar_color: id }, "Color actualizado")}
+                  onClick={() =>
+                    save({ avatar_color: id }, "Color actualizado")
+                  }
                 >
                   <span className={cn("mr-2 size-3.5 rounded-full", cls)} />
                   {label}
@@ -8627,7 +9361,11 @@ function WorkspaceSettings() {
             className="flex items-center gap-2 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
             {workspace.id}
-            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+            {copied ? (
+              <Check className="size-3.5" />
+            ) : (
+              <Copy className="size-3.5" />
+            )}
           </button>
         </SettingsRow>
 
@@ -8683,7 +9421,10 @@ function WorkspaceSettings() {
         title="Contenido"
         desc="Lo que hay dentro de este espacio de trabajo."
       >
-        <SettingsRow title="Proyectos" desc="Proyectos creados en este espacio.">
+        <SettingsRow
+          title="Proyectos"
+          desc="Proyectos creados en este espacio."
+        >
           <span className="text-sm text-muted-foreground">
             {projects.length}
           </span>
@@ -8921,7 +9662,10 @@ function CreditTierSelect({ basePrice, annual, value, onChange }) {
                     </span>
                   )}
                   <span className="shrink-0 tabular-nums">
-                    €{tierPrice(basePrice, credits, annual).toLocaleString("es-ES")}
+                    €
+                    {tierPrice(basePrice, credits, annual).toLocaleString(
+                      "es-ES",
+                    )}
                     <span className="text-muted-foreground">/mes</span>
                   </span>
                 </button>
@@ -8944,7 +9688,9 @@ function BillingPlanCard({ p, annual = false }) {
   return (
     <Card className="flex flex-col p-6">
       <h3 className="text-xl font-semibold">{p.name}</h3>
-      <p className="mt-2 min-h-[40px] text-sm text-muted-foreground">{p.desc}</p>
+      <p className="mt-2 min-h-[40px] text-sm text-muted-foreground">
+        {p.desc}
+      </p>
       <div className="mt-4 flex min-h-[44px] items-end">
         <span
           className={cn(
@@ -8956,7 +9702,9 @@ function BillingPlanCard({ p, annual = false }) {
         </span>
       </div>
       <p className="mt-1 min-h-[20px] text-sm text-muted-foreground">
-        {isEnterprise ? "" : `al mes IVA incl.${annual ? " · facturado anual" : ""}`}
+        {isEnterprise
+          ? ""
+          : `al mes IVA incl.${annual ? " · facturado anual" : ""}`}
       </p>
       {!isEnterprise && (
         <CreditTierSelect
@@ -9042,7 +9790,10 @@ function buildUsageSeries(usage, days) {
     const key = day.toISOString().slice(0, 10);
     buckets.set(key, {
       day: key,
-      label: day.toLocaleDateString("es-ES", { day: "numeric", month: "short" }),
+      label: day.toLocaleDateString("es-ES", {
+        day: "numeric",
+        month: "short",
+      }),
       build: 0,
       run: 0,
     });
@@ -9070,7 +9821,9 @@ function UsageDetails({ onBack }) {
 
   useEffect(() => {
     if (!profile) return;
-    db.listCreditUsage(profile.id, days).then(setUsage).catch(() => setUsage([]));
+    db.listCreditUsage(profile.id, days)
+      .then(setUsage)
+      .catch(() => setUsage([]));
   }, [profile?.id, days]);
 
   const filtered = usage.filter((row) => kind === "all" || row.kind === kind);
@@ -9084,8 +9837,9 @@ function UsageDetails({ onBack }) {
         .filter((row) => row.project_id === project.id)
         .reduce((sum, row) => sum + row.amount, 0),
     }))
-    .filter(({ total, project }) =>
-      total > 0 && project.title.toLowerCase().includes(query.toLowerCase()),
+    .filter(
+      ({ total, project }) =>
+        total > 0 && project.title.toLowerCase().includes(query.toLowerCase()),
     )
     .sort((a, b) => b.total - a.total);
 
@@ -9140,28 +9894,9 @@ function UsageDetails({ onBack }) {
             </p>
           </div>
         ) : (
-          <ChartContainer config={usageChartConfig} className="mt-6 h-[260px] w-full">
-            <BarChart data={series} barCategoryGap={2}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" />
-              <XAxis
-                dataKey="label"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                minTickGap={24}
-              />
-              <YAxis
-                tickLine={false}
-                axisLine={false}
-                width={28}
-                allowDecimals={false}
-              />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <ChartLegend content={<ChartLegendContent />} />
-              <Bar dataKey="build" stackId="c" fill="var(--color-build)" radius={[0, 0, 0, 0]} />
-              <Bar dataKey="run" stackId="c" fill="var(--color-run)" radius={[2, 2, 0, 0]} />
-            </BarChart>
-          </ChartContainer>
+          <Suspense fallback={<div className="mt-6 h-[260px] animate-pulse rounded-lg bg-muted" />}>
+            <UsageChart config={usageChartConfig} series={series} />
+          </Suspense>
         )}
       </Card>
 
@@ -9225,7 +9960,9 @@ function BillingSettings() {
 
   useEffect(() => {
     if (!profile) return;
-    db.listCreditUsage(profile.id, 30).then(setUsage).catch(() => setUsage([]));
+    db.listCreditUsage(profile.id, 30)
+      .then(setUsage)
+      .catch(() => setUsage([]));
   }, [profile?.id]);
 
   // Llegado desde un botón de "mejorar plan" (?section=plans): baja a la
@@ -9284,7 +10021,11 @@ function BillingSettings() {
               <UIButton
                 variant="outline"
                 size="sm"
-                onClick={() => document.getElementById("planes")?.scrollIntoView({ behavior: "smooth" })}
+                onClick={() =>
+                  document
+                    .getElementById("planes")
+                    ?.scrollIntoView({ behavior: "smooth" })
+                }
               >
                 Gestionar
               </UIButton>
@@ -9304,8 +10045,18 @@ function BillingSettings() {
                   <span className="flex items-center gap-1 font-medium">
                     Créditos disponibles <Info className="size-3" />
                   </span>
-                  <span className={cn("text-muted-foreground", low && "text-destructive")}>
-                    <b className={cn("text-foreground", low && "text-destructive")}>
+                  <span
+                    className={cn(
+                      "text-muted-foreground",
+                      low && "text-destructive",
+                    )}
+                  >
+                    <b
+                      className={cn(
+                        "text-foreground",
+                        low && "text-destructive",
+                      )}
+                    >
                       {credits.toLocaleString("es-ES")}
                     </b>{" "}
                     de {allowance.toLocaleString("es-ES")}
@@ -9321,7 +10072,8 @@ function BillingSettings() {
                   />
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Cada generación descuenta créditos según el modelo y la duración.
+                  Cada generación descuenta créditos según el modelo y la
+                  duración.
                 </p>
               </div>
             );
@@ -9334,7 +10086,11 @@ function BillingSettings() {
               </p>
             </div>
             <UIButton
-              onClick={() => document.getElementById("planes")?.scrollIntoView({ behavior: "smooth" })}
+              onClick={() =>
+                document
+                  .getElementById("planes")
+                  ?.scrollIntoView({ behavior: "smooth" })
+              }
             >
               Mejorar plan
             </UIButton>
@@ -9346,12 +10102,26 @@ function BillingSettings() {
             <span className="font-semibold">Usage</span>
             <ChevronRight className="size-4 text-muted-foreground" />
           </div>
-          <ChartContainer config={usageChartConfig} className="mt-4 h-24 w-full">
-            <AreaChart data={series} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
+          <ChartContainer
+            config={usageChartConfig}
+            className="mt-4 h-24 w-full"
+          >
+            <AreaChart
+              data={series}
+              margin={{ left: 0, right: 0, top: 4, bottom: 0 }}
+            >
               <defs>
                 <linearGradient id="usageFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--color-build)" stopOpacity={0.35} />
-                  <stop offset="100%" stopColor="var(--color-build)" stopOpacity={0} />
+                  <stop
+                    offset="0%"
+                    stopColor="var(--color-build)"
+                    stopOpacity={0.35}
+                  />
+                  <stop
+                    offset="100%"
+                    stopColor="var(--color-build)"
+                    stopOpacity={0}
+                  />
                 </linearGradient>
               </defs>
               <ChartTooltip content={<ChartTooltipContent />} />
@@ -9425,7 +10195,8 @@ function BillingSettings() {
               : "text-muted-foreground",
           )}
         >
-          Anual <span className="font-medium text-violet-600">2 meses gratis</span>
+          Anual{" "}
+          <span className="font-medium text-violet-600">2 meses gratis</span>
         </button>
       </div>
       <div className="mt-6 grid gap-5 lg:grid-cols-3">
@@ -9468,7 +10239,6 @@ function BillingSettings() {
     </div>
   );
 }
-
 
 const peopleTabs = [
   ["all", "Todos"],
@@ -9557,7 +10327,9 @@ function PeopleSettings() {
       ]),
     ];
     const csv = rows
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .map((row) =>
+        row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
+      )
       .join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const link = document.createElement("a");
@@ -9575,8 +10347,9 @@ function PeopleSettings() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Personas</h1>
           <p className="mt-1 max-w-2xl text-muted-foreground">
-            Invitar a alguien a <b className="text-foreground">{workspace.name}</b>{" "}
-            le da acceso a los proyectos y créditos compartidos. Ahora mismo hay{" "}
+            Invitar a alguien a{" "}
+            <b className="text-foreground">{workspace.name}</b> le da acceso a
+            los proyectos y créditos compartidos. Ahora mismo hay{" "}
             {members.length} {members.length === 1 ? "persona" : "personas"} en
             este espacio.
           </p>
@@ -9655,7 +10428,11 @@ function PeopleSettings() {
         </div>
         <SettingSelect
           value={roleFilter}
-          options={[["all", "Todos los roles"], ["owner", "Propietario"], ...memberRoles]}
+          options={[
+            ["all", "Todos los roles"],
+            ["owner", "Propietario"],
+            ...memberRoles,
+          ]}
           onChange={setRoleFilter}
           className="w-[180px]"
         />
@@ -9672,7 +10449,8 @@ function PeopleSettings() {
               setTimeout(() => setCopied(false), 2000);
             }}
           >
-            {copied ? <Check /> : <Link />} {copied ? "Copiado" : "Enlace de invitación"}
+            {copied ? <Check /> : <Link />}{" "}
+            {copied ? "Copiado" : "Enlace de invitación"}
           </UIButton>
           <UIButton disabled={!teamEnabled} onClick={() => setInviting(true)}>
             <UserPlus /> Invitar
@@ -9817,21 +10595,27 @@ function PeopleSettings() {
               <Mail className="mx-auto size-7 text-muted-foreground" />
               <p className="mt-3 font-medium">No hay invitaciones pendientes</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Las invitaciones que envíes aparecerán aquí hasta que se acepten.
+                Las invitaciones que envíes aparecerán aquí hasta que se
+                acepten.
               </p>
             </div>
           ) : (
             <div className="divide-y">
               {pendingInvites.map((invite) => (
-                <div key={invite.id} className="flex items-center gap-3 px-5 py-4">
+                <div
+                  key={invite.id}
+                  className="flex items-center gap-3 px-5 py-4"
+                >
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
                     <Mail className="size-4 text-muted-foreground" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{invite.email}</p>
+                    <p className="truncate text-sm font-medium">
+                      {invite.email}
+                    </p>
                     <p className="text-xs text-muted-foreground">
-                      {roleLabel(invite.role)} · Enviada {timeAgo(invite.created_at)}{" "}
-                      · Caduca{" "}
+                      {roleLabel(invite.role)} · Enviada{" "}
+                      {timeAgo(invite.created_at)} · Caduca{" "}
                       {new Date(invite.expires_at).toLocaleDateString("es-ES")}
                     </p>
                   </div>
@@ -9876,7 +10660,9 @@ function PeopleSettings() {
               return (
                 <div className="p-10 text-center">
                   <Share2 className="mx-auto size-7 text-muted-foreground" />
-                  <p className="mt-3 font-medium">Todavía no hay colaboradores</p>
+                  <p className="mt-3 font-medium">
+                    Todavía no hay colaboradores
+                  </p>
                   <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                     Los colaboradores acceden a un proyecto concreto sin ocupar
                     plaza en el espacio. Se añaden desde el botón Compartir de
@@ -9929,7 +10715,8 @@ function PeopleSettings() {
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
                           {person.email}
-                          {person.status === "pending" && " · Invitación pendiente"}
+                          {person.status === "pending" &&
+                            " · Invitación pendiente"}
                         </p>
                       </div>
                       <SettingSelect
@@ -9976,7 +10763,10 @@ function PeopleSettings() {
           ) : (
             <div className="divide-y">
               {pendingRequests.map((request) => (
-                <div key={request.id} className="flex items-center gap-3 px-5 py-4">
+                <div
+                  key={request.id}
+                  className="flex items-center gap-3 px-5 py-4"
+                >
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-green-600 text-xs font-semibold text-white">
                     {(request.profile?.name ?? "?").charAt(0).toUpperCase()}
                   </span>
@@ -10049,7 +10839,9 @@ function InviteDialog({ workspace, profile, onClose, onDone }) {
       .split(/[\s,;]+/)
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean);
-    const invalid = list.find((value) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value));
+    const invalid = list.find(
+      (value) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value),
+    );
     if (!list.length) return setError("Escribe al menos un correo");
     if (invalid) return setError(`«${invalid}» no es un correo válido`);
 
@@ -10097,7 +10889,11 @@ function InviteDialog({ workspace, profile, onClose, onDone }) {
           />
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-muted-foreground">Rol</span>
-            <SettingSelect value={role} options={memberRoles} onChange={setRole} />
+            <SettingSelect
+              value={role}
+              options={memberRoles}
+              onChange={setRole}
+            />
           </div>
           {error && <p className="text-xs text-destructive">{error}</p>}
           <div className="flex justify-end gap-2">
@@ -10105,7 +10901,8 @@ function InviteDialog({ workspace, profile, onClose, onDone }) {
               Cancelar
             </UIButton>
             <UIButton type="submit" disabled={busy}>
-              {busy && <RefreshCw className="animate-spin" />} Enviar invitaciones
+              {busy && <RefreshCw className="animate-spin" />} Enviar
+              invitaciones
             </UIButton>
           </div>
         </form>
@@ -10113,8 +10910,6 @@ function InviteDialog({ workspace, profile, onClose, onDone }) {
     </Dialog>
   );
 }
-
-
 
 const knowledgeHints = [
   "Define el tono y el estilo visual de tu marca.",
@@ -10174,7 +10969,8 @@ function KnowledgeSettings() {
   /** Sube un archivo de texto y lo guarda como fuente. */
   const addFile = async (file) => {
     if (!file) return;
-    if (file.size > 2_000_000) return notify("El archivo supera los 2 MB", "error");
+    if (file.size > 2_000_000)
+      return notify("El archivo supera los 2 MB", "error");
     const content = await file.text();
     await db.createKnowledgeSource(workspace.id, {
       kind: "file",
@@ -10247,7 +11043,9 @@ function KnowledgeSettings() {
           className="mt-4 min-h-[200px] resize-none"
         />
         <div className="mt-3 flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">{text.length} caracteres</p>
+          <p className="text-xs text-muted-foreground">
+            {text.length} caracteres
+          </p>
           <UIButton
             size="sm"
             variant="outline"
@@ -10311,7 +11109,9 @@ function KnowledgeSettings() {
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-sm font-medium">{source.title}</p>
+                      <p className="truncate text-sm font-medium">
+                        {source.title}
+                      </p>
                       <Badge variant="secondary" className="rounded">
                         {kind.label}
                       </Badge>
@@ -10343,7 +11143,8 @@ function KnowledgeSettings() {
                     )}
                     {source.content && (
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {source.content.length.toLocaleString("es-ES")} caracteres
+                        {source.content.length.toLocaleString("es-ES")}{" "}
+                        caracteres
                       </p>
                     )}
                   </div>
@@ -10358,7 +11159,10 @@ function KnowledgeSettings() {
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button aria-label="Acciones" className="text-muted-foreground">
+                      <button
+                        aria-label="Acciones"
+                        className="text-muted-foreground"
+                      >
                         <MoreHorizontal className="size-4" />
                       </button>
                     </DropdownMenuTrigger>
@@ -10422,7 +11226,9 @@ function KnowledgeSettings() {
         <Dialog open onOpenChange={(o) => !o && setReading(null)}>
           <DialogContent className="max-h-[80vh] sm:max-w-[640px]">
             <DialogHeader>
-              <DialogTitle className="truncate pr-6">{reading.title}</DialogTitle>
+              <DialogTitle className="truncate pr-6">
+                {reading.title}
+              </DialogTitle>
               <DialogDescription>
                 {reading.content.length.toLocaleString("es-ES")} caracteres
                 {reading.url ? ` · ${reading.url}` : ""}
@@ -10475,7 +11281,8 @@ function AddSourceDialog({ kind, workspaceId, onClose, onDone }) {
       return;
     }
 
-    if (!form.content.trim()) return setError("Escribe el contenido de la nota");
+    if (!form.content.trim())
+      return setError("Escribe el contenido de la nota");
     setBusy(true);
     try {
       await db.createKnowledgeSource(workspaceId, {
@@ -10638,7 +11445,10 @@ function SkillsSettings() {
                     </Badge>
                   )}
                   {!skill.enabled && (
-                    <Badge variant="secondary" className="rounded text-muted-foreground">
+                    <Badge
+                      variant="secondary"
+                      className="rounded text-muted-foreground"
+                    >
                       Desactivada
                     </Badge>
                   )}
@@ -10665,13 +11475,18 @@ function SkillsSettings() {
                 onCheckedChange={async (enabled) => {
                   await db.updateSkill(skill.id, { enabled });
                   await reload();
-                  notify(enabled ? "Habilidad activada" : "Habilidad desactivada");
+                  notify(
+                    enabled ? "Habilidad activada" : "Habilidad desactivada",
+                  );
                 }}
               />
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button aria-label="Acciones" className="text-muted-foreground">
+                  <button
+                    aria-label="Acciones"
+                    className="text-muted-foreground"
+                  >
                     <MoreHorizontal className="size-4" />
                   </button>
                 </DropdownMenuTrigger>
@@ -10681,7 +11496,13 @@ function SkillsSettings() {
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={async () => {
-                      const { id, created_at, updated_at, is_builtin, ...rest } = skill;
+                      const {
+                        id,
+                        created_at,
+                        updated_at,
+                        is_builtin,
+                        ...rest
+                      } = skill;
                       await db.createSkill(workspace.id, {
                         ...rest,
                         name: `${skill.name} (copia)`,
@@ -10773,9 +11594,12 @@ function SkillDialog({ skill, workspaceId, onClose, onDone }) {
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>{isNew ? "Nueva habilidad" : "Editar habilidad"}</DialogTitle>
+          <DialogTitle>
+            {isNew ? "Nueva habilidad" : "Editar habilidad"}
+          </DialogTitle>
           <DialogDescription>
-            El agente la aplicará cuando el contexto encaje con sus disparadores.
+            El agente la aplicará cuando el contexto encaje con sus
+            disparadores.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-3">
@@ -11104,68 +11928,199 @@ const privacySections = [
     title: "Acceso y membresía",
     desc: "Quién puede unirse al espacio de trabajo y mover proyectos.",
     rows: [
-      { t: "Acceso predeterminado a los proyectos", d: "Elige si los nuevos proyectos son accesibles para todos los miembros del espacio de trabajo o si se restringen únicamente a los usuarios invitados.", control: "select", value: "Workspace" },
-      { t: "Restringir invitaciones al espacio de trabajo", tier: "Enterprise", d: "Cuando está activado, solo los administradores y propietarios pueden invitar miembros a este espacio de trabajo.", on: false },
-      { t: "Enlaces de invitación", d: "Permite que los miembros del espacio de trabajo creen y compartan enlaces de invitación.", on: true },
-      { t: "Detección del espacio de trabajo", tier: "Business", d: "Permite que los miembros del mismo dominio de correo electrónico descubran este espacio de trabajo y soliciten acceso a él.", on: false },
-      { t: "Perfiles públicos de miembros", tier: "Enterprise", d: "Los espacios de trabajo empresariales ocultan los perfiles de los miembros de forma predeterminada. Activa esta opción para que los perfiles públicos de Xframe de los miembros (xframe.ai/@username) sean visibles fuera del espacio de trabajo.", on: false },
-      { t: "Transferencias de proyectos por editores", tier: "Enterprise", d: "Cuando está habilitado, los editores propietarios de un proyecto pueden transferirlo, o hacer un remix de una copia, a otro espacio de trabajo.", on: false },
-      { t: "Exigir rol de editor del espacio de trabajo", tier: "Enterprise", d: "Cuando está activado, los espectadores del espacio de trabajo y los colaboradores externos pueden ver los proyectos, pero no editarlos, ni siquiera mediante la propiedad del proyecto o el acceso como colaborador.", on: false },
-      { t: "Colaboradores externos del proyecto", tier: "Business", d: "Elige el rol de proyecto más alto que pueden tener las personas ajenas a este espacio de trabajo.", control: "select", value: "Permitir todos" },
+      {
+        t: "Acceso predeterminado a los proyectos",
+        d: "Elige si los nuevos proyectos son accesibles para todos los miembros del espacio de trabajo o si se restringen únicamente a los usuarios invitados.",
+        control: "select",
+        value: "Workspace",
+      },
+      {
+        t: "Restringir invitaciones al espacio de trabajo",
+        tier: "Enterprise",
+        d: "Cuando está activado, solo los administradores y propietarios pueden invitar miembros a este espacio de trabajo.",
+        on: false,
+      },
+      {
+        t: "Enlaces de invitación",
+        d: "Permite que los miembros del espacio de trabajo creen y compartan enlaces de invitación.",
+        on: true,
+      },
+      {
+        t: "Detección del espacio de trabajo",
+        tier: "Business",
+        d: "Permite que los miembros del mismo dominio de correo electrónico descubran este espacio de trabajo y soliciten acceso a él.",
+        on: false,
+      },
+      {
+        t: "Perfiles públicos de miembros",
+        tier: "Enterprise",
+        d: "Los espacios de trabajo empresariales ocultan los perfiles de los miembros de forma predeterminada. Activa esta opción para que los perfiles públicos de Xframe de los miembros (xframe.ai/@username) sean visibles fuera del espacio de trabajo.",
+        on: false,
+      },
+      {
+        t: "Transferencias de proyectos por editores",
+        tier: "Enterprise",
+        d: "Cuando está habilitado, los editores propietarios de un proyecto pueden transferirlo, o hacer un remix de una copia, a otro espacio de trabajo.",
+        on: false,
+      },
+      {
+        t: "Exigir rol de editor del espacio de trabajo",
+        tier: "Enterprise",
+        d: "Cuando está activado, los espectadores del espacio de trabajo y los colaboradores externos pueden ver los proyectos, pero no editarlos, ni siquiera mediante la propiedad del proyecto o el acceso como colaborador.",
+        on: false,
+      },
+      {
+        t: "Colaboradores externos del proyecto",
+        tier: "Business",
+        d: "Elige el rol de proyecto más alto que pueden tener las personas ajenas a este espacio de trabajo.",
+        control: "select",
+        value: "Permitir todos",
+      },
     ],
   },
   {
     title: "Publicación",
     desc: "Controla cómo se publican e implementan los proyectos en la web.",
     rows: [
-      { t: "Acceso predeterminado al sitio web", tier: "Business", d: "Elige quién puede ver los sitios web recién publicados: cualquier persona con el enlace o solo los miembros del espacio de trabajo que hayan iniciado sesión. Quienes publican pueden elegir una audiencia diferente para cada proyecto.", control: "select", value: "Anyone" },
-      { t: "Quién puede publicar externamente", tier: "Enterprise", d: "Controla quién puede publicar e implementar proyectos en la web.", control: "select", value: "Editores y superiores" },
-      { t: "Invitaciones externas", tier: "Business", d: "Los miembros pueden invitar por correo electrónico a personas ajenas al espacio de trabajo para que vean los proyectos publicados. Cuando se desactiva, los usuarios externos ya invitados conservan su acceso.", on: true },
-      { t: "Bloquear la publicación con problemas críticos", d: "Impide que los proyectos con problemas de seguridad críticos se publiquen o actualicen.", on: false },
-      { t: "Exigir análisis de seguridad básico antes de la primera publicación", d: "Exige que se complete el análisis de seguridad básico antes de que un proyecto pueda publicarse por primera vez.", on: false },
-      { t: "Métodos de inicio de sesión de la app", tier: "Business", d: "Controla qué métodos de inicio de sesión pueden usar los proyectos de este espacio de trabajo para las apps generadas. Esto no afecta la forma en que los miembros del espacio de trabajo inician sesión en Xframe.", control: "button", value: "Configurar" },
+      {
+        t: "Acceso predeterminado al sitio web",
+        tier: "Business",
+        d: "Elige quién puede ver los sitios web recién publicados: cualquier persona con el enlace o solo los miembros del espacio de trabajo que hayan iniciado sesión. Quienes publican pueden elegir una audiencia diferente para cada proyecto.",
+        control: "select",
+        value: "Anyone",
+      },
+      {
+        t: "Quién puede publicar externamente",
+        tier: "Enterprise",
+        d: "Controla quién puede publicar e implementar proyectos en la web.",
+        control: "select",
+        value: "Editores y superiores",
+      },
+      {
+        t: "Invitaciones externas",
+        tier: "Business",
+        d: "Los miembros pueden invitar por correo electrónico a personas ajenas al espacio de trabajo para que vean los proyectos publicados. Cuando se desactiva, los usuarios externos ya invitados conservan su acceso.",
+        on: true,
+      },
+      {
+        t: "Bloquear la publicación con problemas críticos",
+        d: "Impide que los proyectos con problemas de seguridad críticos se publiquen o actualicen.",
+        on: false,
+      },
+      {
+        t: "Exigir análisis de seguridad básico antes de la primera publicación",
+        d: "Exige que se complete el análisis de seguridad básico antes de que un proyecto pueda publicarse por primera vez.",
+        on: false,
+      },
+      {
+        t: "Métodos de inicio de sesión de la app",
+        tier: "Business",
+        d: "Controla qué métodos de inicio de sesión pueden usar los proyectos de este espacio de trabajo para las apps generadas. Esto no afecta la forma en que los miembros del espacio de trabajo inician sesión en Xframe.",
+        control: "button",
+        value: "Configurar",
+      },
     ],
   },
   {
     title: "Automatización de seguridad",
     desc: "Controla la corrección automática de seguridad para los proyectos del espacio de trabajo.",
     rows: [
-      { t: "Corregir automáticamente problemas de seguridad", d: "Habilita la corrección automática de problemas básicos detectados en el análisis que sean de bajo riesgo a nivel del espacio de trabajo. Para el proyecto seleccionado, ajústalo en la configuración del proyecto.", control: "select", value: "Proyecto seleccionado" },
+      {
+        t: "Corregir automáticamente problemas de seguridad",
+        d: "Habilita la corrección automática de problemas básicos detectados en el análisis que sean de bajo riesgo a nivel del espacio de trabajo. Para el proyecto seleccionado, ajústalo en la configuración del proyecto.",
+        control: "select",
+        value: "Proyecto seleccionado",
+      },
     ],
   },
   {
     title: "Abandoned projects",
     desc: "Automatically identify projects with no recent activity, both published and unpublished, and optionally delete them after a grace period.",
     rows: [
-      { t: "Mark as abandoned after", tier: "Enterprise", d: "Projects with no activity for this period are marked abandoned.", control: "select", value: "60 days" },
-      { t: "Delete abandoned projects after", d: "Abandoned projects stay recoverable during this grace period. Editing a project, sending a message, or clicking Keep it cancels deletion.", control: "select", value: "Never" },
+      {
+        t: "Mark as abandoned after",
+        tier: "Enterprise",
+        d: "Projects with no activity for this period are marked abandoned.",
+        control: "select",
+        value: "60 days",
+      },
+      {
+        t: "Delete abandoned projects after",
+        d: "Abandoned projects stay recoverable during this grace period. Editing a project, sending a message, or clicking Keep it cancels deletion.",
+        control: "select",
+        value: "Never",
+      },
     ],
   },
   {
     title: "Uso compartido",
     desc: "Controla cómo los miembros comparten los archivos del proyecto y los enlaces de vista previa.",
     rows: [
-      { t: "Compartir enlace de vista previa", tier: "Enterprise", d: "Cuando está habilitado, los usuarios pueden crear enlaces de vista previa públicos y temporales para sus aplicaciones. Cuando está deshabilitado, se bloquea la creación de enlaces de vista previa.", on: true },
-      { t: "Descargas de código", tier: "Enterprise", d: "Cuando está deshabilitado, solo los administradores y propietarios del espacio de trabajo pueden descargar el código fuente del proyecto.", on: true },
-      { t: "Uso compartido entre proyectos", d: "Permite que los proyectos de este espacio de trabajo lean archivos de otros proyectos.", on: true },
+      {
+        t: "Compartir enlace de vista previa",
+        tier: "Enterprise",
+        d: "Cuando está habilitado, los usuarios pueden crear enlaces de vista previa públicos y temporales para sus aplicaciones. Cuando está deshabilitado, se bloquea la creación de enlaces de vista previa.",
+        on: true,
+      },
+      {
+        t: "Descargas de código",
+        tier: "Enterprise",
+        d: "Cuando está deshabilitado, solo los administradores y propietarios del espacio de trabajo pueden descargar el código fuente del proyecto.",
+        on: true,
+      },
+      {
+        t: "Uso compartido entre proyectos",
+        d: "Permite que los proyectos de este espacio de trabajo lean archivos de otros proyectos.",
+        on: true,
+      },
     ],
   },
   {
     title: "Conectores MCP",
     desc: "Controla los servidores MCP que Xframe puede usar desde el chat.",
     rows: [
-      { t: "Conectores MCP remotos", tier: "Business", d: "Permite que los miembros del espacio de trabajo conecten servidores MCP que Xframe puede invocar desde el chat. Al desactivarlo se eliminan las conexiones MCP existentes.", on: true },
-      { t: "Servidores MCP locales de escritorio", tier: "Business", d: "Permite que los miembros del espacio de trabajo usen servidores MCP de sesiones conectadas de Xframe Desktop. Requiere que los conectores MCP remotos permanezcan habilitados.", on: true },
+      {
+        t: "Conectores MCP remotos",
+        tier: "Business",
+        d: "Permite que los miembros del espacio de trabajo conecten servidores MCP que Xframe puede invocar desde el chat. Al desactivarlo se eliminan las conexiones MCP existentes.",
+        on: true,
+      },
+      {
+        t: "Servidores MCP locales de escritorio",
+        tier: "Business",
+        d: "Permite que los miembros del espacio de trabajo usen servidores MCP de sesiones conectadas de Xframe Desktop. Requiere que los conectores MCP remotos permanezcan habilitados.",
+        on: true,
+      },
     ],
   },
   {
     title: "Protección de datos",
     desc: "Controla cómo se recopilan y exponen los datos de este espacio de trabajo.",
     rows: [
-      { t: "Exclusión de la recopilación de datos", tier: "Business", d: "Excluye este espacio de trabajo de la recopilación de datos.", on: false },
-      { t: "Análisis de datos confidenciales", tier: "Enterprise", d: "Activa la detección de PII para este espacio de trabajo. Incluye análisis bajo demanda del historial de chat, Xframe Cloud Database y Xframe Cloud Storage, y activa la protección de envío en el chat para mensajes nuevos y archivos adjuntos.", on: false },
-      { t: "Bloquear buckets de almacenamiento públicos", d: "Impide que los usuarios creen buckets de almacenamiento de acceso público en Xframe Cloud.", on: true },
-      { t: "Región de alojamiento predeterminada", tier: "Business", d: "Elige dónde se alojan los nuevos proyectos de este espacio de trabajo. Requiere una instancia de base de datos micro o superior y puede consumir más créditos.", control: "select", value: "Sin definir" },
+      {
+        t: "Exclusión de la recopilación de datos",
+        tier: "Business",
+        d: "Excluye este espacio de trabajo de la recopilación de datos.",
+        on: false,
+      },
+      {
+        t: "Análisis de datos confidenciales",
+        tier: "Enterprise",
+        d: "Activa la detección de PII para este espacio de trabajo. Incluye análisis bajo demanda del historial de chat, Xframe Cloud Database y Xframe Cloud Storage, y activa la protección de envío en el chat para mensajes nuevos y archivos adjuntos.",
+        on: false,
+      },
+      {
+        t: "Bloquear buckets de almacenamiento públicos",
+        d: "Impide que los usuarios creen buckets de almacenamiento de acceso público en Xframe Cloud.",
+        on: true,
+      },
+      {
+        t: "Región de alojamiento predeterminada",
+        tier: "Business",
+        d: "Elige dónde se alojan los nuevos proyectos de este espacio de trabajo. Requiere una instancia de base de datos micro o superior y puede consumir más créditos.",
+        control: "select",
+        value: "Sin definir",
+      },
     ],
   },
 ];
@@ -11201,7 +12156,9 @@ function PrivacySettings() {
                     <p className="text-sm font-medium">{row.t}</p>
                     {row.tier && <TierBadge tier={row.tier} />}
                   </div>
-                  <p className="mt-0.5 text-sm text-muted-foreground">{row.d}</p>
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    {row.d}
+                  </p>
                 </div>
                 <div className="shrink-0 pt-0.5">
                   {row.control === "select" ? (
@@ -11225,11 +12182,16 @@ function PrivacySettings() {
 
 function SettingsPage({ page }) {
   // 300 px de ancho: cabe "Dominios del espacio de trabajo" sin recortar.
-  const [sideW, resizeSide] = useResizableWidth("xf-settings-sidebar", 300, 240, 460);
+  const [sideW, resizeSide] = useResizableWidth(
+    "xf-settings-sidebar",
+    300,
+    240,
+    460,
+  );
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background">
       <SettingsSide page={page} width={sideW} onResize={resizeSide} />
-      <main style={{ marginLeft: sideW }}>
+      <main className="min-h-dvh" style={{ marginLeft: sideW }}>
         {page === "account" ? (
           <AccountSettings />
         ) : page === "apps" ? (

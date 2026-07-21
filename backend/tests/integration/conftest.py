@@ -666,4 +666,3 @@ async def wait_for_job(db: Any, job_id: str, *, states: tuple[str, ...], timeout
         f"Si está en 'queued', nadie lo reclamó: el worker no arrancó."
     )
 
-

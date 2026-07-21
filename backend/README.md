@@ -39,14 +39,19 @@ El esquema base (`profiles`, `projects`, `assets`, `canvas_nodes`, …) está en
 # contra el Postgres del compose
 psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/schema.sql
 psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/002_agent.sql
+psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/003_storage.sql
+psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/004_conversation_resume.sql
+psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/005_migrate_asset_paths.sql
+psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/006_team_chat_realtime.sql
 
 # contra Supabase
 supabase db push
-# o: psql "$DATABASE_URL" -f ../supabase/002_agent.sql
+# o: aplica los ficheros 002...006 en orden contra "$DATABASE_URL"
 ```
 
-`002_agent.sql` es idempotente (`create table if not exists`, `add column if not
-exists`), así que se puede reaplicar sin miedo.
+Los ficheros numerados son migraciones incrementales e idempotentes. En una instalación
+nueva se aplica primero `schema.sql`; en una ya existente se aplican solo las migraciones
+pendientes y en orden. No se vuelve a ejecutar el esquema base para actualizar producción.
 
 ### Seeds de taxonomía
 

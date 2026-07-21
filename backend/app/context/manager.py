@@ -514,9 +514,22 @@ def serialize_context(
                 report.sections_dropped.append("assets")
             return text, report
 
-    report.sections_dropped.append("hard_truncated")
-    marker = "\n" + _truncation(0, "secciones")
-    return text[: max(0, budget_chars - len(marker))] + marker, report
+    # El último recurso no puede ser un corte por caracteres: deja XML inválido y puede
+    # amputar precisamente los dos referentes que nunca se degradan (el total de planos
+    # y la selección actual). Se entrega una cápsula estructuralmente válida, aunque no
+    # quepa ningún plano concreto, para que el agente sepa qué falta y pueda leerlo con
+    # una tool.
+    text, shots_shown = _render_minimal_context(ctx, budget_chars)
+    report.shots_shown = shots_shown
+    report.assets_shown = 0
+    report.brief_truncated = bool(ctx.brief)
+    report.sections_dropped.extend(["brief", "assets", "timeline_detail", "hard_truncated"])
+    report.chars = len(text)
+
+    # Un presupuesto menor que esta cápsula no es utilizable: no sacrificamos un XML
+    # válido ni la selección para simular que se respetó. El presupuesto normal es
+    # 200.000 caracteres; este camino solo existe para defensas y tests de estrés.
+    return text, report
 
 
 def _shrink_plan(n_assets: int, n_shots: int) -> Iterable[tuple[int, int]]:
@@ -527,6 +540,64 @@ def _shrink_plan(n_assets: int, n_shots: int) -> Iterable[tuple[int, int]]:
     while shots_limit > 5:
         shots_limit = max(5, shots_limit // 2)
         yield 0, shots_limit
+
+
+def _render_minimal_context(ctx: XframeUIContext, budget_chars: int) -> tuple[str, int]:
+    """Cápsula válida: conserva identidad, selección y tantos títulos como quepan."""
+    project = P.PROJECT_TEMPLATE.format(
+        project_id=_attr(ctx.project_id),
+        title=_attr(_clip(ctx.project_title, 120)),
+        open_tab=_attr(ctx.open_tab.value),
+        credits=ctx.credits,
+        total_assets=ctx.total_assets or len(ctx.recent_assets),
+    )
+    selection = ""
+    if ctx.selected_assets:
+        selection = P.SELECTION_TEMPLATE.format(
+            assets="\n".join(_format_asset(asset, ContextDetail.FULL) for asset in ctx.selected_assets)
+        )
+
+    def wrap(timeline: str) -> str:
+        sections = [project]
+        if timeline:
+            sections.append(timeline)
+        if selection:
+            sections.append(selection)
+        sections.append(_truncation(0, "secciones"))
+        return P.CONTEXT_WRAPPER.format(sections="\n".join(sections))
+
+    if not ctx.timeline:
+        return wrap(""), 0
+
+    total = len(ctx.timeline)
+    titles: list[str] = []
+    best = wrap(
+        P.TIMELINE_TEMPLATE.format(
+            detail=ContextDetail.TITLES.name.lower(),
+            shown=0,
+            total=total,
+            shots=_truncation(total, "planos"),
+        )
+    )
+    for shot in ctx.timeline:
+        candidate_titles = [*titles, _format_shot(shot, ContextDetail.TITLES)]
+        body = candidate_titles.copy()
+        if len(candidate_titles) < total:
+            body.append(_truncation(total - len(candidate_titles), "planos"))
+        candidate = wrap(
+            P.TIMELINE_TEMPLATE.format(
+                detail=ContextDetail.TITLES.name.lower(),
+                shown=len(candidate_titles),
+                total=total,
+                shots="\n".join(body),
+            )
+        )
+        if len(candidate) > budget_chars:
+            break
+        titles = candidate_titles
+        best = candidate
+
+    return best, len(titles)
 
 
 # Topes de la guía del usuario. Son directrices, no un volcado: se acotan aquí para que
@@ -746,9 +817,9 @@ class XframeContextManager:
             return_exceptions=True,
         )
         project, brief, shots, assets_bundle, sheets, profile, guidance = [
-            self._or_default(r, default)
-            for r, default in zip(
-                results, ({}, [], [], ([], 0), {}, {}, Guidance())
+                self._or_default(r, default)
+                for r, default in zip(
+                results, ({}, [], [], ([], 0), {}, {}, Guidance()), strict=True
             )
         ]
 

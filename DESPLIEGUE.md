@@ -121,6 +121,11 @@ conectado, cada push a la rama despliega.
 En **Authentication → URL Configuration**, añade `https://xframe-tau.vercel.app` como Site URL y
 como Redirect URL. Sin eso el inicio de sesión redirige a `localhost` y no vuelve.
 
+Antes de desplegar código que use una tabla o función nueva, aplica en Supabase las
+migraciones pendientes de `supabase/` por orden numérico. Para esta versión, una base ya
+existente necesita al menos `006_team_chat_realtime.sql` para el chat de equipo y la
+actualización en vivo de créditos.
+
 ---
 
 ## Escalar

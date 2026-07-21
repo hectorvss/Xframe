@@ -828,11 +828,17 @@ def test_registry_rejects_unknown_provider_loudly() -> None:
         registry.get("midjourney")
 
 
-def test_registry_cache_expires() -> None:
+def test_registry_cache_expires(monkeypatch: pytest.MonkeyPatch) -> None:
     """El TTL corto es la razón de que apagar un modelo sea un UPDATE. Un TTL infinito
     convertiría la ventaja de tener esto en datos en una desventaja operativa."""
     registry = DbAdapterRegistry(ttl_s=0.05)
     loads = {"n": 0}
+    now = 0.0
+
+    def monotonic() -> float:
+        return now
+
+    monkeypatch.setattr("app.providers.registry.time.monotonic", monotonic)
 
     async def fake_load() -> dict[str, ModelSpec]:
         loads["n"] += 1
@@ -844,7 +850,8 @@ def test_registry_cache_expires() -> None:
         await registry.models()
         await registry.models()
         assert loads["n"] == 1, "dentro del TTL no se recarga"
-        await asyncio.sleep(0.06)
+        nonlocal now
+        now += 0.06
         await registry.models()
         assert loads["n"] == 2
 
