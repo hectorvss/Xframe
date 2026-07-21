@@ -674,3 +674,9 @@ $fn$;
 
 revoke all on function public.project_participants(uuid) from public, anon;
 grant execute on function public.project_participants(uuid) to authenticated;
+
+-- ------------------------------------------------------------ realtime
+-- profiles en la publicación de realtime: el contador de créditos del frontend
+-- se actualiza en vivo cuando el backend gasta al generar (reescribe
+-- profiles.credits desde el credit_ledger).
+alter publication supabase_realtime add table public.profiles;
