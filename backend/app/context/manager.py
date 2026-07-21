@@ -438,9 +438,13 @@ def _format_assets(
 def _format_gen_settings(settings: GenSettings) -> str:
     pairs = {
         "model": settings.model,
+        "mode": settings.mode,
+        "genre": settings.genre,
         "aspect": settings.aspect,
         "resolution": settings.resolution,
         "duration_s": settings.duration_s,
+        "count": settings.count,
+        "sound": None if settings.sound is None else ("on" if settings.sound else "off"),
         "style": settings.style,
         "camera": settings.camera,
     }
@@ -611,6 +615,14 @@ def _flatten_setting(key: str, value: Any) -> Any:
             return float(str(value).rstrip("s")) if value is not None else None
         except (TypeError, ValueError):
             return None
+    if key == "count":
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+    if key == "sound":
+        # Se conserva como bool: el frontend lo guarda como booleano JSON.
+        return bool(value) if value is not None else None
     if isinstance(value, dict):
         parts = [f"{k}: {v}" for k, v in value.items() if v not in (None, "", "Auto")]
         return " · ".join(parts) if parts else None
@@ -896,7 +908,19 @@ class XframeContextManager:
         for source in (profile.get("settings") or {}, project.get("settings") or {}):
             if isinstance(source, dict):
                 merged.update(source.get("gen") if isinstance(source.get("gen"), dict) else source)
-        known = {"model", "aspect", "resolution", "duration_s", "style", "camera"}
+
+        # El frontend guarda `res` y `dur`; `GenSettings` los llama `resolution` y
+        # `duration_s`. Sin esta normalización caían a `extra` y el modelo nunca veía la
+        # resolución ni la duración que el usuario había elegido.
+        aliases = {"res": "resolution", "dur": "duration_s"}
+        for old, new in aliases.items():
+            if old in merged and new not in merged:
+                merged[new] = merged.pop(old)
+
+        known = {
+            "model", "aspect", "resolution", "duration_s", "style", "camera",
+            "mode", "genre", "sound", "count",
+        }
         return GenSettings(
             **{k: _flatten_setting(k, v) for k, v in merged.items() if k in known},
             extra={k: v for k, v in merged.items() if k not in known},

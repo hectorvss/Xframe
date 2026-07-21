@@ -224,6 +224,10 @@ class GenSettings(BaseModel):
     duration_s: float | None = None
     style: str | None = None
     camera: str | None = None
+    mode: str | None = None
+    genre: str | None = None
+    sound: bool | None = None
+    count: int | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
 

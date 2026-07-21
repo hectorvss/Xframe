@@ -48,6 +48,23 @@ PROJECT_TEMPLATE = """
 
 GEN_SETTINGS_TEMPLATE = """
 <gen_settings{attrs}/>
+<gen_settings_instructions>
+These are the defaults the user chose in the composer for THIS project. Apply them to
+every generation you make unless the user's message overrides one of them:
+
+- aspect and resolution → pass them as the aspect and resolution of the generation.
+- duration_s → the length of a video (ignore for images).
+- genre, style, camera → fold them into the generation prompt so the result has that look
+  (e.g. genre "Noir" + style "low key, monochrome" + camera "35mm f/1.4" → a moody,
+  monochrome, shallow-depth image). These are look-and-feel, not enum values.
+- sound → whether a video should have audio.
+- count → HOW MANY variations to produce. If count is 2, 3 or 4, generate that many
+  assets for a single-asset request, each a distinct take on the same prompt, in one go
+  (call generate_image/generate_video once per variation). One credit charge per asset;
+  the user set the number on purpose, so honour it exactly — no more, no less.
+
+Do not restate these settings back to the user; just apply them.
+</gen_settings_instructions>
 """.strip()
 
 

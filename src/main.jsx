@@ -5304,6 +5304,13 @@ function Editor({ projectId }) {
   // Turno del agente en curso: el texto que va llegando y los assets que aún no
   // tienen render. Vive fuera de `messages` porque solo se persiste el final.
   const [stream, setStream] = useState(null);
+
+  // Placeholders "fantasma" que aparecen AL INSTANTE al pedir una generación, antes de
+  // que el agente razone y encole nada. Son solo visuales (no tocan la base): cada job
+  // real que llega retira uno, y al terminar el turno se limpian los que sobren (por si
+  // el mensaje no era una generación). Con esto la malla de píxeles se ve nada más pulsar
+  // enviar, y aparecen tantas como imágenes se vayan a generar (el ajuste de cantidad).
+  const [ghosts, setGhosts] = useState([]);
   const turn = useRef(null);
 
   // Cambiar de proyecto o salir del editor corta el stream, no el trabajo: los
@@ -5356,6 +5363,23 @@ function Editor({ projectId }) {
     turn.current?.cancel();
     setBusy(true);
     setStream({ text: "", tool: null, assets: [] });
+
+    // Placeholders instantáneos: tantos como la cantidad elegida (1–4). Solo en la
+    // pestaña de assets, que es donde el usuario pide generaciones; en el chat un mensaje
+    // suele ser una pregunta. Si resulta que no era una generación, se limpian al acabar.
+    if (tab === "assets") {
+      const n = Math.max(1, Math.min(4, Number(genSettings?.count) || 1));
+      const base = Date.now();
+      setGhosts(
+        Array.from({ length: n }, (_, i) => ({
+          id: `ghost-${base}-${i}`,
+          name: text.slice(0, 60) || "Nuevo asset",
+          type: "Imagen",
+          status: "generating",
+          ghost: true,
+        })),
+      );
+    }
 
     let full = "";
 
@@ -5413,6 +5437,9 @@ function Editor({ projectId }) {
         ]);
         if (!row) return;
         known.add(String(row.id));
+        // Cada asset real que se encola retira un fantasma: el placeholder instantáneo
+        // deja su sitio a la fila de verdad, sin parpadeo (ambos muestran la misma malla).
+        setGhosts((g) => g.slice(1));
         setStream((s) => (s ? { ...s, assets: [...s.assets, row] } : s));
       },
 
@@ -5464,12 +5491,16 @@ function Editor({ projectId }) {
       onError: (e) => {
         full += (full ? "\n\n" : "") + (e.message ?? AGENT_DOWN_MESSAGE);
         setStream((s) => (s ? { ...s, text: full, tool: null } : s));
+        setGhosts([]);
       },
 
       onDone: () => {
         setBusy(false);
         setStream(null);
         turn.current = null;
+        // Fantasmas que sobran = el mensaje no generó tantos assets como la cantidad
+        // elegida (o no generó ninguno, era una pregunta). Se retiran.
+        setGhosts([]);
         if (full.trim()) addMessage("agent", full.trim());
         // Quien cobra es el backend contra el libro mayor, así que el saldo
         // nuevo no se deduce: se vuelve a preguntar.
@@ -5629,7 +5660,7 @@ function Editor({ projectId }) {
           {tab === "preview" && <EditorPreview assets={assets} />}
           {tab === "assets" && (
             <EditorAssets
-              assets={assets}
+              assets={ghosts.length ? [...ghosts, ...assets] : assets}
               onAssign={(id, role) => patchAsset(id, { role })}
               onDuplicate={duplicateAsset}
               onRemove={removeAsset}
