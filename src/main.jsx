@@ -3889,26 +3889,107 @@ function AssetMenu({
   );
 }
 
+// Paradas del gradiente de la malla de píxeles. Es "el gradiente específico" de la marca:
+// índigo → fucsia → cian, el mismo aire que el degradado de la landing.
+const PIXEL_MESH_STOPS = [
+  [99, 102, 241], // indigo-500
+  [168, 85, 247], // purple-500
+  [217, 70, 239], // fuchsia-500
+  [34, 211, 238], // cyan-400
+];
+
 /**
  * Tarjeta de un asset que se está generando.
  *
- * En vez de un spinner soso, un encuadre de cámara "vivo": corchetes de framing que
- * laten, un barrido de luz que recorre la imagen y una línea de escaneo, sobre un fondo
- * en degradado que respira. Da sensación de que algo se está revelando ahí dentro. Toda
- * la animación es CSS (ver src/styles.css), así que no cuesta JS ni re-renders.
+ * Una malla de píxeles que cambian constantemente: cada celda parpadea en brillo sobre un
+ * gradiente que se desplaza en diagonal, como si la imagen se estuviera "revelando" desde
+ * el ruido. Se dibuja en un canvas con requestAnimationFrame, limitado a ~18 fps —el
+ * parpadeo escalonado es justo lo que da la sensación de píxeles vivos, y así no quema CPU
+ * aunque haya varias tarjetas a la vez—. Respeta "reducir movimiento": ahí queda un
+ * gradiente quieto.
  */
 function GeneratingCard({ label }) {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const reduce = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    )?.matches;
+
+    const CELL = 14; // lado de cada "píxel" en px de pantalla
+    let raf = 0;
+    let running = true;
+    let last = 0;
+
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const gradColor = (t) => {
+      const seg = t * (PIXEL_MESH_STOPS.length - 1);
+      const i = Math.min(Math.floor(seg), PIXEL_MESH_STOPS.length - 2);
+      const f = seg - i;
+      const a = PIXEL_MESH_STOPS[i];
+      const b = PIXEL_MESH_STOPS[i + 1];
+      return [lerp(a[0], b[0], f), lerp(a[1], b[1], f), lerp(a[2], b[2], f)];
+    };
+
+    const resize = () => {
+      const r = canvas.getBoundingClientRect();
+      canvas.width = Math.max(1, Math.floor(r.width));
+      canvas.height = Math.max(1, Math.floor(r.height));
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(canvas);
+
+    const render = (ts) => {
+      const w = canvas.width;
+      const h = canvas.height;
+      const cols = Math.ceil(w / CELL);
+      const rows = Math.ceil(h / CELL);
+      const time = reduce ? 0 : ts * 0.001;
+      ctx.clearRect(0, 0, w, h);
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          // Posición dentro del gradiente: barrido diagonal que se desplaza con el tiempo.
+          const gp = ((x / cols + y / rows) / 2 + time * 0.14) % 1;
+          const [r, g, b] = gradColor(gp);
+          // Parpadeo por celda: pseudo-aleatorio estable por (x,y), animado en el tiempo.
+          const flick = 0.5 + 0.5 * Math.sin(x * 12.9898 + y * 4.1414 + time * 6.0);
+          const wave = Math.abs(Math.sin(x * 0.6 + y * 1.1 + time * 2.2));
+          const alpha = reduce ? 0.5 : (0.18 + 0.82 * wave) * (0.4 + 0.6 * flick);
+          ctx.fillStyle = `rgba(${r | 0},${g | 0},${b | 0},${alpha.toFixed(3)})`;
+          ctx.fillRect(x * CELL, y * CELL, CELL - 1, CELL - 1);
+        }
+      }
+    };
+
+    const loop = (ts) => {
+      if (!running) return;
+      if (ts - last > 55) {
+        last = ts;
+        render(ts);
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    if (reduce) render(0);
+
+    return () => {
+      running = false;
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, []);
+
   return (
-    <div className="xf-gen-card flex aspect-video items-center justify-center rounded-xl">
-      <span className="xf-gen-scan" />
-      {/* corchetes de encuadre en las cuatro esquinas */}
-      <span className="xf-gen-bracket left-2 top-2 border-l-2 border-t-2 rounded-tl-sm" />
-      <span className="xf-gen-bracket right-2 top-2 border-r-2 border-t-2 rounded-tr-sm" />
-      <span className="xf-gen-bracket bottom-2 left-2 border-b-2 border-l-2 rounded-bl-sm" />
-      <span className="xf-gen-bracket bottom-2 right-2 border-b-2 border-r-2 rounded-br-sm" />
-      <div className="relative z-10 flex flex-col items-center gap-2">
-        <Sparkles className="size-6 text-primary drop-shadow" />
-        <span className="text-xs font-medium text-foreground/80">
+    <div className="relative aspect-video overflow-hidden rounded-xl bg-neutral-950">
+      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
+      {/* leve viñeta para que la etiqueta se lea sobre la malla */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20" />
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="rounded-full bg-black/45 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
           Generando<span className="xf-gen-dots" />
         </span>
       </div>
