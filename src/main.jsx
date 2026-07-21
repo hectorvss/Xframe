@@ -3144,6 +3144,8 @@ function EditorChat({
   stream = null,
   elements = [],
   onUpload,
+  insert = null,
+  onInsertDone,
 }) {
   const [draft, setDraft] = useState("");
   const [mentionAt, setMentionAt] = useState(null);
@@ -3172,13 +3174,26 @@ function EditorChat({
   // idéntico detrás pinta cada @element como una pill coloreada. Es el truco estándar
   // de highlight-overlay: la edición conserva toda su funcionalidad nativa (selección,
   // atajos, IME) porque el textarea sigue siendo un textarea.
+  // Inserción externa: la vista previa (u otra pestaña) puede meter texto en el
+  // borrador — p. ej. «@Clip-2 » al pinchar el @ de una tira del timeline.
+  useEffect(() => {
+    if (!insert?.text) return;
+    setDraft((d) => {
+      const sep = d && !d.endsWith(" ") ? " " : "";
+      return `${d}${sep}${insert.text}`;
+    });
+    areaRef.current?.focus();
+    onInsertDone?.();
+  }, [insert]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const mentionRegex = useMemo(() => {
-    if (!elements.length) return null;
     const names = [...elements]
       .map((e) => e.name)
       .sort((a, b) => b.length - a.length)
       .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    return new RegExp(`@(${names.join("|")})`, "g");
+    // «Clip-N» siempre es mencionable: son las tiras del timeline de la vista previa.
+    const alternatives = [...names, "Clip-\\d+"];
+    return new RegExp(`@(${alternatives.join("|")})`, "g");
   }, [elements]);
 
   const draftWithPills = useMemo(() => {
@@ -3192,7 +3207,12 @@ function EditorChat({
       out.push(
         <span
           key={`${m.index}-${m[0]}`}
-          className="rounded-md bg-primary/15 font-medium text-primary"
+          className={cn(
+            "rounded-md font-medium",
+            /^@Clip-/.test(m[0])
+              ? "bg-violet-500/15 text-violet-600"
+              : "bg-primary/15 text-primary",
+          )}
         >
           {m[0]}
         </span>,
@@ -3533,7 +3553,7 @@ function EditorPreview({
   onAssemble,
   timeline = null,
   onTimelineChange,
-  onClipEdit,
+  onClipMention,
 }) {
   const [exporting, setExporting] = useState(false);
   // El timeline es de VÍDEO: tiras de los fragmentos generados, y solo eso. Las
@@ -3595,8 +3615,6 @@ function EditorPreview({
   const [dur, setDur] = useState(0);
   const [aspect, setAspect] = useState("16:9");
   const [adding, setAdding] = useState(false);
-  // La franja seleccionada y la orden que se le quiere dar al agente sobre ella.
-  const [clipNote, setClipNote] = useState("");
 
   const safeIdx = Math.min(idx, Math.max(0, shown.length - 1));
   const item = shown[safeIdx] ?? null;
@@ -3614,18 +3632,6 @@ function EditorPreview({
     } else {
       setPlaying(false);
     }
-  };
-
-  // La orden sobre la franja seleccionada viaja al chat con el clip identificado: el
-  // agente recibe qué asset es y qué hay que cambiar, y regenera SOLO ese plano.
-  const sendClipNote = () => {
-    const text = clipNote.trim();
-    if (!text || !item || !onClipEdit) return;
-    onClipEdit(
-      `Sobre el fragmento ${safeIdx + 1} del timeline (asset ${item.id}): ${text}. ` +
-        `Regenera solo ese plano aplicando el cambio y mantén el resto del montaje igual.`,
-    );
-    setClipNote("");
   };
 
   const seek = (t) => {
@@ -3834,27 +3840,11 @@ function EditorPreview({
 
       {/* EL TIMELINE. Tiras de los fragmentos de vídeo, y solo de vídeo. Arrastra para
           reordenar (el hueco se abre en vivo, se persiste al soltar), la X quita, el
-          botón del final añade fragmentos que no estén. La franja seleccionada tiene su
-          propia línea de órdenes: dile al agente qué cambiar de ESE clip. */}
+          botón del final añade fragmentos que no estén. El botón @ de cada tira mete
+          «@Clip-N» en el chat como pill: cuentas ahí el cambio y el agente sabe
+          exactamente sobre qué fragmento aplicarlo. */}
       {(videos.length > 0 || shown.length > 0) && (
         <div className="shrink-0 rounded-xl border bg-background p-2">
-          {item && onClipEdit && (
-            <div className="mb-2 flex items-center gap-2">
-              <Badge variant="secondary" className="shrink-0 font-normal tabular-nums">
-                Clip {safeIdx + 1}
-              </Badge>
-              <input
-                value={clipNote}
-                onChange={(e) => setClipNote(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendClipNote()}
-                placeholder="Pide un cambio sobre este clip: «más lento», «hazlo nocturno», «cambia el ángulo»…"
-                className="h-8 min-w-0 flex-1 rounded-md border bg-transparent px-2 text-xs outline-none focus:ring-1 focus:ring-primary"
-              />
-              <UIButton size="sm" disabled={!clipNote.trim()} onClick={sendClipNote}>
-                <ArrowUp /> Pedir cambio
-              </UIButton>
-            </div>
-          )}
           <div className="flex items-stretch gap-2 overflow-x-auto">
             {shown.map((a, i) => (
               <div
@@ -3908,6 +3898,18 @@ function EditorPreview({
                 >
                   <X className="size-3" />
                 </button>
+                {onClipMention && (
+                  <button
+                    onClick={() => {
+                      setIdx(i);
+                      onClipMention(a, i);
+                    }}
+                    title={`Mencionar el clip ${i + 1} en el chat y pedirle un cambio al agente`}
+                    className="absolute left-1 top-1 flex size-5 items-center justify-center rounded-md bg-black/55 text-white opacity-0 transition-opacity group-hover/clip:opacity-100"
+                  >
+                    <AtSign className="size-3" />
+                  </button>
+                )}
               </div>
             ))}
 
@@ -5609,6 +5611,31 @@ function Editor({ projectId }) {
   // Ocultar el chat lateral (botón PanelLeft del header). Se oculta con CSS, sin
   // desmontar, para que borrador y scroll del hilo no se pierdan.
   const [chatHidden, setChatHidden] = useState(false);
+  // Menciones de clip del timeline: el @ de una tira mete «@Clip-N» en el borrador del
+  // chat (chatInsert) y apunta aquí a qué asset corresponde cada N. Al enviar, la
+  // mención se traduce en un pie de contexto con el asset id, para que el agente sepa
+  // EXACTAMENTE sobre qué fragmento aplicar el cambio.
+  const [chatInsert, setChatInsert] = useState(null);
+  const clipMap = useRef({});
+  const mentionClip = (asset, i) => {
+    clipMap.current[`Clip-${i + 1}`] = String(asset.id);
+    setChatHidden(false);
+    setChatInsert({ text: `@Clip-${i + 1} `, at: Date.now() });
+  };
+  const expandClipMentions = (text) => {
+    const refs = [...text.matchAll(/@(Clip-\d+)/g)]
+      .map((m) => m[1])
+      .filter((label, idx, arr) => arr.indexOf(label) === idx && clipMap.current[label]);
+    if (!refs.length) return text;
+    const notes = refs
+      .map((label) => `@${label} es el asset ${clipMap.current[label]} del timeline`)
+      .join("; ");
+    return (
+      `${text}\n\n[Contexto del timeline: ${notes}. Aplica el cambio SOLO a ese ` +
+      `fragmento — regenera ese plano manteniendo su intención y deja el resto del ` +
+      `montaje igual.]`
+    );
+  };
   const [busy, setBusy] = useState(false);
   const [noCredits, setNoCredits] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -5901,8 +5928,10 @@ function Editor({ projectId }) {
   };
 
   const handleSend = (text) => {
+    // El hilo muestra lo que el usuario escribió (con sus pills @Clip-N); lo que viaja
+    // al agente lleva además el pie de contexto con los asset ids de esos clips.
     addMessage("user", text);
-    runTurn(text);
+    runTurn(expandClipMentions(text));
   };
 
   // ?run=1 → el prompt con el que se creó el proyecto se ejecuta al entrar.
@@ -6031,6 +6060,8 @@ function Editor({ projectId }) {
               onStop={stopTurn}
               elements={elements}
               onUpload={(files) => uploadFiles(files)}
+              insert={chatInsert}
+              onInsertDone={() => setChatInsert(null)}
             />
           </div>
         )}
@@ -6044,7 +6075,7 @@ function Editor({ projectId }) {
                   settings: { ...(project.settings ?? {}), timeline: ids },
                 })
               }
-              onClipEdit={(text) => handleSend(text)}
+              onClipMention={mentionClip}
               onAssemble={() =>
                 handleSend(
                   "Monta el corte final del proyecto con todos los fragmentos de vídeo listos, en orden narrativo, con transiciones limpias.",
