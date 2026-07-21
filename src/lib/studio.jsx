@@ -36,6 +36,7 @@ export function StudioProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [projects, setProjects] = useState([]);
   const [workspace, setWorkspace] = useState(null);
+  const [workspaces, setWorkspaces] = useState([]);
   const [ready, setReady] = useState(false);
 
   /** Carga perfil y proyectos de la sesión actual (o los limpia al salir). */

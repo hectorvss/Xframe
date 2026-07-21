@@ -6420,7 +6420,12 @@ function Editor({ projectId }) {
   } = data;
 
   const [tab, setTab] = useState("preview");
-  const [chatW, resizeChat] = useResizableWidth("xf-editor-chat", 380, 300, 720);
+  // Ancho por defecto calibrado para que el Director Panel quepa entero en UNA fila
+  // (slots de frame + movimiento + curva + ramp + duración ≈ 640px). El usuario puede
+  // estrecharlo — el panel parte en dos filas con flex-wrap — pero la disposición de
+  // fábrica no debe salir rota. La clave de storage lleva -v2 para que quien ya tenía
+  // guardado el ancho viejo (380) reciba el nuevo defecto una vez.
+  const [chatW, resizeChat] = useResizableWidth("xf-editor-chat-v2", 660, 300, 900);
   // Ocultar el chat lateral (botón PanelLeft del header). Se oculta con CSS, sin
   // desmontar, para que borrador y scroll del hilo no se pierdan.
   const [chatHidden, setChatHidden] = useState(false);

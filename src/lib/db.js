@@ -392,16 +392,60 @@ export const db = {
     return !data?.length;
   },
 
-  /** Consumo de créditos de los últimos N días. */
+  /**
+   * Consumo de créditos de los últimos N días, desde el libro mayor real que
+   * escribe el backend (`credit_ledger`). Cada generación reserva y ajusta ahí;
+   * `profiles.credits` es solo su espejo. Se traduce a filas de "gasto" para los
+   * gráficos: los `grant` (recargas) no son consumo; el resto sí, con el signo
+   * invertido (una reserva de −10 son 10 créditos gastados).
+   */
   async listCreditUsage(ownerId, days = 30) {
-    const rows = await DRIVER.select("credit_usage", { owner_id: ownerId });
-    const since = Date.now() - days * 86400000;
-    return rows
-      .filter((row) => new Date(row.created_at).getTime() >= since)
-      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    if (!hasSupabase) {
+      // Sin backend, cae al histórico local que escribía el driver antiguo.
+      const rows = await DRIVER.select("credit_usage", { owner_id: ownerId });
+      const since = Date.now() - days * 86400000;
+      return rows
+        .filter((row) => new Date(row.created_at).getTime() >= since)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    }
+
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+    const { data, error } = await supabase
+      .from("credit_ledger")
+      .select("created_at, kind, amount, project_id")
+      .eq("profile_id", ownerId)
+      .neq("kind", "grant")
+      .gte("created_at", since)
+      .order("created_at");
+    if (error) throw error;
+    return (data ?? []).map((row) => ({
+      created_at: row.created_at,
+      kind: "build",
+      amount: -row.amount, // reserva negativa → gasto positivo
+      project_id: row.project_id,
+    }));
   },
 
   /* --- espacio de trabajo --- */
+
+  /** Todos los espacios de trabajo del usuario (para el conmutador). */
+  async listWorkspaces(ownerId) {
+    const rows = await DRIVER.select("workspaces", { owner_id: ownerId });
+    return rows.sort((a, b) =>
+      (a.created_at ?? "").localeCompare(b.created_at ?? ""),
+    );
+  },
+
+  async createWorkspace(ownerId, name) {
+    return DRIVER.insert("workspaces", {
+      ...(hasSupabase
+        ? {}
+        : { id: uid(), created_at: nowISO(), updated_at: nowISO() }),
+      owner_id: ownerId,
+      name: (name || "Nuevo espacio").slice(0, 50),
+      avatar_color: "violet",
+    });
+  },
 
   async getWorkspace(ownerId) {
     const [workspace] = await DRIVER.select("workspaces", { owner_id: ownerId });
@@ -417,6 +461,35 @@ export const db = {
       created_at: nowISO(),
       updated_at: nowISO(),
     });
+  },
+
+  /** Cuenta los miembros de un espacio. */
+  async countMembers(workspaceId) {
+    if (!hasSupabase) return 1;
+    const { count } = await supabase
+      .from("workspace_members")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId);
+    return count ?? 1;
+  },
+
+  /** Escucha cambios del perfil (créditos, plan) en tiempo real. */
+  subscribeProfile(id, onChange) {
+    if (!hasSupabase) return () => {};
+    const channel = supabase
+      .channel(`profile:${id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "profiles",
+          filter: `id=eq.${id}`,
+        },
+        (payload) => onChange(payload.new),
+      )
+      .subscribe();
+    return () => supabase.removeChannel(channel);
   },
 
   async updateWorkspace(id, patch) {
