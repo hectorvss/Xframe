@@ -8131,7 +8131,7 @@ function SettingsSide({ page, width, onResize }) {
       </div>
       <nav
         aria-label="Ajustes"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3"
+        className="flex min-h-0 flex-1 flex-col justify-between overflow-y-auto overscroll-contain pb-3"
       >
         {settingsGroups.map((group) => (
           <div key={group.title} className="mt-3">
