@@ -328,35 +328,44 @@ export function useProjectData(projectId) {
   // `listAssets` firma las URLs, así que releerla es lo que hace aparecer la imagen sola.
   // El sondeo se apaga en cuanto no queda nada generándose, así que no hay tráfico ocioso.
   const anyGenerating = assets.some((a) => a.status === "generating");
+
+  /**
+   * Relee los assets de la base y los funde con la lista en pantalla.
+   *
+   * Hace DOS cosas, y la segunda es la que faltaba: actualiza las filas conocidas
+   * (generating → ready/failed) y **descubre las que la UI nunca vio nacer**. El worker
+   * crea la fila del asset en otro proceso y minutos después de que el stream del chat
+   * haya cerrado, así que ningún evento SSE la trae: sin este descubrimiento, la imagen
+   * se generaba de verdad pero solo aparecía al recargar la página.
+   *
+   * La base manda: sus valores pisan a los locales. Lo único que se conserva es una
+   * fila local que la lectura aún no devuelve (un insert recién hecho contra el que la
+   * réplica va por detrás) — se mantiene delante en vez de hacerla parpadear.
+   */
+  const refreshAssets = useCallback(async () => {
+    let fresh;
+    try {
+      fresh = await db.listAssets(projectId);
+    } catch {
+      return;
+    }
+    setAssets((list) => {
+      const localById = new Map(list.map((a) => [String(a.id), a]));
+      const merged = fresh.map((row) => {
+        const local = localById.get(String(row.id));
+        localById.delete(String(row.id));
+        return local ? { ...local, ...row } : row;
+      });
+      return localById.size ? [...localById.values(), ...merged] : merged;
+    });
+  }, [projectId]);
+
   useEffect(() => {
     if (!anyGenerating) return undefined;
-    let alive = true;
-    const tick = async () => {
-      let fresh;
-      try {
-        fresh = await db.listAssets(projectId);
-      } catch {
-        return;
-      }
-      if (!alive) return;
-      const byId = new Map(fresh.map((a) => [String(a.id), a]));
-      setAssets((list) =>
-        list.map((a) => {
-          if (a.status !== "generating") return a;
-          const updated = byId.get(String(a.id));
-          // Solo se adopta el estado de la base cuando el worker ya lo cerró
-          // (ready o failed); mientras siga "generating" ahí, se deja el placeholder.
-          return updated && updated.status !== "generating" ? { ...a, ...updated } : a;
-        }),
-      );
-    };
-    tick(); // una lectura inmediata, sin esperar al primer intervalo
-    const interval = setInterval(tick, 3500);
-    return () => {
-      alive = false;
-      clearInterval(interval);
-    };
-  }, [anyGenerating, projectId]);
+    refreshAssets(); // una lectura inmediata, sin esperar al primer intervalo
+    const interval = setInterval(refreshAssets, 3500);
+    return () => clearInterval(interval);
+  }, [anyGenerating, projectId, refreshAssets]);
 
   /* ------------------------------------------------------------ assets */
 
@@ -423,6 +432,7 @@ export function useProjectData(projectId) {
   return {
     loaded,
     assets,
+    refreshAssets,
     addAssets,
     patchAsset,
     removeAsset,

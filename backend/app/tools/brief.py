@@ -24,6 +24,17 @@ from app.tools.errors import UnknownEntityError
 
 BlockType = Literal["heading", "text", "bullet", "todo", "quote", "image"]
 
+BLOCK_TYPE_TO_UI = {"heading": "h1"}
+"""
+Traducción al vocabulario del editor de brief del frontend (h1/h2/text/bullet/…).
+
+El agente escribía `type='heading'` tal cual a `brief_blocks` y el editor no conoce ese
+tipo: `blockMeta[block.type]` era `undefined` y la pestaña Project brief moría entera con
+una pantalla en blanco. El Literal se queda con 'heading' —es el nombre natural que el
+modelo elige y cambiárselo es pelearse contra el prompt—, pero lo que se PERSISTE es el
+tipo que el editor sabe pintar.
+"""
+
 
 class BriefBlockIn(BaseModel):
     """Un bloque del brief. `position` la asigna la tool: dejársela al modelo produce
@@ -84,7 +95,7 @@ class WriteBriefTool(SnapshotTool):
                     """,
                     self.ctx.project_id,
                     i,
-                    block.type,
+                    BLOCK_TYPE_TO_UI.get(block.type, block.type),
                     block.text,
                     block.checked,
                     block.src,

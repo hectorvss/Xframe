@@ -32,6 +32,7 @@ import {
   Paperclip,
   X,
   Ban,
+  AlertTriangle,
   User,
   Palette,
   LifeBuoy,
@@ -4084,6 +4085,15 @@ function EditorAssets({
                   className="aspect-video bg-muted bg-cover bg-center"
                   style={{ backgroundImage: `url(${a.url})` }}
                 />
+              ) : a.status === "failed" ? (
+                // Un asset fallido sin render. Antes caía en la rama del icono de
+                // altavoz —pensada para audio— y parecía un reproductor roto.
+                <div className="flex aspect-video flex-col items-center justify-center gap-1 bg-muted">
+                  <AlertTriangle className="size-6 text-muted-foreground" />
+                  <span className="text-[11px] text-muted-foreground">
+                    La generación falló — vuelve a pedirla en el chat
+                  </span>
+                </div>
               ) : (
                 <div className="flex aspect-video items-center justify-center bg-muted">
                   <Volume2 className="size-7 text-muted-foreground" />
@@ -4159,6 +4169,16 @@ const blockTypes = [
 const blockMeta = Object.fromEntries(
   blockTypes.map(([id, label, icon, ph]) => [id, { label, icon, ph }]),
 );
+// Bloques que llegan de la BD con tipos que este editor no conoce. El agente escribía
+// 'heading' (ya normalizado en backend, pero los proyectos viejos lo conservan) y
+// cualquier tipo futuro desconocido caía en `blockMeta[type].ph` → undefined → pantalla
+// en blanco en toda la pestaña. Un documento no debe romperse por un bloque: se traduce
+// lo traducible y lo demás se trata como texto.
+const BLOCK_TYPE_ALIASES = { heading: "h1" };
+const normalizeBlock = (b) => {
+  const type = BLOCK_TYPE_ALIASES[b.type] ?? (blockMeta[b.type] ? b.type : "text");
+  return { checked: false, src: null, ...b, type, text: b.text ?? "" };
+};
 let briefUid = 0;
 const newBlock = (type = "text", extra) => ({
   id: `b${++briefUid}`,
@@ -4347,7 +4367,9 @@ function BriefBlock({ block, focus, update, onEnter, onBackspace, onRemove, drag
 }
 
 function EditorBrief({ data, title = "", onRename }) {
-  const [blocks, setBlocksLocal] = useState(() => data.brief ?? initialBrief());
+  const [blocks, setBlocksLocal] = useState(() =>
+    (data.brief ?? initialBrief()).map(normalizeBlock),
+  );
   const setBlocks = (next) =>
     setBlocksLocal((prev) => {
       const value = typeof next === "function" ? next(prev) : next;
@@ -5287,6 +5309,7 @@ function Editor({ projectId }) {
   const data = useProjectData(projectId);
   const {
     assets,
+    refreshAssets,
     addAssets,
     patchAsset,
     removeAsset,
@@ -5312,17 +5335,45 @@ function Editor({ projectId }) {
   // enviar, y aparecen tantas como imágenes se vayan a generar (el ajuste de cantidad).
   const [ghosts, setGhosts] = useState([]);
   const turn = useRef(null);
+  // Censo del momento en que se pintaron los fantasmas: cuántos eran y qué assets
+  // existían ya. Cada asset NUEVO que aparezca después (por el evento del stream o por
+  // el sondeo de la base, da igual quién lo traiga) retira un fantasma. Reconciliar
+  // contra los assets en vez de restar dentro de cada callback hace la retirada
+  // idempotente: dos caminos que descubren la misma fila no retiran dos fantasmas.
+  const ghostInfo = useRef(null);
+  // ¿El turno en curso llamó a alguna tool generate_*? Decide si los fantasmas
+  // sobreviven al cierre del stream (hay renders en camino) o se retiran (no los hay).
+  const sawGeneration = useRef(false);
+  useEffect(() => {
+    const info = ghostInfo.current;
+    if (!info || !ghosts.length) return;
+    const appeared = assets.filter((a) => !info.baseline.has(String(a.id))).length;
+    const remain = Math.max(0, info.total - appeared);
+    if (remain < ghosts.length) setGhosts((g) => g.slice(0, remain));
+  }, [assets, ghosts]);
 
-  // Red de seguridad de los fantasmas: `onDone`/`onError` los limpian, pero si el
-  // stream muere sin despedirse (backend reiniciado a mitad de turno, red caída), esos
-  // callbacks no llegan nunca y la malla de píxeles se quedaría animándose para
-  // siempre. A los dos minutos sin resolución se retiran solos: ninguna generación de
-  // imagen tarda tanto en, al menos, encolarse.
+  // Red de seguridad de los fantasmas: la reconciliación los retira cuando su asset
+  // aparece, pero si nada aparece nunca (stream muerto sin despedirse, job fallido y
+  // barrido), no pueden quedarse animándose para siempre. Diez minutos: por encima de
+  // cualquier render de imagen o vídeo razonable, y por debajo de la eternidad. El
+  // fantasma además mantiene vivo el sondeo de la base (ver el efecto de abajo), así
+  // que el TTL también es cuánto tiempo seguimos preguntando por un render lento.
   useEffect(() => {
     if (!ghosts.length) return undefined;
-    const t = setTimeout(() => setGhosts([]), 120000);
+    const t = setTimeout(() => setGhosts([]), 600000);
     return () => clearTimeout(t);
   }, [ghosts]);
+
+  // Mientras el turno corre —o queden fantasmas esperando su asset—, se relee la base
+  // cada pocos segundos. Es lo que hace aparecer los assets EN VIVO: la fila la crea el
+  // worker en otro proceso, normalmente DESPUÉS de que el stream del chat haya cerrado,
+  // así que ningún evento SSE la trae. La base es la única fuente que siempre tiene la
+  // verdad, así que se le pregunta a ella.
+  useEffect(() => {
+    if (!busy && !ghosts.length) return undefined;
+    const interval = setInterval(() => refreshAssets(), 3500);
+    return () => clearInterval(interval);
+  }, [busy, ghosts.length, refreshAssets]);
 
   // Cambiar de proyecto o salir del editor corta el stream, no el trabajo: los
   // jobs encolados son del worker y deben terminar aunque nadie mire.
@@ -5374,6 +5425,7 @@ function Editor({ projectId }) {
     turn.current?.cancel();
     setBusy(true);
     setStream({ text: "", tool: null, assets: [] });
+    sawGeneration.current = false;
 
     // Placeholders instantáneos: tantos como la cantidad elegida (1–4). Solo en la
     // pestaña de assets, que es donde el usuario pide generaciones; en el chat un mensaje
@@ -5381,6 +5433,7 @@ function Editor({ projectId }) {
     if (tab === "assets") {
       const n = Math.max(1, Math.min(4, Number(genSettings?.count) || 1));
       const base = Date.now();
+      ghostInfo.current = { total: n, baseline: new Set(assets.map((a) => String(a.id))) };
       setGhosts(
         Array.from({ length: n }, (_, i) => ({
           id: `ghost-${base}-${i}`,
@@ -5427,6 +5480,12 @@ function Editor({ projectId }) {
 
       onToolStart: (e) => {
         const [first] = e.tools ?? [];
+        // Si el turno llamó a una tool de generación, hay renders en camino: los
+        // fantasmas deben SOBREVIVIR al cierre del stream, porque el worker crea la
+        // fila del asset minutos después. Los retirará la reconciliación (o el TTL).
+        if ((e.tools ?? []).some((t) => String(t).startsWith("generate_"))) {
+          sawGeneration.current = true;
+        }
         setStream((s) => (s ? { ...s, tool: first ? labelForTool(first) : null } : s));
       },
 
@@ -5448,9 +5507,8 @@ function Editor({ projectId }) {
         ]);
         if (!row) return;
         known.add(String(row.id));
-        // Cada asset real que se encola retira un fantasma: el placeholder instantáneo
-        // deja su sitio a la fila de verdad, sin parpadeo (ambos muestran la misma malla).
-        setGhosts((g) => g.slice(1));
+        // La retirada del fantasma correspondiente la hace la reconciliación contra
+        // `assets` (ver ghostInfo): restar también aquí retiraría dos por una misma fila.
         setStream((s) => (s ? { ...s, assets: [...s.assets, row] } : s));
       },
 
@@ -5509,9 +5567,14 @@ function Editor({ projectId }) {
         setBusy(false);
         setStream(null);
         turn.current = null;
-        // Fantasmas que sobran = el mensaje no generó tantos assets como la cantidad
-        // elegida (o no generó ninguno, era una pregunta). Se retiran.
-        setGhosts([]);
+        // Si el turno no llamó a ninguna tool de generación (era una pregunta, un
+        // cambio de brief…), los fantasmas sobran y se retiran ya. Si SÍ generó, se
+        // quedan esperando: sus assets nacerán en la base cuando el worker termine y
+        // la reconciliación los irá sustituyendo uno a uno.
+        if (!sawGeneration.current) setGhosts([]);
+        // Última relectura de la base: los jobs encolados en este turno pueden haber
+        // creado sus filas justo después del último tick del sondeo.
+        refreshAssets();
         if (full.trim()) addMessage("agent", full.trim());
         // Quien cobra es el backend contra el libro mayor, así que el saldo
         // nuevo no se deduce: se vuelve a preguntar.
