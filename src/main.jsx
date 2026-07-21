@@ -595,9 +595,9 @@ const rampLabelFor = (curve) =>
  */
 function RampCurve({ curve, onChange, onCommit }) {
   const ref = useRef(null);
-  const W = 116;
-  const H = 34;
-  const PAD = 7;
+  const W = 140;
+  const H = 52;
+  const PAD = 8;
   const xFor = (i) => PAD + (i * (W - 2 * PAD)) / (curve.length - 1);
   const yFor = (v) => H - PAD - ((v - RAMP_MIN) / (RAMP_MAX - RAMP_MIN)) * (H - 2 * PAD);
   const vFor = (y) => {
@@ -636,7 +636,7 @@ function RampCurve({ curve, onChange, onCommit }) {
     <svg
       ref={ref}
       viewBox={`0 0 ${W} ${H}`}
-      className="h-9 w-[116px] shrink-0 cursor-ns-resize touch-none select-none"
+      className="h-[52px] w-[140px] shrink-0 cursor-ns-resize touch-none select-none"
     >
       {/* línea base 1x */}
       <line
@@ -644,7 +644,7 @@ function RampCurve({ curve, onChange, onCommit }) {
         x2={W - PAD}
         y1={yFor(1)}
         y2={yFor(1)}
-        stroke="currentColor"
+        stroke="#fff"
         strokeOpacity="0.25"
         strokeWidth="1"
         strokeDasharray="3 3"
@@ -652,18 +652,18 @@ function RampCurve({ curve, onChange, onCommit }) {
       {/* relleno bajo la curva */}
       <path
         d={`${path} L ${xFor(curve.length - 1)} ${H - PAD} L ${xFor(0)} ${H - PAD} Z`}
-        fill="#38bdf8"
-        fillOpacity="0.12"
+        fill="#fff"
+        fillOpacity="0.1"
       />
-      <path d={path} fill="none" stroke="#38bdf8" strokeWidth="2" strokeLinejoin="round" />
+      <path d={path} fill="none" stroke="#fff" strokeWidth="2" strokeLinejoin="round" />
       {curve.map((v, i) => (
         <circle
           key={i}
           cx={xFor(i)}
           cy={yFor(v)}
-          r="3.5"
-          fill="#38bdf8"
-          stroke="#0c4a6e"
+          r="4"
+          fill="#fff"
+          stroke="#525252"
           strokeWidth="1"
           onPointerDown={startDrag(i)}
         >
@@ -671,6 +671,44 @@ function RampCurve({ curve, onChange, onCommit }) {
         </circle>
       ))}
     </svg>
+  );
+}
+
+/**
+ * Tile de movimiento de cámara con PREVIEW en vídeo: un mini-clip de la misma escena
+ * ejecutando ese movimiento (convención: /camera-moves/<id>.mp4 en public/). Mientras
+ * los previews no estén generados, cae con gracia al icono — la retícula funciona
+ * igual, solo que sin la demo en movimiento.
+ */
+function MoveTile({ id, label, purpose, selected, onClick }) {
+  const [hasPreview, setHasPreview] = useState(true);
+  const I = MOVE_ICONS[id] ?? CameraIcon;
+  return (
+    <button
+      title={purpose}
+      onClick={onClick}
+      className={cn(
+        "flex flex-col items-center gap-1 rounded-lg border p-1.5 text-center transition-colors hover:bg-accent",
+        selected && "border-primary bg-primary/10 text-primary",
+      )}
+    >
+      {hasPreview ? (
+        <video
+          src={`/camera-moves/${id}.mp4`}
+          muted
+          loop
+          autoPlay
+          playsInline
+          onError={() => setHasPreview(false)}
+          className="pointer-events-none aspect-video w-full rounded-md bg-neutral-900 object-cover"
+        />
+      ) : (
+        <div className="flex aspect-video w-full items-center justify-center rounded-md bg-muted">
+          <I className="size-4" />
+        </div>
+      )}
+      <span className="text-[10px] leading-tight">{label}</span>
+    </button>
   );
 }
 
@@ -1001,55 +1039,70 @@ function DirectorPanel({ assets = [] }) {
 
         {open && (
           <>
-            {/* Frames de anclaje: inicio y fin del plano. */}
-            {[
-              ["start_frame", "Inicio"],
-              ["end_frame", "Fin"],
-            ].map(([key, label]) => {
-              const val = frames[key];
-              return (
-                <div key={key} className="group/frame relative flex flex-col items-center gap-0.5">
-                  <button
-                    onClick={() => setPop(pop === key ? null : key)}
-                    title={
-                      val
-                        ? `${label}: ${val.name ?? "imagen"}`
-                        : `Elegir el frame de ${label.toLowerCase()} entre las imágenes del proyecto`
-                    }
-                    className={cn(
-                      "flex size-9 items-center justify-center overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500",
-                      pop === key && "ring-2 ring-primary",
+            {/* Frames de anclaje: el plano ARRANCA en el primero y ATERRIZA en el
+                segundo. Slots 16:9 con etiqueta sobre degradado y flecha entre ambos. */}
+            <div className="flex shrink-0 items-center gap-1">
+              {[
+                ["start_frame", "Inicio"],
+                ["end_frame", "Fin"],
+              ].map(([key, label], fi) => {
+                const val = frames[key];
+                return (
+                  <React.Fragment key={key}>
+                    {fi === 1 && (
+                      <ChevronRight className="size-3.5 shrink-0 text-neutral-600" />
                     )}
-                  >
-                    {val?.url ? (
-                      <div
-                        className="size-full bg-cover bg-center"
-                        style={{ backgroundImage: `url(${val.url})` }}
-                      />
-                    ) : (
-                      <ImageIcon className="size-3.5 text-neutral-500" />
-                    )}
-                  </button>
-                  <span className="text-[8px] leading-none text-neutral-400">{label}</span>
-                  {val && (
-                    <button
-                      onClick={() => setGenSettings({ [key]: null })}
-                      title="Quitar"
-                      className="absolute -right-1 -top-1 flex size-3.5 items-center justify-center rounded-full bg-black/80 text-white opacity-0 transition-opacity group-hover/frame:opacity-100"
-                    >
-                      <X className="size-2" />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+                    <div className="group/frame relative">
+                      <button
+                        onClick={() => setPop(pop === key ? null : key)}
+                        title={
+                          val
+                            ? `${label}: ${val.name ?? "imagen"}`
+                            : `Elegir el frame de ${label.toLowerCase()} entre las imágenes del proyecto`
+                        }
+                        className={cn(
+                          "relative h-[52px] w-[88px] overflow-hidden rounded-lg border transition-colors",
+                          val
+                            ? "border-neutral-600 hover:border-neutral-400"
+                            : "border-dashed border-neutral-700 bg-neutral-800/60 hover:border-neutral-500",
+                          pop === key && "ring-2 ring-primary",
+                        )}
+                      >
+                        {val?.url ? (
+                          <div
+                            className="size-full bg-cover bg-center"
+                            style={{ backgroundImage: `url(${val.url})` }}
+                          />
+                        ) : (
+                          <div className="flex size-full flex-col items-center justify-center gap-0.5 text-neutral-500">
+                            <Plus className="size-3.5" />
+                          </div>
+                        )}
+                        <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-1.5 pb-0.5 pt-3 text-left text-[9px] font-medium text-white">
+                          {label}
+                        </span>
+                      </button>
+                      {val && (
+                        <button
+                          onClick={() => setGenSettings({ [key]: null })}
+                          title="Quitar"
+                          className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-md bg-black/70 text-white opacity-0 transition-opacity group-hover/frame:opacity-100"
+                        >
+                          <X className="size-2.5" />
+                        </button>
+                      )}
+                    </div>
+                  </React.Fragment>
+                );
+              })}
+            </div>
 
             <div className="h-8 w-px shrink-0 bg-neutral-800" />
 
             <button
               onClick={() => setPop(pop === "move" ? null : "move")}
               className={cn(
-                "flex min-w-0 items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-2 py-1 text-left transition-colors hover:border-neutral-500",
+                "flex h-[52px] min-w-0 items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-2.5 text-left transition-colors hover:border-neutral-500",
                 pop === "move" && "ring-2 ring-primary",
               )}
             >
@@ -1058,7 +1111,7 @@ function DirectorPanel({ assets = [] }) {
                 <p className="text-[8px] uppercase leading-none tracking-wide text-neutral-400">
                   Movement
                 </p>
-                <p className="truncate text-xs leading-tight">{moveLabel}</p>
+                <p className="mt-1 truncate text-sm font-medium leading-tight">{moveLabel}</p>
               </div>
             </button>
 
@@ -1075,36 +1128,83 @@ function DirectorPanel({ assets = [] }) {
               />
             </div>
 
-            <button
-              onClick={() => setPop(pop === "ramp" ? null : "ramp")}
+            {/* Speed ramp: el cuerpo abre la lista; los chevrones recorren los presets
+                en orden — el patrón stepper de un panel de dirección de verdad. */}
+            <div
               className={cn(
-                "flex min-w-0 items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-2 py-1 text-left transition-colors hover:border-neutral-500",
+                "flex h-[52px] shrink-0 items-stretch overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800",
                 pop === "ramp" && "ring-2 ring-primary",
               )}
             >
-              <Zap className="size-4 shrink-0 text-neutral-300" />
-              <div className="min-w-0">
+              <button
+                onClick={() => setPop(pop === "ramp" ? null : "ramp")}
+                className="flex min-w-[86px] flex-col justify-center px-2.5 text-left transition-colors hover:bg-white/5"
+              >
                 <p className="text-[8px] uppercase leading-none tracking-wide text-neutral-400">
                   Speed ramp
                 </p>
-                <p className="truncate text-xs leading-tight">{rampLabel}</p>
+                <p className="mt-1 max-w-[110px] truncate text-sm font-medium leading-tight">
+                  {rampLabel}
+                </p>
+              </button>
+              <div className="flex flex-col border-l border-neutral-700">
+                {[-1, 1].map((dir) => (
+                  <button
+                    key={dir}
+                    onClick={() => {
+                      const i = SPEED_RAMPS.findIndex(
+                        ([label]) => label === (speedRamp ?? "Ninguno"),
+                      );
+                      const at = i >= 0 ? i : 0;
+                      const [r, pc] =
+                        SPEED_RAMPS[(at + dir + SPEED_RAMPS.length) % SPEED_RAMPS.length];
+                      setGenSettings({
+                        speed_ramp: r === "Ninguno" ? null : r,
+                        speed_curve: r === "Ninguno" ? null : [...pc],
+                      });
+                    }}
+                    className="flex flex-1 items-center justify-center px-1.5 text-neutral-400 transition-colors hover:bg-white/10 hover:text-white"
+                  >
+                    <ChevronDown className={cn("size-3", dir === -1 && "rotate-180")} />
+                  </button>
+                ))}
               </div>
-            </button>
+            </div>
 
-            <button
-              onClick={() => setPop(pop === "dur" ? null : "dur")}
+            <div
               className={cn(
-                "ml-auto flex shrink-0 items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-2 py-1 text-left transition-colors hover:border-neutral-500",
+                "ml-auto flex h-[52px] shrink-0 items-stretch overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800",
                 pop === "dur" && "ring-2 ring-primary",
               )}
             >
-              <div>
+              <button
+                onClick={() => setPop(pop === "dur" ? null : "dur")}
+                className="flex flex-col justify-center px-2.5 text-left transition-colors hover:bg-white/5"
+              >
                 <p className="text-[8px] uppercase leading-none tracking-wide text-neutral-400">
                   Duración
                 </p>
-                <p className="text-xs leading-tight tabular-nums">{s.dur}</p>
+                <p className="mt-1 text-sm font-medium leading-tight tabular-nums">{s.dur}</p>
+              </button>
+              <div className="flex flex-col border-l border-neutral-700">
+                {[-1, 1].map((dir) => (
+                  <button
+                    key={dir}
+                    onClick={() => {
+                      const i = durationList.indexOf(s.dur);
+                      const next =
+                        durationList[
+                          (Math.max(0, i) + dir + durationList.length) % durationList.length
+                        ];
+                      setGenSettings({ dur: next });
+                    }}
+                    className="flex flex-1 items-center justify-center px-1.5 text-neutral-400 transition-colors hover:bg-white/10 hover:text-white"
+                  >
+                    <ChevronDown className={cn("size-3", dir === -1 && "rotate-180")} />
+                  </button>
+                ))}
               </div>
-            </button>
+            </div>
           </>
         )}
       </div>
@@ -1112,29 +1212,22 @@ function DirectorPanel({ assets = [] }) {
       {pop && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setPop(null)} />
-          <div className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-[340px] rounded-xl border bg-background p-2 text-foreground shadow-2xl">
+          <div className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-[420px] max-w-[90vw] rounded-xl border bg-background p-2 text-foreground shadow-2xl">
             {pop === "move" && (
-              <div className="grid grid-cols-3 gap-1">
-                {CAMERA_MOVES.map(([id, label, purpose]) => {
-                  const I = MOVE_ICONS[id] ?? CameraIcon;
-                  return (
-                    <button
-                      key={id}
-                      title={purpose}
-                      onClick={() => {
-                        setGenSettings({ camera_move: cameraMove === id ? null : id });
-                        setPop(null);
-                      }}
-                      className={cn(
-                        "flex flex-col items-center gap-1 rounded-lg border p-2 text-center transition-colors hover:bg-accent",
-                        cameraMove === id && "border-primary bg-primary/10 text-primary",
-                      )}
-                    >
-                      <I className="size-4" />
-                      <span className="text-[10px] leading-tight">{label}</span>
-                    </button>
-                  );
-                })}
+              <div className="grid max-h-[340px] grid-cols-3 gap-1.5 overflow-y-auto">
+                {CAMERA_MOVES.map(([id, label, purpose]) => (
+                  <MoveTile
+                    key={id}
+                    id={id}
+                    label={label}
+                    purpose={purpose}
+                    selected={cameraMove === id}
+                    onClick={() => {
+                      setGenSettings({ camera_move: cameraMove === id ? null : id });
+                      setPop(null);
+                    }}
+                  />
+                ))}
               </div>
             )}
             {pop === "ramp" &&
