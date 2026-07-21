@@ -596,8 +596,8 @@ const rampLabelFor = (curve) =>
 function RampCurve({ curve, onChange, onCommit }) {
   const ref = useRef(null);
   const W = 104;
-  const H = 40;
-  const PAD = 6;
+  const H = 48;
+  const PAD = 7;
   const xFor = (i) => PAD + (i * (W - 2 * PAD)) / (curve.length - 1);
   const yFor = (v) => H - PAD - ((v - RAMP_MIN) / (RAMP_MAX - RAMP_MIN)) * (H - 2 * PAD);
   const vFor = (y) => {
@@ -636,7 +636,7 @@ function RampCurve({ curve, onChange, onCommit }) {
     <svg
       ref={ref}
       viewBox={`0 0 ${W} ${H}`}
-      className="h-10 w-[104px] shrink-0 cursor-ns-resize touch-none select-none text-foreground"
+      className="h-12 w-[104px] shrink-0 cursor-ns-resize touch-none select-none text-foreground"
     >
       {/* línea base 1x */}
       <line
@@ -1067,7 +1067,7 @@ function DirectorPanel({ assets = [] }) {
                             : `Elegir el frame de ${label.toLowerCase()} entre las imágenes del proyecto`
                         }
                         className={cn(
-                          "relative h-10 w-[64px] overflow-hidden rounded-lg border transition-colors",
+                          "relative h-12 w-[76px] overflow-hidden rounded-lg border transition-colors",
                           val
                             ? "hover:border-foreground/40"
                             : "border-dashed bg-muted/40 hover:border-foreground/30",
@@ -1114,7 +1114,7 @@ function DirectorPanel({ assets = [] }) {
               onClick={() => setPop(pop === "move" ? null : "move")}
               title={`Movimiento de cámara: ${moveLabel}`}
               className={cn(
-                "flex h-10 min-w-0 shrink items-center gap-1.5 rounded-lg border px-2 text-left transition-colors hover:border-foreground/40",
+                "flex h-12 min-w-0 shrink items-center gap-1.5 rounded-lg border px-2 text-left transition-colors hover:border-foreground/40",
                 pop === "move" && "ring-2 ring-primary",
               )}
             >
@@ -1142,71 +1142,68 @@ function DirectorPanel({ assets = [] }) {
               />
             </div>
 
-            {/* Speed ramp y Duración: steppers — el cuerpo abre la lista y los
-                chevrones recorren las opciones en orden. */}
-            {[
-              [
-                "ramp",
-                "Ramp",
-                rampLabel,
-                (dir) => {
-                  const i = SPEED_RAMPS.findIndex(
-                    ([label]) => label === (speedRamp ?? "Ninguno"),
-                  );
-                  const at = i >= 0 ? i : 0;
-                  const [r, pc] =
-                    SPEED_RAMPS[(at + dir + SPEED_RAMPS.length) % SPEED_RAMPS.length];
-                  setGenSettings({
-                    speed_ramp: r === "Ninguno" ? null : r,
-                    speed_curve: r === "Ninguno" ? null : [...pc],
-                  });
-                },
-              ],
-              [
-                "dur",
-                "Dur.",
-                s.dur,
-                (dir) => {
-                  const i = durationList.indexOf(s.dur);
-                  const next =
-                    durationList[
-                      (Math.max(0, i) + dir + durationList.length) % durationList.length
-                    ];
-                  setGenSettings({ dur: next });
-                },
-              ],
-            ].map(([key, label, value, step]) => (
-              <div
-                key={key}
-                className={cn(
-                  "flex h-10 shrink-0 items-stretch overflow-hidden rounded-lg border",
-                  pop === key && "ring-2 ring-primary",
-                )}
+            {/* Speed ramp: stepper — el cuerpo abre la lista y los chevrones recorren
+                los presets en orden. */}
+            <div
+              className={cn(
+                "flex h-12 shrink-0 items-stretch overflow-hidden rounded-lg border",
+                pop === "ramp" && "ring-2 ring-primary",
+              )}
+            >
+              <button
+                onClick={() => setPop(pop === "ramp" ? null : "ramp")}
+                className="flex flex-col justify-center px-2 text-left transition-colors hover:bg-accent"
               >
-                <button
-                  onClick={() => setPop(pop === key ? null : key)}
-                  className="flex flex-col justify-center px-2 text-left transition-colors hover:bg-accent"
-                >
-                  <p className="text-[7px] uppercase leading-none tracking-wide text-muted-foreground">
-                    {label}
-                  </p>
-                  <p className="mt-0.5 max-w-[72px] truncate text-[11px] font-medium leading-tight tabular-nums">
-                    {value}
-                  </p>
-                </button>
-                <div className="flex flex-col border-l">
-                  {[-1, 1].map((dir) => (
-                    <button
-                      key={dir}
-                      onClick={() => step(dir)}
-                      className="flex flex-1 items-center justify-center px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    >
-                      <ChevronDown className={cn("size-2.5", dir === -1 && "rotate-180")} />
-                    </button>
-                  ))}
-                </div>
+                <p className="text-[7px] uppercase leading-none tracking-wide text-muted-foreground">
+                  Ramp
+                </p>
+                <p className="mt-0.5 max-w-[72px] truncate text-[11px] font-medium leading-tight">
+                  {rampLabel}
+                </p>
+              </button>
+              <div className="flex flex-col border-l">
+                {[-1, 1].map((dir) => (
+                  <button
+                    key={dir}
+                    onClick={() => {
+                      const i = SPEED_RAMPS.findIndex(
+                        ([label]) => label === (speedRamp ?? "Ninguno"),
+                      );
+                      const at = i >= 0 ? i : 0;
+                      const [r, pc] =
+                        SPEED_RAMPS[(at + dir + SPEED_RAMPS.length) % SPEED_RAMPS.length];
+                      setGenSettings({
+                        speed_ramp: r === "Ninguno" ? null : r,
+                        speed_curve: r === "Ninguno" ? null : [...pc],
+                      });
+                    }}
+                    className="flex flex-1 items-center justify-center px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    <ChevronDown className={cn("size-2.5", dir === -1 && "rotate-180")} />
+                  </button>
+                ))}
               </div>
-            ))}
+            </div>
+
+            {/* Duración: deslizable directo sobre los pasos del catálogo — arrastras y
+                ves el valor; nada de listas para un ajuste de una dimensión. */}
+            <div className="flex h-12 shrink-0 flex-col justify-center rounded-lg border px-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[7px] uppercase leading-none tracking-wide text-muted-foreground">
+                  Duración
+                </p>
+                <p className="text-[11px] font-medium leading-none tabular-nums">{s.dur}</p>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={durationList.length - 1}
+                step={1}
+                value={Math.max(0, durationList.indexOf(s.dur))}
+                onChange={(e) => setGenSettings({ dur: durationList[+e.target.value] })}
+                className="mt-1.5 h-1 w-[88px] cursor-pointer appearance-none rounded-full bg-muted accent-foreground [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-foreground"
+              />
+            </div>
           </>
         )}
       </div>
@@ -1214,9 +1211,16 @@ function DirectorPanel({ assets = [] }) {
       {pop && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setPop(null)} />
-          <div className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-[420px] max-w-[90vw] rounded-xl border bg-background p-2 text-foreground shadow-2xl">
+          <div
+            className={cn(
+              "absolute bottom-[calc(100%+8px)] z-50 rounded-xl border bg-background p-2 text-foreground shadow-2xl",
+              // La matriz de movimientos ocupa el ancho REAL del panel (y por tanto del
+              // sidebar): 4 columnas que se estrechan o ensanchan con él.
+              pop === "move" ? "inset-x-0" : "left-0 w-[340px] max-w-[90vw]",
+            )}
+          >
             {pop === "move" && (
-              <div className="grid max-h-[340px] grid-cols-3 gap-1.5 overflow-y-auto">
+              <div className="grid max-h-[340px] grid-cols-4 gap-1.5 overflow-y-auto">
                 {CAMERA_MOVES.map(([id, label, purpose]) => (
                   <MoveTile
                     key={id}
@@ -1278,20 +1282,6 @@ function DirectorPanel({ assets = [] }) {
                 </div>
               </>
             )}
-            {pop === "dur" &&
-              durationList.map((d) => (
-                <button
-                  key={d}
-                  onClick={() => {
-                    setGenSettings({ dur: d });
-                    setPop(null);
-                  }}
-                  className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
-                >
-                  {d}
-                  {s.dur === d && <Check className="size-3.5" />}
-                </button>
-              ))}
           </div>
         </>
       )}
@@ -3409,12 +3399,7 @@ const elementLocations = [
   ["Sala de control", "Holografías, paneles rojos", "/assets/inspo.jpg"],
   ["Exterior órbita", "Tierra al fondo, silencio", "/assets/continuum.jpg"],
 ];
-const teamMessages = [
-  ["H", "Héctor", "Subo el brief actualizado, el plano 4 necesita más contraste.", "10:24", true],
-  ["N", "Nara", "De acuerdo. ¿Probamos con la paleta ámbar en lugar del azul?", "10:31", false],
-  ["H", "Héctor", "Sí, y alarguemos el plano 2 a 8 s para que respire.", "10:33", true],
-  ["M", "Marco", "Hecho. Regenerando planos 2 y 4 con Cinema Studio 3.5.", "10:40", false],
-];
+
 function ShareMenu({ projectId }) {
   const { profile } = useStudio();
   const [open, setOpen] = useState(false);
@@ -6129,62 +6114,196 @@ function EditorCanvas({ data, assets = [] }) {
   );
 }
 
-function EditorTeamChat() {
+const chatTime = (iso) => {
+  const d = new Date(iso);
+  const today = new Date().toDateString() === d.toDateString();
+  return today
+    ? d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString("es-ES", { day: "numeric", month: "short" }) +
+        " " +
+        d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+};
+
+/**
+ * Chat de equipo del proyecto. Hablas con quien de verdad tiene acceso: los
+ * miembros de tu espacio y los colaboradores con los que has compartido el
+ * proyecto. Los mensajes llegan en tiempo real vía Supabase Realtime.
+ */
+function EditorTeamChat({ projectId }) {
+  const { profile } = useStudio();
+  const [messages, setMessages] = useState([]);
+  const [participants, setParticipants] = useState([]);
+  const [draft, setDraft] = useState("");
+  const [ready, setReady] = useState(false);
+  const endRef = useRef(null);
+
+  useEffect(() => {
+    let alive = true;
+    setReady(false);
+    Promise.all([
+      db.listChatMessages(projectId).catch(() => []),
+      db.listChatParticipants(projectId).catch(() => []),
+    ]).then(([msgs, people]) => {
+      if (!alive) return;
+      setMessages(msgs);
+      setParticipants(people);
+      setReady(true);
+    });
+
+    // Realtime: cada mensaje nuevo se añade sin recargar, evitando duplicar el
+    // propio (que ya se pintó de forma optimista).
+    const unsubscribe = db.subscribeChat(projectId, (row) =>
+      setMessages((list) =>
+        list.some((m) => m.id === row.id) ? list : [...list, row],
+      ),
+    );
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [messages.length]);
+
+  const send = async () => {
+    const body = draft.trim();
+    if (!body || !profile) return;
+    setDraft("");
+    const optimistic = {
+      id: `tmp-${Date.now()}`,
+      project_id: projectId,
+      sender_id: profile.id,
+      sender_name: profile.name,
+      sender_avatar: profile.avatar_url,
+      body,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((list) => [...list, optimistic]);
+    try {
+      const saved = await db.sendChatMessage(projectId, {
+        senderId: profile.id,
+        senderName: profile.name,
+        senderAvatar: profile.avatar_url,
+        body,
+      });
+      // Sustituye el provisional por el real (con id de la base).
+      setMessages((list) =>
+        list.map((m) => (m.id === optimistic.id ? saved : m)),
+      );
+    } catch {
+      setMessages((list) => list.filter((m) => m.id !== optimistic.id));
+      setDraft(body);
+    }
+  };
+
+  const initials = (name) => (name ?? "?").charAt(0).toUpperCase();
+
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border bg-background">
       <div className="flex items-center gap-3 border-b px-5 py-3">
         <MessageCircle className="size-4 text-muted-foreground" />
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">Chat del equipo</p>
           <p className="text-xs text-muted-foreground">
-            3 miembros · Tráiler — Proyecto Neón
+            {participants.length}{" "}
+            {participants.length === 1 ? "persona" : "personas"} con acceso
           </p>
         </div>
         <div className="flex -space-x-2">
-          {["H", "N", "M"].map((a) => (
+          {participants.slice(0, 5).map((p) => (
             <span
-              key={a}
-              className="flex size-7 items-center justify-center rounded-full border-2 border-background bg-muted text-xs font-semibold"
+              key={p.user_id ?? p.email}
+              title={`${p.name}${p.pending ? " · pendiente" : ""}`}
+              className={cn(
+                "flex size-7 items-center justify-center overflow-hidden rounded-full border-2 border-background bg-muted text-xs font-semibold",
+                p.pending && "opacity-50",
+              )}
             >
-              {a}
+              {p.avatar_url ? (
+                <img src={p.avatar_url} alt="" className="size-full object-cover" />
+              ) : (
+                initials(p.name)
+              )}
             </span>
           ))}
+          {participants.length > 5 && (
+            <span className="flex size-7 items-center justify-center rounded-full border-2 border-background bg-muted text-[10px] font-semibold">
+              +{participants.length - 5}
+            </span>
+          )}
         </div>
       </div>
+
       <div className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto w-full max-w-3xl space-y-5">
-        {teamMessages.map(([initial, name, text, time, me], i) => (
-          <div key={i} className={cn("flex gap-3", me && "flex-row-reverse")}>
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
-              {initial}
-            </span>
-            <div className={cn("max-w-[70%]", me && "text-right")}>
-              <p className="text-xs text-muted-foreground">
-                {name} · {time}
+          {ready && messages.length === 0 && (
+            <div className="py-16 text-center">
+              <MessageCircle className="mx-auto size-7 text-muted-foreground" />
+              <p className="mt-3 font-medium">Aún no hay mensajes</p>
+              <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+                Habla con tu equipo sobre qué película queréis hacer. Todo el que
+                tenga acceso al proyecto lo verá aquí.
               </p>
-              <div
-                className={cn(
-                  "mt-1 rounded-2xl px-3 py-2 text-sm",
-                  me ? "bg-primary text-primary-foreground" : "bg-muted",
-                )}
-              >
-                {text}
-              </div>
             </div>
-          </div>
-        ))}
+          )}
+
+          {messages.map((m) => {
+            const me = m.sender_id === profile?.id;
+            return (
+              <div key={m.id} className={cn("flex gap-3", me && "flex-row-reverse")}>
+                <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-semibold">
+                  {m.sender_avatar ? (
+                    <img
+                      src={m.sender_avatar}
+                      alt=""
+                      className="size-full object-cover"
+                    />
+                  ) : (
+                    initials(m.sender_name)
+                  )}
+                </span>
+                <div className={cn("max-w-[70%]", me && "text-right")}>
+                  <p className="text-xs text-muted-foreground">
+                    {me ? "Tú" : m.sender_name} · {chatTime(m.created_at)}
+                  </p>
+                  <div
+                    className={cn(
+                      "mt-1 inline-block whitespace-pre-wrap rounded-2xl px-3 py-2 text-left text-sm",
+                      me ? "bg-primary text-primary-foreground" : "bg-muted",
+                    )}
+                  >
+                    {m.body}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div ref={endRef} />
         </div>
       </div>
+
       <div className="border-t p-3">
         <Card className="mx-auto flex w-full max-w-3xl items-center gap-2 p-2">
-          <EditorIconBtn>
-            <Plus />
-          </EditorIconBtn>
           <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
             placeholder="Escribe un mensaje al equipo…"
-            className="h-8 flex-1 bg-transparent text-sm outline-none"
+            className="h-8 flex-1 bg-transparent px-2 text-sm outline-none"
           />
-          <UIButton size="icon" className="size-8">
+          <UIButton
+            size="icon"
+            className="size-8"
+            disabled={!draft.trim()}
+            onClick={send}
+          >
             <ArrowUp />
           </UIButton>
         </Card>
@@ -6798,7 +6917,7 @@ function Editor({ projectId }) {
             <EditorElements assets={assets} onGoToAssets={() => setTab("assets")} />
           )}
           {tab === "canvas" && <EditorCanvas data={data} assets={assets} />}
-          {tab === "chat" && <EditorTeamChat />}
+          {tab === "chat" && <EditorTeamChat projectId={projectId} />}
         </main>
       </div>
     </div>

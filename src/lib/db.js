@@ -968,6 +968,56 @@ export const db = {
     });
   },
 
+  /* --- chat de equipo (humano ↔ humano) --- */
+
+  /** Participantes del proyecto: dueño, miembros del espacio y colaboradores. */
+  async listChatParticipants(projectId) {
+    if (!hasSupabase) return [];
+    const { data, error } = await supabase.rpc("project_participants", {
+      pid: projectId,
+    });
+    if (error) throw error;
+    return data ?? [];
+  },
+
+  async listChatMessages(projectId) {
+    const rows = await DRIVER.select("project_chat", { project_id: projectId });
+    return rows.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  },
+
+  async sendChatMessage(projectId, { senderId, senderName, senderAvatar, body }) {
+    return DRIVER.insert("project_chat", {
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
+      project_id: projectId,
+      sender_id: senderId,
+      sender_name: senderName || "Alguien",
+      sender_avatar: senderAvatar ?? null,
+      body,
+    });
+  },
+
+  /**
+   * Escucha los mensajes nuevos del chat en tiempo real. Devuelve una función
+   * para cancelar la suscripción. Sin Supabase no hay realtime: no-op.
+   */
+  subscribeChat(projectId, onInsert) {
+    if (!hasSupabase) return () => {};
+    const channel = supabase
+      .channel(`project_chat:${projectId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "project_chat",
+          filter: `project_id=eq.${projectId}`,
+        },
+        (payload) => onInsert(payload.new),
+      )
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  },
+
   async reset() {
     return DRIVER.reset();
   },
