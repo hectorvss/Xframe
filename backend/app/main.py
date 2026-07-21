@@ -143,7 +143,26 @@ def _sanitize(event: dict[str, Any]) -> dict[str, Any]:
     """
     if event.get("type") != "error":
         return event
-    logger.warning("agent_error_sanitized", extra={"detail": str(event.get("message"))[:2_000]})
+    detail = str(event.get("message"))
+    logger.warning("agent_error_sanitized", extra={"detail": detail[:2_000]})
+    # Clases de error que el usuario SÍ puede arreglar y que el genérico esconde. Se
+    # detectan por firma sobre el detalle interno y se responde con un mensaje escrito
+    # por nosotros — nunca con `str(e)`, que puede filtrar esquema o configuración.
+    lowered = detail.lower()
+    if "exceeded your current quota" in lowered or "insufficient_quota" in lowered:
+        return {
+            "type": "error",
+            "message": (
+                "La cuenta de OpenAI se ha quedado sin crédito, así que el agente no "
+                "puede razonar ni generar. Recarga el saldo en platform.openai.com y "
+                "vuelve a intentarlo."
+            ),
+        }
+    if "rate limit" in lowered or "rate_limit" in lowered:
+        return {
+            "type": "error",
+            "message": "El proveedor está limitando peticiones. Espera un minuto y reenvía.",
+        }
     return {"type": "error", "message": GENERIC_ERROR}
 
 

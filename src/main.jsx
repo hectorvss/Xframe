@@ -3554,6 +3554,7 @@ function EditorPreview({
   timeline = null,
   onTimelineChange,
   onClipMention,
+  onSeedChat,
 }) {
   const [exporting, setExporting] = useState(false);
   // El timeline es de VÍDEO: tiras de los fragmentos generados, y solo eso. Las
@@ -3704,7 +3705,7 @@ function EditorPreview({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col rounded-xl border bg-background">
-        <div className="flex min-h-0 flex-1 items-center justify-center bg-neutral-950 p-4">
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-gradient-to-b from-neutral-900 to-neutral-950 p-4">
           {item ? (
             <video
               key={item.id}
@@ -3732,13 +3733,30 @@ function EditorPreview({
               )}
             />
           ) : (
-            <div className="flex flex-col items-center gap-2 px-8 text-center">
-              <Play className="size-8 text-neutral-500" />
-              <p className="text-sm text-neutral-400">
-                Aún no hay fragmentos de vídeo. Pídeselos al agente desde el chat y,
-                cuando estén listos, aparecerán aquí como tiras que puedes reordenar,
-                reproducir de corrido y montar en el corte final.
-              </p>
+            <div className="flex max-w-md flex-col items-center gap-4 px-8 text-center">
+              <div className="flex size-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5 shadow-[0_0_40px_rgba(99,102,241,0.15)]">
+                <Video className="size-6 text-neutral-300" />
+              </div>
+              <div>
+                <p className="text-base font-semibold text-white">
+                  Tu vídeo se monta aquí
+                </p>
+                <p className="mt-1.5 text-sm leading-relaxed text-neutral-400">
+                  Pídele fragmentos de vídeo al agente. Cada plano aterriza abajo como
+                  una tira: reordénalas arrastrando, reprodúcelas de corrido y, cuando
+                  te convenzan, monta el corte final.
+                </p>
+              </div>
+              {onSeedChat && (
+                <UIButton
+                  size="sm"
+                  onClick={() =>
+                    onSeedChat("Genera el primer fragmento de vídeo de esta escena: ")
+                  }
+                >
+                  <Sparkles /> Pedir el primer fragmento
+                </UIButton>
+              )}
             </div>
           )}
         </div>
@@ -3838,14 +3856,35 @@ function EditorPreview({
         />
       )}
 
-      {/* EL TIMELINE. Tiras de los fragmentos de vídeo, y solo de vídeo. Arrastra para
-          reordenar (el hueco se abre en vivo, se persiste al soltar), la X quita, el
-          botón del final añade fragmentos que no estén. El botón @ de cada tira mete
-          «@Clip-N» en el chat como pill: cuentas ahí el cambio y el agente sabe
-          exactamente sobre qué fragmento aplicarlo. */}
-      {(videos.length > 0 || shown.length > 0) && (
-        <div className="shrink-0 rounded-xl border bg-background p-2">
+      {/* EL TIMELINE. Siempre presente — es el banco de trabajo de producción, no un
+          accesorio que aparece a veces. Tiras de los fragmentos de vídeo, y solo de
+          vídeo. Arrastra para reordenar (el hueco se abre en vivo, se persiste al
+          soltar), la X quita, el botón del final añade fragmentos que no estén. El
+          botón @ de cada tira mete «@Clip-N» en el chat como pill: cuentas ahí el
+          cambio y el agente sabe exactamente sobre qué fragmento aplicarlo. Sin
+          material aún, huecos punteados marcan dónde aterrizará cada clip. */}
+      <div className="shrink-0 rounded-xl border bg-background p-2">
+          <div className="mb-1.5 flex items-center justify-between px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Timeline
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              {shown.length
+                ? "Arrastra para reordenar · @ para pedir un cambio de un clip"
+                : "Los fragmentos de vídeo aterrizan aquí"}
+            </p>
+          </div>
           <div className="flex items-stretch gap-2 overflow-x-auto">
+            {!shown.length &&
+              Array.from({ length: 4 }, (_, i) => (
+                <div
+                  key={`ghost-${i}`}
+                  className="flex aspect-video w-32 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-muted-foreground/50"
+                >
+                  <Video className="size-4" />
+                  <span className="text-[10px] tabular-nums">Clip {i + 1}</span>
+                </div>
+              ))}
             {shown.map((a, i) => (
               <div
                 key={`${a.id}-${i}`}
@@ -3930,8 +3969,8 @@ function EditorPreview({
                     {videos.filter((a) => !shown.some((s) => String(s.id) === String(a.id)))
                       .length === 0 && (
                       <p className="p-3 text-xs text-muted-foreground">
-                        Todos los fragmentos de vídeo ya están en el timeline. Pídele más
-                        al agente desde el chat.
+                        No hay fragmentos de vídeo disponibles para añadir. Pídeselos al
+                        agente desde el chat.
                       </p>
                     )}
                     {videos
@@ -3962,8 +4001,7 @@ function EditorPreview({
               )}
             </div>
           </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -6076,6 +6114,10 @@ function Editor({ projectId }) {
                 })
               }
               onClipMention={mentionClip}
+              onSeedChat={(text) => {
+                setChatHidden(false);
+                setChatInsert({ text, at: Date.now() });
+              }}
               onAssemble={() =>
                 handleSend(
                   "Monta el corte final del proyecto con todos los fragmentos de vídeo listos, en orden narrativo, con transiciones limpias.",
