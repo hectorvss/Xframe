@@ -915,7 +915,7 @@ function SettingsSlider({ label, value, options, onChange }) {
 
   return (
     <div className="px-2 py-1.5">
-      <div className="flex items-baseline justify-between gap-3 text-sm">
+      <div className="flex items-baseline justify-between gap-3 text-xs">
         <span className="text-muted-foreground">{label}</span>
         <span className="truncate font-medium">{value}</span>
       </div>
@@ -1594,7 +1594,7 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
                     key={label}
                     onClick={() => setFlyout(flyout === key ? null : key)}
                     className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent",
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-accent",
                       flyout === key && "bg-accent",
                     )}
                   >
@@ -1631,7 +1631,7 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
                   />
                 )}
                 {mode === "image" && (
-                  <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm">
+                  <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-xs">
                     <span className="text-muted-foreground">Cantidad</span>
                     <div className="flex items-center gap-0.5">
                       <button
@@ -1653,7 +1653,7 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
                   </div>
                 )}
                 {mode === "video" && (
-                  <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm">
+                  <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-xs">
                     <span className="text-muted-foreground">Sonido</span>
                     <Switch checked={sound} onCheckedChange={setSound} />
                   </div>
@@ -1672,7 +1672,7 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
                             setGenre(g);
                             setFlyout(null);
                           }}
-                          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+                          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-accent"
                         >
                           {g}
                           {genre === g && <Check className="size-3.5" />}
@@ -7338,7 +7338,7 @@ function ProjectSwitcher({ project, projects }) {
                     className="size-8 shrink-0 rounded-md object-cover"
                   />
                 ) : (
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-violet-500 to-blue-500 text-xs font-semibold text-white">
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-neutral-200 bg-white text-xs font-semibold text-neutral-900">
                     {initial}
                   </span>
                 )}
@@ -7993,7 +7993,7 @@ function SettingsSide({ page, width, onResize }) {
   return (
     <aside
       style={{ width }}
-      className="fixed inset-y-0 left-0 flex h-dvh flex-col overflow-hidden border-r bg-muted/30 p-3"
+      className="fixed inset-y-0 left-0 flex h-dvh max-sm:!w-full flex-col overflow-hidden border-r bg-muted/30 p-3"
     >
       <ResizeHandle onResize={onResize} />
       <div className="shrink-0">
