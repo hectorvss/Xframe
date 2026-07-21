@@ -3933,6 +3933,13 @@ function EditorChat({
               ref={areaRef}
               value={draft}
               rows={1}
+              // El recuadro de esquinas que se veía alrededor del texto lo pinta el
+              // corrector/predictor del navegador (MS Editor en Edge) sobre el campo.
+              // Se desactivan sus ganchos: la funcionalidad de escritura no cambia.
+              spellCheck={false}
+              autoCorrect="off"
+              autoComplete="off"
+              data-gramm="false"
               onChange={(e) => onDraftChange(e.target.value)}
               onScroll={(e) => {
                 if (mirrorRef.current)
@@ -3950,7 +3957,7 @@ function EditorChat({
                 }
               }}
               placeholder={placeholder}
-              className="relative z-10 min-h-[52px] max-h-[200px] resize-none overflow-y-auto border-0 bg-transparent text-sm text-transparent caret-foreground shadow-none focus-visible:ring-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              className="relative z-10 min-h-[52px] max-h-[200px] resize-none appearance-none overflow-y-auto rounded-none border-0 bg-transparent text-sm text-transparent caret-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             />
           </div>
           <GenSettingsBar
