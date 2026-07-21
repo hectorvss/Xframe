@@ -6031,7 +6031,17 @@ function AccountSettings() {
     }
   };
 
-  if (!profile) return null;
+  // Un `return null` aquí era, literalmente, la pantalla de configuración en blanco: si
+  // el perfil no había cargado, el panel entero no pintaba nada. Ahora se muestra un
+  // estado de carga, y con la carga de perfil ya arreglada (getSession) esto solo se ve
+  // un instante al abrir.
+  if (!profile) {
+    return (
+      <div className="mx-auto max-w-3xl px-8 py-10 text-muted-foreground">
+        Cargando tu cuenta…
+      </div>
+    );
+  }
   const initial = (profile.name ?? "?").charAt(0).toUpperCase();
 
   return (

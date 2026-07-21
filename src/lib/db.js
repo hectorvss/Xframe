@@ -251,16 +251,27 @@ export const db = {
    */
   async getProfile() {
     if (hasSupabase) {
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth?.user) return null;
+      // `getSession` lee la sesión del almacenamiento local: es instantáneo y no
+      // depende de la red. `getUser`, que es lo que había antes, hace una petición al
+      // servidor de Auth en CADA carga, y cuando tardaba o el token se estaba renovando
+      // devolvía null — y entonces el perfil salía vacío de forma intermitente:
+      // "Cargando…" que no termina, avatar "?", ajustes en blanco, y los selectores de
+      // generación sin responder porque cuelgan del perfil.
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const user = session?.user;
+      if (!user) return null;
 
-      const [profile] = await DRIVER.select("profiles", { id: auth.user.id });
+      const [profile] = await DRIVER.select("profiles", { id: user.id });
       if (!profile) return null;
 
+      // Los ajustes de fábrica se rellenan EN MEMORIA, no con un UPDATE. Escribir en la
+      // base durante una simple lectura era un efecto colateral que, si fallaba (RLS o
+      // el timing justo tras el alta), lanzaba y dejaba todo el perfil sin cargar. El
+      // provider ya persiste los ajustes en cuanto el usuario toca un control.
       if (!profile.settings || !Object.keys(profile.settings).length) {
-        return DRIVER.update("profiles", profile.id, {
-          settings: { ...defaultGenSettings },
-        });
+        return { ...profile, settings: { ...defaultGenSettings } };
       }
       return profile;
     }

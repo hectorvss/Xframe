@@ -40,7 +40,14 @@ export function StudioProvider({ children }) {
 
   /** Carga perfil y proyectos de la sesión actual (o los limpia al salir). */
   const load = useCallback(async () => {
-    const loadedProfile = await db.getProfile();
+    let loadedProfile = null;
+    try {
+      loadedProfile = await db.getProfile();
+    } catch (error) {
+      // Si ni el perfil se puede leer, se deja la sesión como no cargada pero lista,
+      // para que la UI muestre su estado de "sin sesión" en vez de un spinner eterno.
+      console.warn("No se pudo cargar el perfil", error);
+    }
     if (!loadedProfile) {
       setProfile(null);
       setProjects([]);
@@ -48,8 +55,13 @@ export function StudioProvider({ children }) {
       setReady(true);
       return null;
     }
+
+    // Cada dato accesorio se captura por separado: que falle la lista de proyectos, el
+    // espacio de trabajo o el saldo NO puede impedir que el perfil se muestre. Antes un
+    // `Promise.all` sin protección en `listProjects` tumbaba toda la carga —y el perfil
+    // quedaba en null— por un fallo secundario como firmar la portada de un proyecto.
     const [list, ws, balance] = await Promise.all([
-      db.listProjects(loadedProfile.id),
+      db.listProjects(loadedProfile.id).catch(() => []),
       db.getWorkspace(loadedProfile.id).catch(() => null),
       db.getCreditBalance(loadedProfile).catch(() => loadedProfile.credits),
     ]);
