@@ -2852,14 +2852,6 @@ const elementLocations = [
   ["Sala de control", "Holografías, paneles rojos", "/assets/inspo.jpg"],
   ["Exterior órbita", "Tierra al fondo, silencio", "/assets/continuum.jpg"],
 ];
-const canvasShots = [
-  ["Plano 01", "Astronauta solitario en traje EVA flotando en gravedad cero, luz cinematográfica desde atrás.", "/assets/prompt-frame.webp"],
-  ["Plano 02", "La lanzadera se aproxima a la estación abandonada, dolly lento hacia delante.", "/assets/continuum.jpg"],
-  ["Plano 03", "Entra por la esclusa, la linterna del casco corta la oscuridad.", "/assets/inspo.jpg"],
-  ["Plano 04", "Descubre la sala de control, holografías y paneles rojos parpadeando.", "/assets/maison.webp"],
-  ["Plano 05", "La estación se sacude, luces de alarma y detritos flotando.", "/assets/ecommerce.webp"],
-  ["Plano 06", "La cápsula de escape se aleja, la Tierra llena el encuadre.", "/assets/vesper.webp"],
-];
 const teamMessages = [
   ["H", "Héctor", "Subo el brief actualizado, el plano 4 necesita más contraste.", "10:24", true],
   ["N", "Nara", "De acuerdo. ¿Probamos con la paleta ámbar en lugar del azul?", "10:31", false],
@@ -3365,80 +3357,54 @@ function EditorChat({
 
 
 /** Exportación del montaje: formato, resolución y progreso. */
-function ExportDialog({ onClose }) {
-  const [format, setFormat] = useState("MP4");
-  const [quality, setQuality] = useState("1080p");
-  const [progress, setProgress] = useState(null);
-
-  const start = () => {
-    setProgress(0);
-    const id = setInterval(
-      () =>
-        setProgress((p) => {
-          if (p === null) return p;
-          if (p >= 100) {
-            clearInterval(id);
-            return 100;
-          }
-          return p + 10;
-        }),
-      220,
-    );
-  };
-
+// Exportación REAL. El render lo hace el backend (assemble_cut → ffmpeg → bucket) y el
+// resultado es un asset type='cut' con su URL firmada: exportar es descargar ese fichero,
+// no simular una barra de progreso. Si aún no hay corte, el botón honesto es pedírselo
+// al agente, que es quien de verdad puede montarlo.
+function ExportDialog({ cut, onAssemble, onClose }) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-[420px]">
         <DialogHeader>
           <DialogTitle>Exportar vídeo</DialogTitle>
           <DialogDescription>
-            Se renderiza el montaje completo con el audio del proyecto.
+            {cut
+              ? "El corte final montado por el agente, tal cual se renderizó (MP4, 1080p)."
+              : "Todavía no hay un corte final montado en este proyecto."}
           </DialogDescription>
         </DialogHeader>
 
-        {progress === null ? (
-          <>
-            <SettingsSlider
-              label="Formato"
-              value={format}
-              options={["MP4", "MOV", "WebM", "GIF"]}
-              onChange={setFormat}
-            />
-            <SettingsSlider
-              label="Resolución"
-              value={quality}
-              options={resolutionList}
-              onChange={setQuality}
-            />
+        {cut ? (
+          <div className="space-y-3">
+            <p className="truncate text-sm text-muted-foreground">{cut.name}</p>
             <div className="flex justify-end gap-2">
               <UIButton variant="outline" onClick={onClose}>
-                Cancelar
+                Cerrar
               </UIButton>
-              <UIButton onClick={start}>
-                <Download /> Exportar
+              <UIButton asChild>
+                <a href={cut.url} download target="_blank" rel="noreferrer">
+                  <Download /> Descargar
+                </a>
               </UIButton>
             </div>
-          </>
+          </div>
         ) : (
-          <div className="space-y-3 py-2">
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary transition-all"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
+          <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              {progress >= 100
-                ? `Listo · ${format} ${quality}`
-                : `Renderizando… ${progress}%`}
+              Cuando los planos de vídeo estén listos, pide el montaje: el agente los
+              ensambla en orden narrativo, con transiciones y audio, y el corte aparecerá
+              aquí listo para descargar.
             </p>
-            {progress >= 100 && (
-              <div className="flex justify-end">
-                <UIButton onClick={onClose}>
-                  <Check /> Hecho
+            <div className="flex justify-end gap-2">
+              <UIButton variant="outline" onClick={onClose}>
+                Cerrar
+              </UIButton>
+              {onAssemble && (
+                <UIButton onClick={() => (onAssemble(), onClose())}>
+                  <Play /> Pedir el montaje
                 </UIButton>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
       </DialogContent>
@@ -3456,19 +3422,35 @@ const fmt = (s) =>
     ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
     : "0:00";
 
-function EditorPreview({ assets = [] }) {
+function EditorPreview({ assets = [], onAssemble }) {
   const [exporting, setExporting] = useState(false);
   const [copied, setCopied] = useState(false);
-  // Los planos del montaje salen de los assets del proyecto; si aún no hay,
-  // se usa el guion de ejemplo para que la vista previa nunca quede vacía.
-  const shots = assets.filter((a) => a.url && a.status === "ready").length
-    ? assets
-        .filter((a) => a.url && a.status === "ready")
-        .slice(0, 8)
-        .map((a) => [a.name, a.meta, a.url])
-    : canvasShots;
+  // Nada de demos ni guiones de ejemplo: la vista previa reproduce SOLO material real
+  // del proyecto. Prioridad: (1) el corte final montado por el agente (asset 'cut'),
+  // (2) los fragmentos de vídeo listos, encadenados en secuencia, (3) las imágenes como
+  // visor de planos. Vacío de verdad si no hay nada — mentir aquí era enseñar el vídeo
+  // de otro proyecto.
+  const ready = assets.filter((a) => a.url && a.status === "ready");
+  const isVideoKind = (a) => /video|cut/i.test(String(a.type));
+  const cut =
+    [...ready.filter((a) => /cut/i.test(String(a.type)))].sort(
+      (x, y) => new Date(y.created_at ?? 0) - new Date(x.created_at ?? 0),
+    )[0] ?? null;
+  const clips = cut
+    ? [cut]
+    : [...ready.filter(isVideoKind)].sort(
+        (x, y) => new Date(x.created_at ?? 0) - new Date(y.created_at ?? 0),
+      );
+  const stills = ready.filter((a) => !isVideoKind(a) && !/audio/i.test(String(a.type)));
+  const reel = clips.length ? clips : stills;
+  const mode = clips.length ? "video" : stills.length ? "image" : "empty";
+
   const videoRef = useRef(null);
   const barRef = useRef(null);
+  // Encadenado automático: al terminar un fragmento entra el siguiente sin tocar nada,
+  // que es como se ve un montaje. El ref sobrevive al remount del <video> (key=clip).
+  const autoNext = useRef(false);
+  const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [loop, setLoop] = useState(true);
@@ -3476,8 +3458,11 @@ function EditorPreview({ assets = [] }) {
   const [dur, setDur] = useState(0);
   const [aspect, setAspect] = useState("16:9");
 
-  const shotLen = dur ? dur / shots.length : 0;
-  const active = shotLen ? Math.min(shots.length - 1, Math.floor(time / shotLen)) : 0;
+  const safeIdx = Math.min(idx, Math.max(0, reel.length - 1));
+  const clip = mode === "video" ? clips[safeIdx] : null;
+  useEffect(() => {
+    if (idx !== safeIdx) setIdx(safeIdx);
+  }, [idx, safeIdx]);
 
   const seek = (t) => {
     const v = videoRef.current;
@@ -3534,7 +3519,13 @@ function EditorPreview({ assets = [] }) {
           ))}
         </div>
         <Badge variant="secondary" className="font-normal">
-          1080p · {shots.length} planos
+          {cut
+            ? "Corte final"
+            : mode === "video"
+              ? `${clips.length} fragmento${clips.length === 1 ? "" : "s"} de vídeo`
+              : mode === "image"
+                ? `${stills.length} plano${stills.length === 1 ? "" : "s"} (imágenes)`
+                : "Sin material aún"}
         </Badge>
         <div className="flex-1" />
         <UIButton
@@ -3555,25 +3546,64 @@ function EditorPreview({ assets = [] }) {
 
       <div className="flex min-h-0 flex-1 flex-col rounded-xl border bg-background">
         <div className="flex min-h-0 flex-1 items-center justify-center bg-neutral-950 p-4">
-          <video
-            ref={videoRef}
-            src="/assets/scene-1.webm"
-            poster="/assets/prompt-frame.webp"
-            playsInline
-            loop={loop}
-            muted={muted}
-            onClick={toggle}
-            onPlay={() => setPlaying(true)}
-            onPause={() => setPlaying(false)}
-            onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-            onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
-            className={cn(
-              "max-h-full cursor-pointer rounded-lg bg-black object-contain",
-              previewAspects.find(([id]) => id === aspect)[1],
-            )}
-          />
+          {mode === "video" && clip ? (
+            <video
+              key={clip.id}
+              ref={videoRef}
+              src={clip.url}
+              playsInline
+              loop={loop && clips.length === 1}
+              muted={muted}
+              onClick={toggle}
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
+              onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+              onLoadedMetadata={(e) => {
+                setDur(e.currentTarget.duration);
+                setTime(0);
+                if (autoNext.current) {
+                  autoNext.current = false;
+                  e.currentTarget.play().catch(() => {});
+                }
+              }}
+              onEnded={() => {
+                if (safeIdx < clips.length - 1) {
+                  autoNext.current = true;
+                  setIdx(safeIdx + 1);
+                } else if (loop && clips.length > 1) {
+                  autoNext.current = true;
+                  setIdx(0);
+                } else {
+                  setPlaying(false);
+                }
+              }}
+              className={cn(
+                "max-h-full cursor-pointer rounded-lg bg-black object-contain",
+                previewAspects.find(([id]) => id === aspect)[1],
+              )}
+            />
+          ) : mode === "image" ? (
+            <img
+              src={reel[safeIdx]?.url}
+              alt={reel[safeIdx]?.name ?? ""}
+              className={cn(
+                "max-h-full rounded-lg bg-black object-contain",
+                previewAspects.find(([id]) => id === aspect)[1],
+              )}
+            />
+          ) : (
+            <div className="flex flex-col items-center gap-2 px-8 text-center">
+              <Play className="size-8 text-neutral-500" />
+              <p className="text-sm text-neutral-400">
+                Aún no hay nada que previsualizar. Genera imágenes y fragmentos de vídeo
+                con el agente y, cuando estén listos, pídele que monte el corte final:
+                aparecerá aquí, reproducible y descargable.
+              </p>
+            </div>
+          )}
         </div>
 
+        {mode === "video" && (
         <div className="border-t px-3 py-2">
           <div
             ref={barRef}
@@ -3585,15 +3615,6 @@ function EditorPreview({ assets = [] }) {
               className="absolute top-1.5 h-1 rounded-full bg-primary"
               style={{ width: `${dur ? (time / dur) * 100 : 0}%` }}
             />
-            {shots.map((_, i) =>
-              i ? (
-                <span
-                  key={i}
-                  className="absolute top-1.5 h-1 w-px bg-background"
-                  style={{ left: `${(i / shots.length) * 100}%` }}
-                />
-              ) : null,
-            )}
             <div
               className="absolute top-0.5 size-3 -translate-x-1/2 rounded-full bg-primary opacity-0 shadow transition-opacity group-hover:opacity-100"
               style={{ left: `${dur ? (time / dur) * 100 : 0}%` }}
@@ -3602,8 +3623,14 @@ function EditorPreview({ assets = [] }) {
 
           <div className="mt-1 flex items-center gap-1">
             <button
-              onClick={() => seek(active * shotLen - 0.01)}
-              title="Plano anterior"
+              onClick={() => {
+                // Como en cualquier reproductor: si el fragmento ya avanzó, primero se
+                // rebobina; si está al principio, se salta al fragmento anterior.
+                if (time > 1 || safeIdx === 0) return seek(0);
+                autoNext.current = playing;
+                setIdx(safeIdx - 1);
+              }}
+              title="Fragmento anterior"
               className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
             >
               <SkipBack className="size-4" />
@@ -3616,14 +3643,22 @@ function EditorPreview({ assets = [] }) {
               {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
             </button>
             <button
-              onClick={() => seek((active + 1) * shotLen)}
-              title="Plano siguiente"
+              onClick={() => {
+                if (safeIdx < clips.length - 1) {
+                  autoNext.current = playing;
+                  setIdx(safeIdx + 1);
+                } else {
+                  seek(dur);
+                }
+              }}
+              title="Fragmento siguiente"
               className="flex size-8 items-center justify-center rounded-md hover:bg-accent"
             >
               <SkipForward className="size-4" />
             </button>
             <span className="ml-1 text-xs tabular-nums text-muted-foreground">
               {fmt(time)} / {fmt(dur)}
+              {clips.length > 1 && ` · plano ${safeIdx + 1}/${clips.length}`}
             </span>
             <div className="flex-1" />
             <button
@@ -3652,36 +3687,57 @@ function EditorPreview({ assets = [] }) {
             </button>
           </div>
         </div>
+        )}
       </div>
 
-      {exporting && <ExportDialog onClose={() => setExporting(false)} />}
+      {exporting && (
+        <ExportDialog
+          cut={cut}
+          onAssemble={onAssemble}
+          onClose={() => setExporting(false)}
+        />
+      )}
 
-      <div className="shrink-0 rounded-xl border bg-background p-2">
-        <div className="flex gap-2 overflow-x-auto">
-          {shots.map(([title, text, thumb], i) => (
-            <button
-              key={title}
-              onClick={() => seek(i * shotLen)}
-              title={text}
-              className={cn(
-                "w-32 shrink-0 overflow-hidden rounded-lg border text-left transition-shadow hover:shadow-md",
-                active === i && "ring-2 ring-primary",
-              )}
-            >
-              <div
-                className="aspect-video bg-muted bg-cover bg-center"
-                style={{ backgroundImage: `url(${thumb})` }}
-              />
-              <div className="px-2 py-1.5">
-                <p className="truncate text-xs font-medium">{title}</p>
-                <p className="text-[10px] tabular-nums text-muted-foreground">
-                  {fmt(i * shotLen)}
-                </p>
-              </div>
-            </button>
-          ))}
+      {reel.length > 0 && (
+        <div className="shrink-0 rounded-xl border bg-background p-2">
+          <div className="flex gap-2 overflow-x-auto">
+            {reel.map((a, i) => (
+              <button
+                key={a.id}
+                onClick={() => {
+                  autoNext.current = mode === "video" && playing;
+                  setIdx(i);
+                }}
+                title={a.meta || a.name}
+                className={cn(
+                  "w-32 shrink-0 overflow-hidden rounded-lg border text-left transition-shadow hover:shadow-md",
+                  safeIdx === i && "ring-2 ring-primary",
+                )}
+              >
+                {isVideoKind(a) ? (
+                  <video
+                    src={a.url}
+                    muted
+                    preload="metadata"
+                    className="aspect-video w-full bg-muted object-cover"
+                  />
+                ) : (
+                  <div
+                    className="aspect-video bg-muted bg-cover bg-center"
+                    style={{ backgroundImage: `url(${a.url})` }}
+                  />
+                )}
+                <div className="px-2 py-1.5">
+                  <p className="truncate text-xs font-medium">{a.name}</p>
+                  <p className="text-[10px] tabular-nums text-muted-foreground">
+                    {mode === "video" ? `Plano ${i + 1}` : "Imagen"}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -3709,7 +3765,17 @@ function AssetLightbox({ asset, onClose, onAssign, onRegenerate, onDuplicate }) 
           </DialogDescription>
         </DialogHeader>
 
-        {asset.url ? (
+        {asset.url && /video|cut/i.test(String(asset.type)) ? (
+          // Un vídeo se reproduce, no se enseña como imagen rota.
+          <video
+            src={asset.url}
+            controls
+            playsInline
+            className="max-h-[65vh] w-full rounded-lg bg-black object-contain"
+          />
+        ) : asset.url && /audio/i.test(String(asset.type)) ? (
+          <audio src={asset.url} controls className="w-full" />
+        ) : asset.url ? (
           <img
             src={asset.url}
             alt={asset.name}
@@ -4080,6 +4146,16 @@ function EditorAssets({
             >
               {a.status === "generating" ? (
                 <GeneratingCard label={a.name} />
+              ) : a.url && /video|cut/i.test(String(a.type)) ? (
+                // Miniatura real del vídeo (primer frame vía preload=metadata). Con
+                // background-image sobre un mp4 la tarjeta salía gris vacía.
+                <video
+                  src={a.url}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  className="aspect-video w-full bg-black object-cover"
+                />
               ) : a.url ? (
                 <div
                   className="aspect-video bg-muted bg-cover bg-center"
@@ -4566,36 +4642,6 @@ function EditorElements({ assets, onGoToAssets }) {
 
 const NODE_W = { concept: 250, shot: 190 };
 const NODE_H = { concept: 118, shot: 178 };
-const buildCanvasNodes = () => [
-  {
-    id: "c1",
-    type: "concept",
-    x: 40,
-    y: 110,
-    title: "Concepto",
-    text: "Astronauta solitario en traje EVA blanco, gravedad cero, luz cinematográfica desde atrás, sci-fi fotorrealista.",
-  },
-  {
-    id: "c2",
-    type: "concept",
-    x: 40,
-    y: 330,
-    title: "Localización",
-    text: "Interior de estación orbital abandonada, luz de emergencia, detritos flotando, Tierra visible.",
-  },
-  ...canvasShots.map(([title, text, thumb], i) => ({
-    id: `s${i + 1}`,
-    type: "shot",
-    x: 380 + i * 220,
-    y: 480,
-    title,
-    text,
-    thumb,
-  })),
-];
-const buildCanvasEdges = () =>
-  canvasShots.map((_, i) => ({ from: i < 3 ? "c1" : "c2", to: `s${i + 1}` }));
-
 const PICKER_W = 288;
 const PICKER_H = 380;
 /**
@@ -4613,7 +4659,8 @@ const mediaSourcesFor = (assets) => [
     "Assets",
     assets.filter((a) => !a.role && a.url).map((a) => [a.name, a.type, a.url]),
   ],
-  ["shots", "Planos", canvasShots.map(([n, d, t]) => [n, d, t])],
+  // El grupo "Planos" de demo se retiró: ofrecer material de ejemplo en un proyecto
+  // real invitaba a colar el astronauta de muestra en un montaje de verdad.
 ];
 
 function CanvasMediaPicker({ onPick, onClose, at, assets = [] }) {
@@ -4720,12 +4767,11 @@ function CanvasMediaPicker({ onPick, onClose, at, assets = [] }) {
 }
 
 function EditorCanvas({ data, assets = [] }) {
-  const [nodes, setNodesLocal] = useState(
-    () => data?.canvas?.nodes ?? buildCanvasNodes(),
-  );
-  const [edges, setEdgesLocal] = useState(
-    () => data?.canvas?.edges ?? buildCanvasEdges(),
-  );
+  // Nunca el demo: un proyecto sin planos muestra un lienzo vacío, no el guion del
+  // astronauta de ejemplo. Peor que enseñarlo era que cualquier edición lo PERSISTÍA
+  // como si fuera contenido del usuario.
+  const [nodes, setNodesLocal] = useState(() => data?.canvas?.nodes ?? []);
+  const [edges, setEdgesLocal] = useState(() => data?.canvas?.edges ?? []);
   // Cada cambio se guarda en el proyecto: el layout sobrevive al cambio de pestaña.
   const persist = (nextNodes, nextEdges) =>
     data?.saveCanvas({ nodes: nextNodes, edges: nextEdges });
@@ -5103,11 +5149,13 @@ function EditorCanvas({ data, assets = [] }) {
         </button>
         <button
           onClick={() => {
-            setNodes(buildCanvasNodes());
-            setEdges(buildCanvasEdges());
+            // Vaciar es vaciar: antes "restablecer" rellenaba el lienzo con el guion
+            // de ejemplo del astronauta y lo guardaba como si fuera del usuario.
+            setNodes([]);
+            setEdges([]);
             setSelected(null);
           }}
-          title="Restablecer"
+          title="Vaciar el lienzo"
           className="flex size-7 items-center justify-center rounded hover:bg-accent"
         >
           <RefreshCw className="size-3.5" />
@@ -5731,7 +5779,16 @@ function Editor({ projectId }) {
           />
         )}
         <main className="flex-1 overflow-hidden p-2">
-          {tab === "preview" && <EditorPreview assets={assets} />}
+          {tab === "preview" && (
+            <EditorPreview
+              assets={assets}
+              onAssemble={() =>
+                handleSend(
+                  "Monta el corte final del proyecto con todos los fragmentos de vídeo listos, en orden narrativo, con transiciones limpias.",
+                )
+              }
+            />
+          )}
           {tab === "assets" && (
             <EditorAssets
               assets={ghosts.length ? [...ghosts, ...assets] : assets}
