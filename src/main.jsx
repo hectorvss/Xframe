@@ -3889,6 +3889,33 @@ function AssetMenu({
   );
 }
 
+/**
+ * Tarjeta de un asset que se está generando.
+ *
+ * En vez de un spinner soso, un encuadre de cámara "vivo": corchetes de framing que
+ * laten, un barrido de luz que recorre la imagen y una línea de escaneo, sobre un fondo
+ * en degradado que respira. Da sensación de que algo se está revelando ahí dentro. Toda
+ * la animación es CSS (ver src/styles.css), así que no cuesta JS ni re-renders.
+ */
+function GeneratingCard({ label }) {
+  return (
+    <div className="xf-gen-card flex aspect-video items-center justify-center rounded-xl">
+      <span className="xf-gen-scan" />
+      {/* corchetes de encuadre en las cuatro esquinas */}
+      <span className="xf-gen-bracket left-2 top-2 border-l-2 border-t-2 rounded-tl-sm" />
+      <span className="xf-gen-bracket right-2 top-2 border-r-2 border-t-2 rounded-tr-sm" />
+      <span className="xf-gen-bracket bottom-2 left-2 border-b-2 border-l-2 rounded-bl-sm" />
+      <span className="xf-gen-bracket bottom-2 right-2 border-b-2 border-r-2 rounded-br-sm" />
+      <div className="relative z-10 flex flex-col items-center gap-2">
+        <Sparkles className="size-6 text-primary drop-shadow" />
+        <span className="text-xs font-medium text-foreground/80">
+          Generando<span className="xf-gen-dots" />
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function EditorAssets({
   assets,
   onAssign,
@@ -3970,9 +3997,7 @@ function EditorAssets({
               )}
             >
               {a.status === "generating" ? (
-                <div className="flex aspect-video animate-pulse items-center justify-center bg-muted">
-                  <RefreshCw className="size-6 animate-spin text-muted-foreground" />
-                </div>
+                <GeneratingCard label={a.name} />
               ) : a.url ? (
                 <div
                   className="aspect-video bg-muted bg-cover bg-center"
@@ -3984,9 +4009,11 @@ function EditorAssets({
                 </div>
               )}
 
-              <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
-                {a.status === "generating" ? "Generando…" : a.type}
-              </span>
+              {a.status !== "generating" && (
+                <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
+                  {a.type}
+                </span>
+              )}
 
               {a.status === "ready" && (
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/70 to-transparent px-2 pb-1.5 pt-6 text-left text-[11px] text-white opacity-0 transition-opacity group-hover/card:opacity-100">

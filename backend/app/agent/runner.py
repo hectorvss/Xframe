@@ -192,7 +192,11 @@ class ConversationRunner:
             project_id=project_id,
             user_id=user_id,
             conversation_id=conversation_id,
-            mode=AgentMode(stored_mode) if stored_mode else AgentMode.PREPRODUCTION,
+            # Producción por defecto: el producto es asset-first (el usuario escribe en el
+            # compositor y espera que genere), no director-de-cine-first. Arrancar en
+            # preproducción hacía que "hazme una foto" acabara en tratamiento + plano
+            # maestro + pedir aprobación, en vez de una imagen.
+            mode=AgentMode(stored_mode) if stored_mode else AgentMode.PRODUCTION,
             open_tab=ui.get("open_tab"),
             selected_asset_ids=ui.get("selected_asset_ids") or None,
             messages=[self._entry_message(message, system_event)],

@@ -1587,3 +1587,76 @@ button {
   color: #444;
   padding: 3px 0;
 }
+
+/* ------------------------------------------------------------------ *
+ * Tarjeta de asset generándose: efecto "wow" de frame cinematográfico.
+ * Un barrido de luz recorre el encuadre, el fondo respira en degradado,
+ * y los corchetes de encuadre laten como los de una cámara enfocando.
+ * ------------------------------------------------------------------ */
+@keyframes xf-gen-sweep {
+  0%   { transform: translateX(-120%) skewX(-12deg); opacity: 0; }
+  35%  { opacity: 0.9; }
+  100% { transform: translateX(320%) skewX(-12deg); opacity: 0; }
+}
+@keyframes xf-gen-bg {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+@keyframes xf-gen-bracket {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.06); }
+}
+@keyframes xf-gen-scan {
+  0%   { top: 8%;  opacity: 0; }
+  20%  { opacity: 0.8; }
+  80%  { opacity: 0.8; }
+  100% { top: 92%; opacity: 0; }
+}
+@keyframes xf-gen-dots {
+  0%, 20%  { content: "·"; }
+  40%      { content: "··"; }
+  60%, 100%{ content: "···"; }
+}
+
+.xf-gen-card {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(120deg,
+    hsl(var(--muted)) 0%,
+    hsl(var(--accent)) 40%,
+    hsl(var(--muted)) 80%);
+  background-size: 220% 220%;
+  animation: xf-gen-bg 3.2s ease-in-out infinite;
+}
+.xf-gen-card::before {   /* barrido de luz */
+  content: "";
+  position: absolute;
+  inset: 0 40% 0 -40%;
+  background: linear-gradient(90deg,
+    transparent, rgba(255,255,255,0.55), transparent);
+  animation: xf-gen-sweep 1.9s cubic-bezier(.4,0,.2,1) infinite;
+}
+.xf-gen-scan {   /* línea de escaneo horizontal */
+  position: absolute;
+  left: 8%; right: 8%;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent,
+    hsl(var(--primary)), transparent);
+  box-shadow: 0 0 12px 2px hsl(var(--primary) / 0.6);
+  animation: xf-gen-scan 2.4s ease-in-out infinite;
+}
+.xf-gen-bracket {
+  position: absolute;
+  width: 18px; height: 18px;
+  border-color: hsl(var(--primary));
+  animation: xf-gen-bracket 1.8s ease-in-out infinite;
+}
+.xf-gen-dots::after {
+  content: "···";
+  animation: xf-gen-dots 1.4s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .xf-gen-card, .xf-gen-card::before, .xf-gen-scan,
+  .xf-gen-bracket, .xf-gen-dots::after { animation: none; }
+}
