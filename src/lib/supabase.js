@@ -6,8 +6,26 @@
  */
 import { createClient } from "@supabase/supabase-js";
 
-const url = import.meta.env.VITE_SUPABASE_URL;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Valores por defecto del proyecto. Las variables de entorno mandan cuando están
+// definidas; sin ellas se usan estos.
+//
+// Por qué van en el código y no dependen solo de Vercel: cuando `VITE_SUPABASE_URL` y
+// `VITE_SUPABASE_ANON_KEY` no están configuradas en el build, `hasSupabase` era `false`,
+// el cliente de Supabase quedaba en `null` y la app entera caía al driver de localStorage.
+// El resultado en producción: nadie estaba realmente autenticado —el perfil, los créditos
+// y el nombre eran datos locales de mentira— y el chat devolvía 401 ("sesión caducada")
+// porque no había ningún token que mandar. Con estos defaults la app funciona aunque el
+// build no traiga las variables.
+//
+// La `anon`/`publishable` de Supabase está PENSADA para ser pública: solo permite lo que
+// las políticas RLS dejan, y de todas formas viaja al navegador de cada visitante. No es
+// un secreto. El secreto es la `service_role`, que vive solo en el backend.
+const DEFAULT_SUPABASE_URL = "https://mlawipfdsbzqtryjkeiv.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY =
+  "sb_publishable_B47PqXvyxEXKtidKft_45A_-KoV7-OJ";
+
+const url = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL;
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
 
 export const hasSupabase = Boolean(url && anonKey);
 
