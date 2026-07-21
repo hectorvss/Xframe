@@ -1627,6 +1627,12 @@ function GenSettingsBar({
         >
           <Plus />
         </UIButton>
+        {onProjectTypeChange && (
+          <ProjectTypePill
+            type={projectType}
+            onChange={onProjectTypeChange}
+          />
+        )}
         <UIButton
           variant="ghost"
           size="icon"
@@ -1657,12 +1663,6 @@ function GenSettingsBar({
             </button>
           ))}
         </div>
-        {onProjectTypeChange && (
-          <ProjectTypePill
-            type={projectType}
-            onChange={onProjectTypeChange}
-          />
-        )}
         <ModelPicker value={model} onChange={setModel} mode={mode} />
 
         <div className="relative">
