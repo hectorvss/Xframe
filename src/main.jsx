@@ -141,6 +141,7 @@ import {
   conversationIdFor,
   labelForTool,
   AGENT_DOWN_MESSAGE,
+  mcpApi,
 } from "@/lib/agent";
 import { buildUIContext } from "@/lib/uiContext";
 import "./index.css";
@@ -11744,60 +11745,153 @@ function GitSettings() {
 const mcpClients = ["Claude", "Claude Code", "Cursor", "VS Code"];
 function McpServerSettings() {
   const [client, setClient] = useState("Claude");
+  const [server, setServer] = useState(null);
+  const [credentials, setCredentials] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("Mi agente");
+  const [access, setAccess] = useState("full");
+  const [newToken, setNewToken] = useState(null);
+  const [error, setError] = useState("");
+
+  const reload = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [nextServer, nextCredentials] = await Promise.all([
+        mcpApi("/status"),
+        mcpApi("/credentials"),
+      ]);
+      setServer(nextServer);
+      setCredentials(nextCredentials);
+    } catch (cause) {
+      setError("No se ha podido conectar con el servidor MCP. Comprueba que el backend está en marcha.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    reload();
+  }, []);
+
+  const serverUrl = server?.server_url || "—";
+  const scopes =
+    access === "full"
+      ? server?.scopes || []
+      : ["projects:read", "assets:read", "context:read", "jobs:read"];
+  const config = (key) => `{
+  "mcpServers": {
+    "xframe": {
+      "type": "http",
+      "url": "${serverUrl}",
+      "headers": { "Authorization": "Bearer ${key || "xfr_TU_TOKEN"}" }
+    }
+  }
+}`;
+
   return (
     <div className="mx-auto max-w-3xl px-8 py-10">
-      <h1 className="text-2xl font-bold tracking-tight">Xframe MCP server</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Servidor MCP de Xframe</h1>
       <p className="mt-1 text-muted-foreground">
-        Connect supported AI clients and developer tools to Xframe.
+        Conecta agentes a tus proyectos, assets, contexto creativo y generación.
       </p>
 
       <div className="mt-6 flex items-start gap-3 rounded-lg border bg-muted/40 p-4">
         <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div className="flex-1">
           <p className="text-sm font-medium">
-            What is Model Context Protocol (MCP)?
+            ¿Qué es Model Context Protocol (MCP)?
           </p>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            The Xframe MCP server allows AI agents, such as Claude, Codex, and
-            Cursor, to connect to Xframe and build, manage and deploy apps.
+            Es una conexión estándar para que Claude Code, Codex, Cursor u otros
+            agentes trabajen con Xframe sin exponer tu cuenta completa.
           </p>
         </div>
         <UIButton variant="outline" size="sm" className="shrink-0">
-          Read docs <ExternalLink />
+          Documentación <ExternalLink />
         </UIButton>
       </div>
 
-      <h2 className="mt-8 text-lg font-semibold">Server</h2>
+      <h2 className="mt-8 text-lg font-semibold">Servidor</h2>
       <Card className="mt-3 p-5">
-        <p className="text-sm font-medium">Server URL</p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-medium">URL del servidor</p>
+          <Badge variant={server?.status === "ready" ? "secondary" : "outline"}>
+            {loading ? "Comprobando" : server?.status === "ready" ? "Operativo" : "Sin conexión"}
+          </Badge>
+        </div>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Use this URL when adding Xframe as an MCP server in a supported
-          client.
+          Streamable HTTP con token Bearer. La URL se obtiene de tu backend activo.
         </p>
         <div className="mt-3 flex items-center justify-between gap-2 rounded-md border px-3 py-2 font-mono text-sm">
-          <span>https://mcp.xframe.ai/?src=settings</span>
-          <Copy className="size-4 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground" />
+          <span className="min-w-0 truncate">{serverUrl}</span>
+          <button
+            type="button"
+            title="Copiar URL"
+            onClick={() => navigator.clipboard?.writeText(serverUrl)}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+          ><Copy className="size-4" /></button>
         </div>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
         <Separator className="my-5" />
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-medium">Workspace access</p>
+            <p className="text-sm font-medium">Capacidades reales</p>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              Connected clients use the signed-in user's Xframe access. Tool
-              calls can edit projects, deploy apps, query databases, and consume
-              credits.
+              {server ? `${server.tools.length} herramientas: proyectos, contexto, assets, planos y agente de generación.` : "Cargando herramientas…"}
             </p>
           </div>
-          <UIButton variant="outline" className="shrink-0">
-            Manage access
+          <UIButton variant="outline" className="shrink-0" onClick={reload} disabled={loading}>
+            <RefreshCw className={cn(loading && "animate-spin")} /> Actualizar
           </UIButton>
         </div>
       </Card>
 
-      <h2 className="mt-8 text-lg font-semibold">Connect your client</h2>
+      <h2 className="mt-8 text-lg font-semibold">Token de acceso</h2>
+      <Card className="mt-3 p-5">
+        <p className="text-sm text-muted-foreground">
+          Crea una credencial revocable para un agente. El token se muestra una sola vez y puede limitarse a lectura.
+        </p>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          <Input value={name} onChange={(e) => setName(e.target.value)} className="sm:flex-1" placeholder="Nombre del agente" />
+          <Select value={access} onValueChange={setAccess}>
+            <SelectTrigger className="sm:w-52"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="readonly">Solo lectura</SelectItem>
+              <SelectItem value="full">Lectura, edición y generación</SelectItem>
+            </SelectContent>
+          </Select>
+          <UIButton
+            disabled={creating || loading || !name.trim()}
+            onClick={async () => {
+              setCreating(true); setError("");
+              try {
+                const result = await mcpApi("/credentials", {
+                  method: "POST", body: JSON.stringify({ name: name.trim(), scopes }),
+                });
+                setNewToken(result.token); setName("Mi agente"); await reload();
+              } catch {
+                setError("No se ha podido crear la credencial.");
+              } finally { setCreating(false); }
+            }}
+          >{creating ? <RefreshCw className="animate-spin" /> : <Plus />} Crear token</UIButton>
+        </div>
+        <div className="mt-4 divide-y rounded-md border">
+          {credentials.filter((key) => !key.revoked_at).map((key) => (
+            <div key={key.id} className="flex items-center gap-3 px-3 py-3 text-sm">
+              <div className="min-w-0 flex-1"><p className="font-medium">{key.name}</p><p className="truncate font-mono text-xs text-muted-foreground">{key.prefix}… · {(key.scopes || []).join(", ")}</p></div>
+              <span className="hidden text-xs text-muted-foreground sm:block">{key.last_used_at ? "En uso" : "Sin usar"}</span>
+              <UIButton variant="outline" size="sm" onClick={async () => { try { await mcpApi(`/credentials/${key.id}/revoke`, { method: "POST" }); await reload(); } catch { setError("No se ha podido revocar la credencial."); } }}>Revocar</UIButton>
+            </div>
+          ))}
+          {!loading && !credentials.filter((key) => !key.revoked_at).length && <p className="px-3 py-4 text-sm text-muted-foreground">Todavía no hay tokens MCP.</p>}
+        </div>
+      </Card>
+
+      <h2 className="mt-8 text-lg font-semibold">Conecta tu cliente</h2>
       <p className="mt-0.5 text-sm text-muted-foreground">
-        Pick your client and follow the steps. Authentication uses OAuth, so
-        there are no API keys to manage.
+        Elige tu cliente y pega el token creado arriba en su configuración. Nunca lo incluyas en un repositorio.
       </p>
       <Card className="mt-3 p-5">
         <div className="inline-flex rounded-full border bg-muted p-1 text-sm">
@@ -11821,14 +11915,14 @@ function McpServerSettings() {
           {client === "Claude" && (
             <>
               <p>
-                Add Xframe through Claude's connector settings. Works in Claude
-                Desktop and on claude.ai.
+                Claude web necesita un conector OAuth. Para usar el servidor hoy,
+                configura Claude Desktop o Claude Code con una cabecera Bearer.
               </p>
               <ol className="mt-4 space-y-3">
                 {[
-                  "In Claude, click the plus sign in the composer.",
-                  "Open Connectors, browse connectors, then search for Xframe.",
-                  "Click Connect, then sign in to Xframe when Claude prompts you.",
+                  "Crea un token de Xframe en esta página.",
+                  "Añade Xframe a tu configuración local de MCP.",
+                  "Pega el token como cabecera Authorization y reinicia el cliente.",
                 ].map((s, i) => (
                   <li key={i} className="flex items-center gap-3">
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full border text-xs text-muted-foreground">
@@ -11839,8 +11933,7 @@ function McpServerSettings() {
                 ))}
               </ol>
               <p className="mt-4 text-muted-foreground">
-                The Xframe tools appear in the composer's tool menu once
-                authentication is complete.
+                Las herramientas aparecerán cuando el cliente complete initialize.
               </p>
               <details className="mt-4">
                 <summary className="cursor-pointer font-medium">
@@ -11853,26 +11946,18 @@ function McpServerSettings() {
                   </code>
                   , then restart Claude Desktop:
                 </p>
-                <CodeBlock title="claude_desktop_config.json">{`{
-  "mcpServers": {
-    "lovable": {
-      "type": "http",
-      "url": "https://mcp.xframe.ai/?src=settings"
-    }
-  }
-}`}</CodeBlock>
+                <CodeBlock title="claude_desktop_config.json">{config(newToken)}</CodeBlock>
               </details>
             </>
           )}
           {client === "Claude Code" && (
             <>
-              <p>Run this command in your terminal:</p>
+              <p>Guarda el token en una variable de entorno y añade el servidor:</p>
               <CodeBlock title="terminal">
-                {`claude mcp add --transport http lovable "https://mcp.xframe.ai/?src=settings"`}
+                {`claude mcp add --transport http xframe "${serverUrl}" --header "Authorization: Bearer $XFRAME_MCP_TOKEN"`}
               </CodeBlock>
               <p className="mt-3 text-muted-foreground">
-                Claude Code opens a browser window for OAuth. Sign in to Xframe
-                to complete the connection.
+                Reinicia Claude Code tras exportar XFRAME_MCP_TOKEN. La credencial se puede revocar arriba.
               </p>
             </>
           )}
@@ -11885,13 +11970,7 @@ function McpServerSettings() {
                 </code>
                 :
               </p>
-              <CodeBlock title="~/.cursor/mcp.json">{`{
-  "mcpServers": {
-    "lovable": {
-      "url": "https://mcp.xframe.ai/?src=settings"
-    }
-  }
-}`}</CodeBlock>
+              <CodeBlock title="~/.cursor/mcp.json">{config(newToken)}</CodeBlock>
             </>
           )}
           {client === "VS Code" && (
@@ -11907,14 +11986,7 @@ function McpServerSettings() {
                 </code>
                 :
               </p>
-              <CodeBlock title=".vscode/mcp.json">{`{
-  "servers": {
-    "lovable": {
-      "type": "http",
-      "url": "https://mcp.xframe.ai/?src=settings"
-    }
-  }
-}`}</CodeBlock>
+              <CodeBlock title=".vscode/mcp.json">{config(newToken)}</CodeBlock>
             </>
           )}
         </div>

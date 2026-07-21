@@ -156,6 +156,17 @@ async function authorizedFetch(url, init = {}) {
   return second;
 }
 
+/** API de administración del servidor MCP (no el protocolo MCP en sí). */
+export async function mcpApi(path, init = {}) {
+  const response = await authorizedFetch(`${AGENT_URL}/mcp${path}`, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+  });
+  if (!response.ok) throw httpError(response);
+  if (response.status === 204) return null;
+  return response.json();
+}
+
 /**
  * Ticket de un solo uso para el SSE de reenganche.
  *

@@ -30,6 +30,10 @@ dependencies = [
     "redis>=5.2",
     "httpx>=0.28",
 
+    # MCP remoto. FastMCP se monta dentro de FastAPI con Streamable HTTP, el
+    # transporte recomendado para servidores de producción.
+    "mcp>=1.25",
+
     # Verificación del JWT de Supabase. El extra `crypto` es obligatorio, no
     # opcional: sin él PyJWT no sabe ES256 y todo token asimétrico se rechaza.
     "pyjwt[crypto]>=2.9",

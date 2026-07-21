@@ -43,10 +43,27 @@ psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/003_storage
 psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/004_conversation_resume.sql
 psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/005_migrate_asset_paths.sql
 psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/006_team_chat_realtime.sql
+psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/007_mcp_api.sql
 
 # contra Supabase
 supabase db push
 # o: aplica los ficheros 002...006 en orden contra "$DATABASE_URL"
+```
+
+### API y MCP
+
+El backend publica un servidor MCP remoto en `PUBLIC_BASE_URL/mcp`. Usa
+Streamable HTTP y una cabecera `Authorization: Bearer xfr_...`; las credenciales
+se crean, limitan por scopes y revocan desde `Ajustes > Servidor MCP`. No se
+aceptan identificadores de usuario desde el cliente y una clave restringida a
+proyectos concretos no puede escapar de esa lista.
+
+La migración `007_mcp_api.sql` es obligatoria antes de crear credenciales MCP.
+Las Edge Functions complementarias se despliegan así:
+
+```bash
+supabase functions deploy resolve-asset
+supabase functions deploy extract-url
 ```
 
 Los ficheros numerados son migraciones incrementales e idempotentes. En una instalación
