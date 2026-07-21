@@ -595,9 +595,9 @@ const rampLabelFor = (curve) =>
  */
 function RampCurve({ curve, onChange, onCommit }) {
   const ref = useRef(null);
-  const W = 140;
-  const H = 52;
-  const PAD = 8;
+  const W = 104;
+  const H = 40;
+  const PAD = 6;
   const xFor = (i) => PAD + (i * (W - 2 * PAD)) / (curve.length - 1);
   const yFor = (v) => H - PAD - ((v - RAMP_MIN) / (RAMP_MAX - RAMP_MIN)) * (H - 2 * PAD);
   const vFor = (y) => {
@@ -636,7 +636,7 @@ function RampCurve({ curve, onChange, onCommit }) {
     <svg
       ref={ref}
       viewBox={`0 0 ${W} ${H}`}
-      className="h-[52px] w-[140px] shrink-0 cursor-ns-resize touch-none select-none"
+      className="h-10 w-[104px] shrink-0 cursor-ns-resize touch-none select-none text-foreground"
     >
       {/* línea base 1x */}
       <line
@@ -644,27 +644,33 @@ function RampCurve({ curve, onChange, onCommit }) {
         x2={W - PAD}
         y1={yFor(1)}
         y2={yFor(1)}
-        stroke="#fff"
-        strokeOpacity="0.25"
+        stroke="currentColor"
+        strokeOpacity="0.2"
         strokeWidth="1"
         strokeDasharray="3 3"
       />
       {/* relleno bajo la curva */}
       <path
         d={`${path} L ${xFor(curve.length - 1)} ${H - PAD} L ${xFor(0)} ${H - PAD} Z`}
-        fill="#fff"
-        fillOpacity="0.1"
+        fill="currentColor"
+        fillOpacity="0.07"
       />
-      <path d={path} fill="none" stroke="#fff" strokeWidth="2" strokeLinejoin="round" />
+      <path
+        d={path}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
       {curve.map((v, i) => (
         <circle
           key={i}
           cx={xFor(i)}
           cy={yFor(v)}
-          r="4"
-          fill="#fff"
-          stroke="#525252"
-          strokeWidth="1"
+          r="3.5"
+          fill="currentColor"
+          stroke="#fff"
+          strokeWidth="1.5"
           onPointerDown={startDrag(i)}
         >
           <title>{`${+v.toFixed(2)}x al ${i * 25}% del clip`}</title>
@@ -1023,24 +1029,24 @@ function DirectorPanel({ assets = [] }) {
   };
 
   return (
-    <div className="relative mb-2 rounded-xl border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-white shadow-lg">
-      <div className="flex items-center gap-2">
+    <div className="relative mb-2 rounded-xl border bg-background px-2 py-1.5 shadow-sm">
+      <div className="flex flex-wrap items-center gap-1.5">
         <button
           onClick={() => {
             setOpen((v) => !v);
             setPop(null);
           }}
-          className="flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] font-medium text-neutral-300 transition-colors hover:bg-white/5"
+          className="flex shrink-0 items-center gap-1 rounded-md px-1 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-accent"
+          title="Director Panel: frames de anclaje, movimiento, speed ramp y duración"
         >
           <Video className="size-3.5" />
-          Director
           <ChevronDown className={cn("size-3 transition-transform", !open && "-rotate-90")} />
         </button>
 
         {open && (
           <>
             {/* Frames de anclaje: el plano ARRANCA en el primero y ATERRIZA en el
-                segundo. Slots 16:9 con etiqueta sobre degradado y flecha entre ambos. */}
+                segundo. Slots 16:9 compactos con etiqueta sobre degradado. */}
             <div className="flex shrink-0 items-center gap-1">
               {[
                 ["start_frame", "Inicio"],
@@ -1050,7 +1056,7 @@ function DirectorPanel({ assets = [] }) {
                 return (
                   <React.Fragment key={key}>
                     {fi === 1 && (
-                      <ChevronRight className="size-3.5 shrink-0 text-neutral-600" />
+                      <ChevronRight className="size-3 shrink-0 text-muted-foreground/60" />
                     )}
                     <div className="group/frame relative">
                       <button
@@ -1061,10 +1067,10 @@ function DirectorPanel({ assets = [] }) {
                             : `Elegir el frame de ${label.toLowerCase()} entre las imágenes del proyecto`
                         }
                         className={cn(
-                          "relative h-[52px] w-[88px] overflow-hidden rounded-lg border transition-colors",
+                          "relative h-10 w-[64px] overflow-hidden rounded-lg border transition-colors",
                           val
-                            ? "border-neutral-600 hover:border-neutral-400"
-                            : "border-dashed border-neutral-700 bg-neutral-800/60 hover:border-neutral-500",
+                            ? "hover:border-foreground/40"
+                            : "border-dashed bg-muted/40 hover:border-foreground/30",
                           pop === key && "ring-2 ring-primary",
                         )}
                       >
@@ -1074,11 +1080,18 @@ function DirectorPanel({ assets = [] }) {
                             style={{ backgroundImage: `url(${val.url})` }}
                           />
                         ) : (
-                          <div className="flex size-full flex-col items-center justify-center gap-0.5 text-neutral-500">
-                            <Plus className="size-3.5" />
+                          <div className="flex size-full items-center justify-center text-muted-foreground/60">
+                            <Plus className="size-3" />
                           </div>
                         )}
-                        <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-1.5 pb-0.5 pt-3 text-left text-[9px] font-medium text-white">
+                        <span
+                          className={cn(
+                            "pointer-events-none absolute inset-x-0 bottom-0 px-1 pb-px pt-2 text-left text-[8px] font-medium",
+                            val
+                              ? "bg-gradient-to-t from-black/85 to-transparent text-white"
+                              : "text-muted-foreground",
+                          )}
+                        >
                           {label}
                         </span>
                       </button>
@@ -1086,9 +1099,9 @@ function DirectorPanel({ assets = [] }) {
                         <button
                           onClick={() => setGenSettings({ [key]: null })}
                           title="Quitar"
-                          className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-md bg-black/70 text-white opacity-0 transition-opacity group-hover/frame:opacity-100"
+                          className="absolute right-0.5 top-0.5 flex size-3.5 items-center justify-center rounded bg-black/70 text-white opacity-0 transition-opacity group-hover/frame:opacity-100"
                         >
-                          <X className="size-2.5" />
+                          <X className="size-2" />
                         </button>
                       )}
                     </div>
@@ -1097,28 +1110,29 @@ function DirectorPanel({ assets = [] }) {
               })}
             </div>
 
-            <div className="h-8 w-px shrink-0 bg-neutral-800" />
-
             <button
               onClick={() => setPop(pop === "move" ? null : "move")}
+              title={`Movimiento de cámara: ${moveLabel}`}
               className={cn(
-                "flex h-[52px] min-w-0 items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-2.5 text-left transition-colors hover:border-neutral-500",
+                "flex h-10 min-w-0 shrink items-center gap-1.5 rounded-lg border px-2 text-left transition-colors hover:border-foreground/40",
                 pop === "move" && "ring-2 ring-primary",
               )}
             >
-              <MoveIcon className="size-4 shrink-0 text-neutral-300" />
+              <MoveIcon className="size-3.5 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
-                <p className="text-[8px] uppercase leading-none tracking-wide text-neutral-400">
+                <p className="text-[7px] uppercase leading-none tracking-wide text-muted-foreground">
                   Movement
                 </p>
-                <p className="mt-1 truncate text-sm font-medium leading-tight">{moveLabel}</p>
+                <p className="mt-0.5 max-w-[64px] truncate text-[11px] font-medium leading-tight">
+                  {moveLabel}
+                </p>
               </div>
             </button>
 
             {/* La curva de velocidad, editable EN VIVO: arrastra cualquier punto en
                 vertical. La discontinua es 1x; encima acelera, debajo ralentiza. */}
             <div
-              className="shrink-0 rounded-lg border border-neutral-700 bg-neutral-800 px-1"
+              className="shrink-0 rounded-lg border px-0.5"
               title="Speed ramp del clip: arrastra los puntos — arriba acelera, abajo ralentiza"
             >
               <RampCurve
@@ -1128,83 +1142,71 @@ function DirectorPanel({ assets = [] }) {
               />
             </div>
 
-            {/* Speed ramp: el cuerpo abre la lista; los chevrones recorren los presets
-                en orden — el patrón stepper de un panel de dirección de verdad. */}
-            <div
-              className={cn(
-                "flex h-[52px] shrink-0 items-stretch overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800",
-                pop === "ramp" && "ring-2 ring-primary",
-              )}
-            >
-              <button
-                onClick={() => setPop(pop === "ramp" ? null : "ramp")}
-                className="flex min-w-[86px] flex-col justify-center px-2.5 text-left transition-colors hover:bg-white/5"
+            {/* Speed ramp y Duración: steppers — el cuerpo abre la lista y los
+                chevrones recorren las opciones en orden. */}
+            {[
+              [
+                "ramp",
+                "Ramp",
+                rampLabel,
+                (dir) => {
+                  const i = SPEED_RAMPS.findIndex(
+                    ([label]) => label === (speedRamp ?? "Ninguno"),
+                  );
+                  const at = i >= 0 ? i : 0;
+                  const [r, pc] =
+                    SPEED_RAMPS[(at + dir + SPEED_RAMPS.length) % SPEED_RAMPS.length];
+                  setGenSettings({
+                    speed_ramp: r === "Ninguno" ? null : r,
+                    speed_curve: r === "Ninguno" ? null : [...pc],
+                  });
+                },
+              ],
+              [
+                "dur",
+                "Dur.",
+                s.dur,
+                (dir) => {
+                  const i = durationList.indexOf(s.dur);
+                  const next =
+                    durationList[
+                      (Math.max(0, i) + dir + durationList.length) % durationList.length
+                    ];
+                  setGenSettings({ dur: next });
+                },
+              ],
+            ].map(([key, label, value, step]) => (
+              <div
+                key={key}
+                className={cn(
+                  "flex h-10 shrink-0 items-stretch overflow-hidden rounded-lg border",
+                  pop === key && "ring-2 ring-primary",
+                )}
               >
-                <p className="text-[8px] uppercase leading-none tracking-wide text-neutral-400">
-                  Speed ramp
-                </p>
-                <p className="mt-1 max-w-[110px] truncate text-sm font-medium leading-tight">
-                  {rampLabel}
-                </p>
-              </button>
-              <div className="flex flex-col border-l border-neutral-700">
-                {[-1, 1].map((dir) => (
-                  <button
-                    key={dir}
-                    onClick={() => {
-                      const i = SPEED_RAMPS.findIndex(
-                        ([label]) => label === (speedRamp ?? "Ninguno"),
-                      );
-                      const at = i >= 0 ? i : 0;
-                      const [r, pc] =
-                        SPEED_RAMPS[(at + dir + SPEED_RAMPS.length) % SPEED_RAMPS.length];
-                      setGenSettings({
-                        speed_ramp: r === "Ninguno" ? null : r,
-                        speed_curve: r === "Ninguno" ? null : [...pc],
-                      });
-                    }}
-                    className="flex flex-1 items-center justify-center px-1.5 text-neutral-400 transition-colors hover:bg-white/10 hover:text-white"
-                  >
-                    <ChevronDown className={cn("size-3", dir === -1 && "rotate-180")} />
-                  </button>
-                ))}
+                <button
+                  onClick={() => setPop(pop === key ? null : key)}
+                  className="flex flex-col justify-center px-2 text-left transition-colors hover:bg-accent"
+                >
+                  <p className="text-[7px] uppercase leading-none tracking-wide text-muted-foreground">
+                    {label}
+                  </p>
+                  <p className="mt-0.5 max-w-[72px] truncate text-[11px] font-medium leading-tight tabular-nums">
+                    {value}
+                  </p>
+                </button>
+                <div className="flex flex-col border-l">
+                  {[-1, 1].map((dir) => (
+                    <button
+                      key={dir}
+                      onClick={() => step(dir)}
+                      className="flex flex-1 items-center justify-center px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      <ChevronDown className={cn("size-2.5", dir === -1 && "rotate-180")} />
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-
-            <div
-              className={cn(
-                "ml-auto flex h-[52px] shrink-0 items-stretch overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800",
-                pop === "dur" && "ring-2 ring-primary",
-              )}
-            >
-              <button
-                onClick={() => setPop(pop === "dur" ? null : "dur")}
-                className="flex flex-col justify-center px-2.5 text-left transition-colors hover:bg-white/5"
-              >
-                <p className="text-[8px] uppercase leading-none tracking-wide text-neutral-400">
-                  Duración
-                </p>
-                <p className="mt-1 text-sm font-medium leading-tight tabular-nums">{s.dur}</p>
-              </button>
-              <div className="flex flex-col border-l border-neutral-700">
-                {[-1, 1].map((dir) => (
-                  <button
-                    key={dir}
-                    onClick={() => {
-                      const i = durationList.indexOf(s.dur);
-                      const next =
-                        durationList[
-                          (Math.max(0, i) + dir + durationList.length) % durationList.length
-                        ];
-                      setGenSettings({ dur: next });
-                    }}
-                    className="flex flex-1 items-center justify-center px-1.5 text-neutral-400 transition-colors hover:bg-white/10 hover:text-white"
-                  >
-                    <ChevronDown className={cn("size-3", dir === -1 && "rotate-180")} />
-                  </button>
-                ))}
-              </div>
-            </div>
+            ))}
           </>
         )}
       </div>
