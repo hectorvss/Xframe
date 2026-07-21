@@ -49,6 +49,11 @@ services:
     # corre en la máquina, y desde el host `127.0.0.1:8000` le basta.
     ports:
       - "127.0.0.1:8000:8000"
+    # El Caddy compartido vive en la red de txlemetry. Mantener la API tambiÃ©n
+    # en ella hace resoluble el upstream `xframe-api` tras cada recreaciÃ³n.
+    networks:
+      - default
+      - shared-proxy
     healthcheck:
       test:
         - CMD
@@ -84,3 +89,8 @@ services:
 
 volumes:
   assembly-work:
+
+networks:
+  shared-proxy:
+    name: deploy_default
+    external: true
