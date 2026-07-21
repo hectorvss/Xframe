@@ -166,6 +166,11 @@ const go = (p) => {
   history.pushState({}, "", p);
   dispatchEvent(new PopStateEvent("popstate"));
 };
+
+// Zona de planes DENTRO del producto. Cualquier botón de "mejorar plan" que se
+// pulse ya autenticado va aquí, no a la landing pública de precios: dentro del
+// SaaS el usuario cambia de plan sin salir a la web de marketing.
+const goToPlans = () => go("/settings/billing?section=plans");
 /**
  * Escribe una frase letra a letra, la borra y pasa a la siguiente.
  * Se usa como placeholder para sugerir qué se puede pedir.
@@ -2561,7 +2566,7 @@ function WorkspaceSwitcher({ collapsed }) {
         <DropdownMenuItem onClick={() => go("/settings/workspace")}>
           <Settings className="mr-2 size-3.5" /> Configuración
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => go("/es/pricing")}>
+        <DropdownMenuItem onClick={() => goToPlans()}>
           <Zap className="mr-2 size-3.5" /> Mejorar plan
           <Badge variant="secondary" className="ml-auto rounded">
             Pro
@@ -2693,7 +2698,7 @@ function DashboardSide({ width, onResize }) {
               <Gift className="size-5" />
             </button>
             <button
-              onClick={() => go("/es/pricing")}
+              onClick={() => goToPlans()}
               title={profile ? `${profile.credits} créditos · plan ${profile.plan}` : "Plan"}
               className="flex size-9 items-center justify-center rounded-full bg-secondary hover:bg-accent"
             >
@@ -2714,7 +2719,7 @@ function DashboardSide({ width, onResize }) {
               </div>
             </Card>
             <button
-              onClick={() => go("/es/pricing")}
+              onClick={() => goToPlans()}
               className="flex items-center gap-2.5 rounded-xl border bg-card p-3 text-left shadow-sm transition-colors hover:bg-accent"
             >
               <div className="min-w-0 flex-1">
@@ -6489,7 +6494,7 @@ function CreditsBadge() {
   const low = profile.credits < 30;
   return (
     <button
-      onClick={() => go("/es/pricing")}
+      onClick={() => goToPlans()}
       title={`${profile.credits} créditos · plan ${profile.plan}`}
       className={cn(
         "flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors hover:bg-accent",
@@ -6517,7 +6522,7 @@ function CreditsDialog({ credits, onClose }) {
           <UIButton variant="outline" onClick={onClose}>
             Ahora no
           </UIButton>
-          <UIButton onClick={() => go("/es/pricing")}>
+          <UIButton onClick={() => goToPlans()}>
             <Zap /> Ver planes
           </UIButton>
         </div>
@@ -7012,7 +7017,7 @@ function Editor({ projectId }) {
           <UIButton
             size="sm"
             className="bg-violet-600 text-white hover:bg-violet-700"
-            onClick={() => go("/es/pricing")}
+            onClick={() => goToPlans()}
           >
             <Zap /> Mejorar plan
           </UIButton>
@@ -7673,7 +7678,7 @@ function AccountSettings() {
             <Zap className="size-3" />
             {profile.credits} créditos
           </Badge>
-          <UIButton size="sm" onClick={() => go("/es/pricing")}>
+          <UIButton size="sm" onClick={() => goToPlans()}>
             Mejorar plan
           </UIButton>
         </div>
@@ -8963,7 +8968,7 @@ function BillingPlanCard({ p, annual = false }) {
       )}
       <UIButton
         variant={isPro ? "default" : "outline"}
-        onClick={() => go("/es/pricing")}
+        onClick={() => goToPlans()}
         className={cn(
           "mt-4 w-full",
           isPro && "bg-violet-600 text-white hover:bg-violet-700",
@@ -9223,6 +9228,20 @@ function BillingSettings() {
     db.listCreditUsage(profile.id, 30).then(setUsage).catch(() => setUsage([]));
   }, [profile?.id]);
 
+  // Llegado desde un botón de "mejorar plan" (?section=plans): baja a la
+  // sección de planes de esta misma página.
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get("section") !== "plans") return;
+    const t = setTimeout(
+      () =>
+        document
+          .getElementById("planes")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      150,
+    );
+    return () => clearTimeout(t);
+  }, []);
+
   if (showUsage) return <UsageDetails onBack={() => setShowUsage(false)} />;
 
   const spent = usage.reduce((sum, row) => sum + row.amount, 0);
@@ -9259,39 +9278,66 @@ function BillingSettings() {
           <div className="flex items-center gap-3">
             <img src="/lovable-logo.svg" alt="" className="size-7" />
             <div className="flex flex-1 items-center gap-2">
-              <span className="font-semibold">Xframe Free</span>
-              <UIButton variant="outline" size="sm">
-                Manage
+              <span className="font-semibold capitalize">
+                Xframe {profile?.plan ?? "Free"}
+              </span>
+              <UIButton
+                variant="outline"
+                size="sm"
+                onClick={() => document.getElementById("planes")?.scrollIntoView({ behavior: "smooth" })}
+              >
+                Gestionar
               </UIButton>
             </div>
           </div>
           <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-            Free usage included <Info className="size-3" />
+            Uso incluido en tu plan <Info className="size-3" />
           </p>
-          <div className="mt-4 rounded-lg border bg-muted/30 p-4">
-            <div className="flex items-center justify-between text-sm">
-              <span className="flex items-center gap-1 font-medium">
-                Daily build credits <Info className="size-3" />
-              </span>
-              <span className="text-muted-foreground">
-                <b className="text-foreground">5</b> left
-              </span>
-            </div>
-            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-secondary">
-              <div className="h-full w-full rounded-full bg-blue-600" />
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Resets at midnight UTC
-            </p>
-          </div>
+          {(() => {
+            const credits = profile?.credits ?? 0;
+            const allowance = planAllowance[profile?.plan] ?? 200;
+            const pct = Math.min(100, Math.round((credits / allowance) * 100));
+            const low = credits < 30;
+            return (
+              <div className="mt-4 rounded-lg border bg-muted/30 p-4">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-1 font-medium">
+                    Créditos disponibles <Info className="size-3" />
+                  </span>
+                  <span className={cn("text-muted-foreground", low && "text-destructive")}>
+                    <b className={cn("text-foreground", low && "text-destructive")}>
+                      {credits.toLocaleString("es-ES")}
+                    </b>{" "}
+                    de {allowance.toLocaleString("es-ES")}
+                  </span>
+                </div>
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-secondary">
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-all",
+                      low ? "bg-destructive" : "bg-blue-600",
+                    )}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Cada generación descuenta créditos según el modelo y la duración.
+                </p>
+              </div>
+            );
+          })()}
           <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border p-4">
             <div>
-              <p className="text-sm font-medium">Need more credits?</p>
+              <p className="text-sm font-medium">¿Necesitas más créditos?</p>
               <p className="text-xs text-muted-foreground">
-                Upgrade your plan for more credits.
+                Mejora tu plan para tener más créditos cada mes.
               </p>
             </div>
-            <UIButton>Upgrade plan</UIButton>
+            <UIButton
+              onClick={() => document.getElementById("planes")?.scrollIntoView({ behavior: "smooth" })}
+            >
+              Mejorar plan
+            </UIButton>
           </div>
         </Card>
 
@@ -9355,7 +9401,9 @@ function BillingSettings() {
         </Card>
       </div>
 
-      <h2 className="mt-12 text-xl font-semibold">Cambia tu plan</h2>
+      <h2 id="planes" className="mt-12 scroll-mt-8 text-xl font-semibold">
+        Cambia tu plan
+      </h2>
       <div className="mt-4 inline-flex rounded-full border bg-muted p-1 text-sm">
         <button
           onClick={() => setBilling("monthly")}
