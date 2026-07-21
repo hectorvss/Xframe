@@ -211,12 +211,13 @@ export function StudioProvider({ children }) {
    * el usuario escribe en el panel y aterriza dentro de su proyecto nuevo.
    */
   const createProject = useCallback(
-    async ({ title, prompt = "", settings = {} } = {}) => {
+    async ({ title, prompt = "", settings = {}, projectType = "cinema" } = {}) => {
       const project = await db.createProject({
         ownerId: profile.id,
         title: title || titleFromPrompt(prompt),
         prompt,
         settings: { ...genSettings, ...settings },
+        projectType,
       });
       await refreshProjects();
       return project;

@@ -416,7 +416,9 @@ class GenerateVideoTool(_GenerationTool):
                 None,
             ),
             "aspect": described(str | None, "Aspect ratio the model supports, e.g. '16:9'.", None),
-            "resolution": described(str | None, "Resolution the model supports, e.g. '1080p'.", None),
+            "resolution": described(
+                str | None, "Resolution the model supports, e.g. '1080p'.", None
+            ),
             "init_image_url": described(
                 str | None,
                 "First frame, for image-to-video. Use the URL of an image asset already "
@@ -598,7 +600,9 @@ class GenerateShotBatchTool(_GenerationTool):
             que impide que un plano roto cancele a sus hermanos ya pagados.
             """
             job = await self.enqueue(
-                shot.payload, adapter=adapter, shot_id=shot.shot_id  # type: ignore[arg-type]
+                shot.payload,
+                adapter=adapter,
+                shot_id=shot.shot_id,  # type: ignore[arg-type]
             )
             return JobResult(
                 job_id=job.job_id,
@@ -641,9 +645,7 @@ class GenerateShotBatchTool(_GenerationTool):
         }
 
     @classmethod
-    async def create(
-        cls, ctx: ToolContext, snap: TaxonomySnapshot
-    ) -> GenerateShotBatchTool | None:
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> GenerateShotBatchTool | None:
         models = snap.models_for("video")
         if not models:
             return None
@@ -709,6 +711,8 @@ class GenerateAudioTool(_GenerationTool):
         duration_s: float | None = None,
         composition_plan: dict[str, Any] | None = None,
         loop: bool = False,
+        placement_start_ms: int | None = None,
+        placement_end_ms: int | None = None,
         **_: Any,
     ) -> tuple[str, Any]:
         model = self.require_model(model_id, "audio")
@@ -740,9 +744,7 @@ class GenerateAudioTool(_GenerationTool):
             found = {str(row["id"]) for row in rows}
             missing = [line_id for line_id in line_ids if line_id not in found]
             if missing:
-                raise XframeToolRetryableError(
-                    "Unknown screenplay line ids: " + ", ".join(missing)
-                )
+                raise XframeToolRetryableError("Unknown screenplay line ids: " + ", ".join(missing))
             for row in rows:
                 if not row["provider_voice_id"]:
                     raise XframeToolRetryableError(
@@ -773,10 +775,24 @@ class GenerateAudioTool(_GenerationTool):
             "composition_plan": composition_plan,
             "loop": loop,
         }
+        if placement_start_ms is not None:
+            if placement_start_ms < 0:
+                raise XframeToolRetryableError("placement_start_ms cannot be negative.")
+            inferred_end = placement_start_ms + int((duration_s or 0) * 1000)
+            end_ms = placement_end_ms or inferred_end
+            if end_ms <= placement_start_ms:
+                raise XframeToolRetryableError(
+                    "placement_end_ms must be greater than placement_start_ms."
+                )
+            extra["placement"] = {
+                "start_ms": placement_start_ms,
+                "end_ms": end_ms,
+                "track_kind": "voiceover" if kind == "voice" else kind,
+                "script_line_id": line_ids[0] if len(line_ids) == 1 else None,
+            }
         if kind == "dialogue":
             extra["dialogue_inputs"] = [
-                {"text": line["text"], "voice_id": line["provider_voice_id"]}
-                for line in lines
+                {"text": line["text"], "voice_id": line["provider_voice_id"]} for line in lines
             ]
         elif kind == "voice":
             # A single render cannot honestly use several speaker identities.
@@ -835,7 +851,9 @@ class GenerateAudioTool(_GenerationTool):
                     str | None, "Optional voice override for otherwise unassigned lines.", None
                 ),
                 prompt=described(
-                    str | None, "Music, SFX or ambience brief. Never substitutes screenplay dialogue.", None
+                    str | None,
+                    "Music, SFX or ambience brief. Never substitutes screenplay dialogue.",
+                    None,
                 ),
                 duration_s=described(float | None, "Target audio duration in seconds.", None),
                 composition_plan=described(
@@ -844,6 +862,18 @@ class GenerateAudioTool(_GenerationTool):
                     None,
                 ),
                 loop=described(bool, "Make SFX/ambience loopable when supported.", False),
+                placement_start_ms=described(
+                    int | None,
+                    "Optional exact timeline start in milliseconds. When supplied, the "
+                    "finished asset is automatically inserted into the audio plan.",
+                    None,
+                ),
+                placement_end_ms=described(
+                    int | None,
+                    "Optional exact timeline end in milliseconds; defaults to start plus "
+                    "the generated duration.",
+                    None,
+                ),
             ),
             description=(
                 "Generate reusable voice, multi-character dialogue, music, sound effects or "
@@ -957,9 +987,7 @@ class GenerateLipsyncTool(_GenerationTool):
         )
 
     @classmethod
-    async def create(
-        cls, ctx: ToolContext, snap: TaxonomySnapshot
-    ) -> GenerateLipsyncTool | None:
+    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> GenerateLipsyncTool | None:
         models = snap.models_for("lipsync")
         if not models:
             return None
@@ -1034,9 +1062,7 @@ class GenerateTransitionTool(_GenerationTool):
 
     name: str = "generate_transition"
 
-    async def _arun_impl(
-        self, transition_id: str, model_id: str, **_: Any
-    ) -> tuple[str, Any]:
+    async def _arun_impl(self, transition_id: str, model_id: str, **_: Any) -> tuple[str, Any]:
         row = await db.fetchrow(
             """
             select t.*, fa.url as from_url, fa.status as from_status,
@@ -1056,7 +1082,11 @@ class GenerateTransitionTool(_GenerationTool):
         if row["status"] == "ready" and row["generated_asset_id"]:
             return (
                 f"Transition {transition_id} is already ready; reused its deterministic output.",
-                {"transition_id": transition_id, "asset_id": str(row["generated_asset_id"]), "reused": True},
+                {
+                    "transition_id": transition_id,
+                    "asset_id": str(row["generated_asset_id"]),
+                    "reused": True,
+                },
             )
         if row["from_status"] != "ready" or row["to_status"] != "ready":
             raise XframeToolRetryableError("Both transition boundary assets must be ready.")
@@ -1080,21 +1110,33 @@ class GenerateTransitionTool(_GenerationTool):
             await _extract_boundary_frame(to_url, to_path, last=False)
             storage = SupabaseStorage()
             from_ref = await storage.put(
-                project_id=self.ctx.project_id, job_id=f"transition-{transition_id}",
-                filename="from-last.png", data=Path(from_path).read_bytes(), content_type="image/png",
+                project_id=self.ctx.project_id,
+                job_id=f"transition-{transition_id}",
+                filename="from-last.png",
+                data=Path(from_path).read_bytes(),
+                content_type="image/png",
             )
             to_ref = await storage.put(
-                project_id=self.ctx.project_id, job_id=f"transition-{transition_id}",
-                filename="to-first.png", data=Path(to_path).read_bytes(), content_type="image/png",
+                project_id=self.ctx.project_id,
+                job_id=f"transition-{transition_id}",
+                filename="to-first.png",
+                data=Path(to_path).read_bytes(),
+                content_type="image/png",
             )
 
         parameters = dict(row["parameters"] or {})
         preserve_ids = set(parameters.get("preserve_element_ids") or [])
         req = GenerationRequest(
-            modality="video", model_id=model.id,
-            prompt=str(parameters.get("prompt") or "A seamless visual bridge between the exact boundary frames."),
+            modality="video",
+            model_id=model.id,
+            prompt=str(
+                parameters.get("prompt")
+                or "A seamless visual bridge between the exact boundary frames."
+            ),
             duration_s=duration_s,
-            init_image_url=from_ref, last_frame_url=to_ref, seed=int(row["seed"]),
+            init_image_url=from_ref,
+            last_frame_url=to_ref,
+            seed=int(row["seed"]),
             elements=self.resolve_elements(
                 [element.name for element in self.snap.elements if element.id in preserve_ids]
             ),
@@ -1110,23 +1152,36 @@ class GenerateTransitionTool(_GenerationTool):
         job = await self.enqueue(req, adapter=adapter)
         await db.execute(
             "update public.timeline_transitions set status='queued', model_id=$2, updated_at=now() where id=$1::uuid",
-            transition_id, model.id,
+            transition_id,
+            model.id,
         )
         if row["operation_id"]:
             await db.execute(
                 "update public.asset_operations set status='queued', provider=$2, model_id=$3, job_id=$4::uuid where id=$1::uuid",
-                row["operation_id"], adapter.provider_id, model.id, job.job_id,
+                row["operation_id"],
+                adapter.provider_id,
+                model.id,
+                job.job_id,
             )
         return (
             f"Deterministic transition {transition_id} queued from exact boundary frames "
             f"with seed {row['seed']}. Job {job.job_id}; {job.credits_reserved} credits reserved.",
-            {"job_id": job.job_id, "transition_id": transition_id, "signature": row["signature"], "seed": row["seed"], "credits": job.credits_reserved},
+            {
+                "job_id": job.job_id,
+                "transition_id": transition_id,
+                "signature": row["signature"],
+                "seed": row["seed"],
+                "credits": job.credits_reserved,
+            },
         )
 
     @classmethod
-    async def create(cls, ctx: ToolContext, snap: TaxonomySnapshot) -> GenerateTransitionTool | None:
+    async def create(
+        cls, ctx: ToolContext, snap: TaxonomySnapshot
+    ) -> GenerateTransitionTool | None:
         models = tuple(
-            model for model in snap.models_for("video")
+            model
+            for model in snap.models_for("video")
             if model.supports_i2v and model.supports_last_frame
         )
         if not models:
@@ -1135,7 +1190,10 @@ class GenerateTransitionTool(_GenerationTool):
             args_schema=build_args(
                 "GenerateTransitionArgs",
                 transition_id=described(str, "Id returned by plan_transition."),
-                model_id=described(literal_of([model.id for model in models]), "Model supporting exact first and last frames."),
+                model_id=described(
+                    literal_of([model.id for model in models]),
+                    "Model supporting exact first and last frames.",
+                ),
             ),
             description=(
                 "Render a planned generated transition from the exact last frame of asset A "
@@ -1251,7 +1309,11 @@ class AssembleVideoTool(_GenerationTool):
         audio_track: str | None = None
         if audio_asset_id:
             audio_track = await sign_reference(
-                str((await _asset_or_raise(self.ctx.project_id, audio_asset_id, kind="audio"))["url"])
+                str(
+                    (await _asset_or_raise(self.ctx.project_id, audio_asset_id, kind="audio"))[
+                        "url"
+                    ]
+                )
             )
 
         audio_cues: list[AudioTimelineClip] = []
@@ -1292,9 +1354,7 @@ class AssembleVideoTool(_GenerationTool):
                         loop=bool(cue["loop"]),
                         ducking_group=cue["ducking_group"],
                         ducking_db=(
-                            float(cue["ducking_db"])
-                            if cue["ducking_db"] is not None
-                            else None
+                            float(cue["ducking_db"]) if cue["ducking_db"] is not None else None
                         ),
                     )
                 )
@@ -1333,8 +1393,7 @@ class AssembleVideoTool(_GenerationTool):
             ordered_assets,
         )
         transition_by_pair = {
-            (str(row["from_asset_id"]), str(row["to_asset_id"])): row
-            for row in transition_rows
+            (str(row["from_asset_id"]), str(row["to_asset_id"])): row for row in transition_rows
         }
         timeline_clips: list[TimelineClip] = []
         for index, shot_id in enumerate(shot_ids):

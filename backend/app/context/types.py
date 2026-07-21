@@ -329,8 +329,11 @@ class XframeUIContext(BaseModel):
 
     screenplay: list[dict[str, Any]] = Field(default_factory=list)
     """Editable scenes with ordered dialogue/action lines."""
+    asset_links: list[dict[str, Any]] = Field(default_factory=list)
+    """Explicit visual assets assigned to a screenplay scene or line."""
     character_voices: list[dict[str, Any]] = Field(default_factory=list)
     audio_cues: list[dict[str, Any]] = Field(default_factory=list)
+    audio_templates: list[dict[str, Any]] = Field(default_factory=list)
     transitions: list[dict[str, Any]] = Field(default_factory=list)
 
     gen_settings: GenSettings = Field(default_factory=GenSettings)

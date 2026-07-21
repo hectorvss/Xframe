@@ -319,7 +319,9 @@ def _format_camera(camera: CameraSpec) -> str:
     return f"<camera {' '.join(parts)}/>" if parts else ""
 
 
-def _format_timeline(shots: Sequence[ShotContext], detail: ContextDetail, limit: int | None) -> tuple[str, int]:
+def _format_timeline(
+    shots: Sequence[ShotContext], detail: ContextDetail, limit: int | None
+) -> tuple[str, int]:
     """
     La timeline completa. Devuelve `(xml, planos_mostrados)`.
 
@@ -435,7 +437,9 @@ def _format_assets(
     lines = [_format_asset(a, detail) for a in shown]
     if total > len(shown):
         lines.append(_truncation(total - len(shown), "assets"))
-    return P.ASSETS_TEMPLATE.format(shown=len(shown), total=total, assets="\n".join(lines)), len(shown)
+    return P.ASSETS_TEMPLATE.format(shown=len(shown), total=total, assets="\n".join(lines)), len(
+        shown
+    )
 
 
 def _format_gen_settings(settings: GenSettings) -> str:
@@ -460,7 +464,14 @@ def _format_gen_settings(settings: GenSettings) -> str:
 
 
 def _format_production(ctx: XframeUIContext, detail: ContextDetail) -> str:
-    if not (ctx.screenplay or ctx.character_voices or ctx.audio_cues or ctx.transitions):
+    if not (
+        ctx.screenplay
+        or ctx.asset_links
+        or ctx.character_voices
+        or ctx.audio_cues
+        or ctx.audio_templates
+        or ctx.transitions
+    ):
         return ""
     lines: list[str] = []
     if ctx.character_voices:
@@ -497,6 +508,24 @@ def _format_production(ctx: XframeUIContext, detail: ContextDetail) -> str:
                 lines.append(f"<line {attrs}>{_body(_clip(str(item.get('text', '')), 800))}</line>")
             lines.append("</scene>")
         lines.append("</screenplay>")
+    if ctx.asset_links:
+        lines.append("<screenplay_asset_links>")
+        for link in ctx.asset_links[:120]:
+            lines.append(
+                f'<asset_link id="{_attr(link.get("id", ""))}" '
+                f'scene="{_attr(link.get("scene_id", ""))}" '
+                f'line="{_attr(link.get("script_line_id", ""))}" '
+                f'asset_id="{_attr(link.get("asset_id", ""))}" '
+                f'asset_name="{_attr(link.get("asset_name", ""))}" '
+                f'asset_type="{_attr(link.get("asset_type", ""))}" '
+                f'asset_path="{_attr(link.get("asset_path", ""))}" '
+                f'role="{_attr(link.get("role", "reference"))}" '
+                f'range_ms="{_attr(link.get("start_offset_ms", ""))}-'
+                f'{_attr(link.get("end_offset_ms", ""))}" '
+                f'locked="{str(bool(link.get("locked", True))).lower()}">'
+                f"{_body(_clip(str(link.get('instructions', '')), 500))}</asset_link>"
+            )
+        lines.append("</screenplay_asset_links>")
     if ctx.audio_cues:
         lines.append("<audio_cues>")
         for cue in ctx.audio_cues[:100]:
@@ -507,6 +536,19 @@ def _format_production(ctx: XframeUIContext, detail: ContextDetail) -> str:
                 f'gain_db="{cue.get("gain_db", 0)}" role="{_attr(cue.get("narrative_role", ""))}"/>'
             )
         lines.append("</audio_cues>")
+    if ctx.audio_templates:
+        lines.append("<sound_templates>")
+        for template in ctx.audio_templates[:60]:
+            lines.append(
+                f'<sound_template id="{_attr(template.get("id", ""))}" '
+                f'name="{_attr(template.get("name", ""))}" '
+                f'kind="{_attr(template.get("kind", ""))}" '
+                f'duration_ms="{_attr(template.get("duration_ms", ""))}" '
+                f'loop="{str(bool(template.get("loop", False))).lower()}" '
+                f'intensity="{_attr(template.get("intensity", 0.5))}">'
+                f"{_body(_clip(str(template.get('prompt', '')), 700))}</sound_template>"
+            )
+        lines.append("</sound_templates>")
     if ctx.transitions:
         lines.append("<transitions>")
         for transition in ctx.transitions[:80]:
@@ -617,7 +659,9 @@ def _render_minimal_context(ctx: XframeUIContext, budget_chars: int) -> tuple[st
     selection = ""
     if ctx.selected_assets:
         selection = P.SELECTION_TEMPLATE.format(
-            assets="\n".join(_format_asset(asset, ContextDetail.FULL) for asset in ctx.selected_assets)
+            assets="\n".join(
+                _format_asset(asset, ContextDetail.FULL) for asset in ctx.selected_assets
+            )
         )
 
     def wrap(timeline: str) -> str:
@@ -684,16 +728,13 @@ def _format_guidance(guidance: Guidance) -> str:
         )
 
     if guidance.skills:
-        rendered = "\n".join(
-            _format_skill(skill) for skill in guidance.skills if skill.name
-        )
+        rendered = "\n".join(_format_skill(skill) for skill in guidance.skills if skill.name)
         if rendered:
             parts.append(P.SKILLS_TEMPLATE.format(skills=rendered))
 
     if guidance.sources:
         rendered = "\n".join(
-            _format_source(source)
-            for source in guidance.sources[:_GUIDANCE_MAX_SOURCES]
+            _format_source(source) for source in guidance.sources[:_GUIDANCE_MAX_SOURCES]
         )
         if rendered:
             parts.append(P.SOURCES_TEMPLATE.format(sources=rendered))
@@ -884,8 +925,8 @@ class XframeContextManager:
             return_exceptions=True,
         )
         project, brief, shots, assets_bundle, sheets, profile, guidance, production = [
-                self._or_default(r, default)
-                for r, default in zip(
+            self._or_default(r, default)
+            for r, default in zip(
                 results, ({}, [], [], ([], 0), {}, {}, Guidance(), {}), strict=True
             )
         ]
@@ -908,8 +949,10 @@ class XframeContextManager:
             recent_assets=assets,
             selected_assets=selected,
             screenplay=production.get("screenplay", []),
+            asset_links=production.get("asset_links", []),
             character_voices=production.get("character_voices", []),
             audio_cues=production.get("audio_cues", []),
+            audio_templates=production.get("audio_templates", []),
             transitions=production.get("transitions", []),
             gen_settings=self._build_gen_settings(project, profile),
             credits=int(profile.get("credits", 0) or 0),
@@ -932,7 +975,15 @@ class XframeContextManager:
         return dict(row) if row else {}
 
     async def _load_production(self) -> dict[str, Any]:
-        scene_rows, line_rows, voice_rows, cue_rows, transition_rows = await asyncio.gather(
+        (
+            scene_rows,
+            line_rows,
+            voice_rows,
+            cue_rows,
+            transition_rows,
+            asset_link_rows,
+            audio_template_rows,
+        ) = await asyncio.gather(
             db.fetch(
                 """select id, position, title, setting, time_of_day, summary,
                           dramatic_intent, target_duration_ms, status
@@ -978,11 +1029,36 @@ class XframeContextManager:
                     order by created_at""",
                 self._project_id,
             ),
+            db.fetch(
+                """select sal.id, sal.scene_id, sal.script_line_id, sal.asset_id,
+                          a.name as asset_name, a.type as asset_type, a.url as asset_path,
+                          sal.role, sal.instructions, sal.start_offset_ms,
+                          sal.end_offset_ms, sal.locked
+                     from public.script_asset_links sal
+                     join public.assets a on a.id=sal.asset_id
+                    where sal.project_id=$1::uuid
+                    order by sal.scene_id, sal.script_line_id nulls first, sal.created_at""",
+                self._project_id,
+            ),
+            db.fetch(
+                """select id, name, kind, prompt, duration_ms, loop, intensity,
+                          composition_plan, tags
+                     from public.audio_templates where project_id=$1::uuid
+                    order by updated_at desc""",
+                self._project_id,
+            ),
         )
         lines_by_scene: dict[str, list[dict[str, Any]]] = {}
         for row in line_rows:
             data = dict(row)
-            for key in ("id", "scene_id", "speaker_element_id", "voice_profile_id", "shot_id", "audio_asset_id"):
+            for key in (
+                "id",
+                "scene_id",
+                "speaker_element_id",
+                "voice_profile_id",
+                "shot_id",
+                "audio_asset_id",
+            ):
                 if data.get(key) is not None:
                     data[key] = str(data[key])
             lines_by_scene.setdefault(data["scene_id"], []).append(data)
@@ -1005,12 +1081,12 @@ class XframeContextManager:
 
         return {
             "screenplay": screenplay,
-            "character_voices": stringify(
-                voice_rows, ("element_id", "voice_profile_id")
+            "asset_links": stringify(
+                asset_link_rows, ("id", "scene_id", "script_line_id", "asset_id")
             ),
-            "audio_cues": stringify(
-                cue_rows, ("id", "asset_id", "shot_id", "script_line_id")
-            ),
+            "character_voices": stringify(voice_rows, ("element_id", "voice_profile_id")),
+            "audio_cues": stringify(cue_rows, ("id", "asset_id", "shot_id", "script_line_id")),
+            "audio_templates": stringify(audio_template_rows, ("id",)),
             "transitions": stringify(
                 transition_rows,
                 ("id", "from_asset_id", "to_asset_id", "generated_asset_id"),
@@ -1155,7 +1231,9 @@ class XframeContextManager:
                     text=r["text"] or "",
                     status=r["shot_status"] or "pending",
                     spec=spec,
-                    camera=CameraSpec(**camera_raw) if isinstance(camera_raw, dict) else CameraSpec(),
+                    camera=CameraSpec(**camera_raw)
+                    if isinstance(camera_raw, dict)
+                    else CameraSpec(),
                     x=float(r["x"] or 0),
                     y=float(r["y"] or 0),
                 )
@@ -1244,7 +1322,9 @@ class XframeContextManager:
         ]
 
     @staticmethod
-    def _attach_assets_to_shots(shots: Sequence[ShotContext], assets: Sequence[AssetContext]) -> None:
+    def _attach_assets_to_shots(
+        shots: Sequence[ShotContext], assets: Sequence[AssetContext]
+    ) -> None:
         """
         Pega a cada plano su render. Gana el más reciente que esté `ready`; si no hay
         ninguno listo, el más reciente sea cual sea su estado — porque "generando" y
@@ -1262,7 +1342,9 @@ class XframeContextManager:
             shot.asset = (ready or candidates)[0]
 
     @staticmethod
-    def _attach_element_names(shots: Sequence[ShotContext], elements: Sequence[ElementContext]) -> None:
+    def _attach_element_names(
+        shots: Sequence[ShotContext], elements: Sequence[ElementContext]
+    ) -> None:
         """
         Deduce qué elements aparecen en cada plano.
 
@@ -1277,13 +1359,17 @@ class XframeContextManager:
                 names: list[str] = []
                 for item in explicit:
                     if isinstance(item, str):
-                        names.append(by_name[item.lower()].name if item.lower() in by_name else item)
+                        names.append(
+                            by_name[item.lower()].name if item.lower() in by_name else item
+                        )
                     elif isinstance(item, dict) and item.get("name"):
                         names.append(str(item["name"]))
                 shot.element_names = names
                 continue
             haystack = f"{shot.title} {shot.text} {shot.prompt}".lower()
-            shot.element_names = [e.name for name, e in by_name.items() if name and name in haystack]
+            shot.element_names = [
+                e.name for name, e in by_name.items() if name and name in haystack
+            ]
 
     @staticmethod
     def _build_gen_settings(project: dict[str, Any], profile: dict[str, Any]) -> GenSettings:
@@ -1307,9 +1393,20 @@ class XframeContextManager:
                 merged[new] = merged.pop(old)
 
         known = {
-            "model", "aspect", "resolution", "duration_s", "style", "camera",
-            "mode", "genre", "sound", "count",
-            "camera_move", "speed_ramp", "start_frame", "end_frame",
+            "model",
+            "aspect",
+            "resolution",
+            "duration_s",
+            "style",
+            "camera",
+            "mode",
+            "genre",
+            "sound",
+            "count",
+            "camera_move",
+            "speed_ramp",
+            "start_frame",
+            "end_frame",
         }
         return GenSettings(
             **{k: _flatten_setting(k, v) for k, v in merged.items() if k in known},

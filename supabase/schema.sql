@@ -63,6 +63,8 @@ create table if not exists public.projects (
   title       text        not null default 'Proyecto sin título',
   prompt      text        not null default '',
   cover_url   text,
+  project_type text       not null default 'cinema'
+               check (project_type in ('cinema', 'marketing', 'demo')),
   settings    jsonb       not null default '{}'::jsonb,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()

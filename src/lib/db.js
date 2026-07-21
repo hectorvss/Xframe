@@ -75,9 +75,11 @@ const emptyState = () => ({
   messages: [],
   script_scenes: [],
   script_lines: [],
+  script_asset_links: [],
   voice_profiles: [],
   character_voices: [],
   audio_cues: [],
+  audio_templates: [],
   asset_annotations: [],
   asset_operations: [],
   timeline_transitions: [],
@@ -243,6 +245,29 @@ function createSupabaseDriver() {
 // mantiene la app usable sin backend.
 const DRIVER = hasSupabase ? createSupabaseDriver() : createLocalDriver();
 
+async function movePositionedRow(table, where, id, direction) {
+  const rows = (await DRIVER.select(table, where)).sort(
+    (left, right) => left.position - right.position,
+  );
+  const current = rows.findIndex((row) => String(row.id) === String(id));
+  const target = current + direction;
+  if (current < 0 || target < 0 || target >= rows.length) return rows;
+  [rows[current], rows[target]] = [rows[target], rows[current]];
+
+  // Las posiciones son únicas dentro de cada escena/proyecto. Se usa primero un
+  // espacio temporal para que el reordenado sea válido también en Postgres.
+  for (let index = 0; index < rows.length; index += 1) {
+    await DRIVER.update(table, rows[index].id, { position: 10000 + index });
+  }
+  for (let index = 0; index < rows.length; index += 1) {
+    await DRIVER.update(table, rows[index].id, {
+      position: index,
+      updated_at: nowISO(),
+    });
+  }
+  return rows;
+}
+
 export const isRemote = hasSupabase;
 
 /* ------------------------------------------------------------------ *
@@ -321,7 +346,10 @@ export const db = {
     return data;
   },
 
-  async signInWithProvider(provider, redirectTo = `${location.origin}/dashboard`) {
+  async signInWithProvider(
+    provider,
+    redirectTo = `${location.origin}/dashboard`,
+  ) {
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: { redirectTo },
@@ -456,7 +484,9 @@ export const db = {
   },
 
   async getWorkspace(ownerId) {
-    const [workspace] = await DRIVER.select("workspaces", { owner_id: ownerId });
+    const [workspace] = await DRIVER.select("workspaces", {
+      owner_id: ownerId,
+    });
     if (workspace) return workspace;
     if (hasSupabase) return null;
     return DRIVER.insert("workspaces", {
@@ -522,7 +552,8 @@ export const db = {
 
   /** Miembros con su perfil incorporado. */
   async listMembers(workspaceId) {
-    if (!hasSupabase) return DRIVER.select("workspace_members", { workspace_id: workspaceId });
+    if (!hasSupabase)
+      return DRIVER.select("workspace_members", { workspace_id: workspaceId });
     const { data, error } = await supabase
       .from("workspace_members")
       .select("*, profile:profiles(id, name, email, avatar_url)")
@@ -571,7 +602,9 @@ export const db = {
 
   async listJoinRequests(workspaceId) {
     if (!hasSupabase)
-      return DRIVER.select("workspace_join_requests", { workspace_id: workspaceId });
+      return DRIVER.select("workspace_join_requests", {
+        workspace_id: workspaceId,
+      });
     const { data, error } = await supabase
       .from("workspace_join_requests")
       .select("*, profile:profiles(id, name, email, avatar_url)")
@@ -615,7 +648,9 @@ export const db = {
 
   async addCollaborator(projectId, { email, role, invitedBy }) {
     return DRIVER.insert("project_collaborators", {
-      ...(hasSupabase ? {} : { id: uid(), status: "pending", created_at: nowISO() }),
+      ...(hasSupabase
+        ? {}
+        : { id: uid(), status: "pending", created_at: nowISO() }),
       project_id: projectId,
       email: email.trim().toLowerCase(),
       role,
@@ -635,7 +670,9 @@ export const db = {
 
   /** Conocimiento del espacio (project_id null) o de un proyecto. */
   async getKnowledge(workspaceId, projectId = null) {
-    const rows = await DRIVER.select("knowledge", { workspace_id: workspaceId });
+    const rows = await DRIVER.select("knowledge", {
+      workspace_id: workspaceId,
+    });
     const found = rows.find((row) => (row.project_id ?? null) === projectId);
     if (found) return found;
     return DRIVER.insert("knowledge", {
@@ -724,7 +761,12 @@ export const db = {
     return DRIVER.insert("skills", {
       ...(hasSupabase
         ? {}
-        : { id: uid(), is_builtin: false, created_at: nowISO(), updated_at: nowISO() }),
+        : {
+            id: uid(),
+            is_builtin: false,
+            created_at: nowISO(),
+            updated_at: nowISO(),
+          }),
       workspace_id: workspaceId,
       name: skill.name,
       description: skill.description ?? "",
@@ -906,14 +948,25 @@ export const db = {
     });
   },
 
-  async createProject({ ownerId, title, prompt = "", settings = {} }) {
+  async createProject({
+    ownerId,
+    title,
+    prompt = "",
+    settings = {},
+    projectType = "cinema",
+  }) {
     const project = {
-      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO(), updated_at: nowISO() }),
+      ...(hasSupabase
+        ? {}
+        : { id: uid(), created_at: nowISO(), updated_at: nowISO() }),
       owner_id: ownerId,
       title,
       prompt,
       cover_url: null,
       settings,
+      project_type: ["cinema", "marketing", "demo"].includes(projectType)
+        ? projectType
+        : "cinema",
     };
     return DRIVER.insert("projects", project);
   },
@@ -1003,17 +1056,29 @@ export const db = {
   /* --- production studio: screenplay, voices, audio and review --- */
 
   async getProduction(projectId) {
-    const [scenes, lines, voices, characterVoices, cues, annotations, operations, transitions] =
-      await Promise.all([
-        DRIVER.select("script_scenes", { project_id: projectId }),
-        DRIVER.select("script_lines", { project_id: projectId }),
-        DRIVER.select("voice_profiles", { project_id: projectId }),
-        DRIVER.select("character_voices", { project_id: projectId }),
-        DRIVER.select("audio_cues", { project_id: projectId }),
-        DRIVER.select("asset_annotations", { project_id: projectId }),
-        DRIVER.select("asset_operations", { project_id: projectId }),
-        DRIVER.select("timeline_transitions", { project_id: projectId }),
-      ]);
+    const [
+      scenes,
+      lines,
+      voices,
+      characterVoices,
+      cues,
+      annotations,
+      operations,
+      transitions,
+      assetLinks,
+      audioTemplates,
+    ] = await Promise.all([
+      DRIVER.select("script_scenes", { project_id: projectId }),
+      DRIVER.select("script_lines", { project_id: projectId }),
+      DRIVER.select("voice_profiles", { project_id: projectId }),
+      DRIVER.select("character_voices", { project_id: projectId }),
+      DRIVER.select("audio_cues", { project_id: projectId }),
+      DRIVER.select("asset_annotations", { project_id: projectId }),
+      DRIVER.select("asset_operations", { project_id: projectId }),
+      DRIVER.select("timeline_transitions", { project_id: projectId }),
+      DRIVER.select("script_asset_links", { project_id: projectId }),
+      DRIVER.select("audio_templates", { project_id: projectId }),
+    ]);
     return {
       scenes: scenes.sort((a, b) => a.position - b.position),
       lines: lines.sort((a, b) => a.position - b.position),
@@ -1023,7 +1088,245 @@ export const db = {
       annotations,
       operations,
       transitions,
+      assetLinks,
+      audioTemplates,
     };
+  },
+
+  async createScriptScene(projectId, input = {}) {
+    const scenes = await DRIVER.select("script_scenes", {
+      project_id: projectId,
+    });
+    const position =
+      input.position ??
+      Math.max(-1, ...scenes.map((scene) => scene.position ?? -1)) + 1;
+    return DRIVER.insert("script_scenes", {
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
+      project_id: projectId,
+      position,
+      title: "Nueva escena",
+      setting: "",
+      time_of_day: "",
+      summary: "",
+      dramatic_intent: "",
+      target_duration_ms: null,
+      status: "draft",
+      ...input,
+      updated_at: nowISO(),
+    });
+  },
+
+  async updateScriptScene(id, patch) {
+    return DRIVER.update("script_scenes", id, {
+      ...patch,
+      updated_at: nowISO(),
+    });
+  },
+
+  async deleteScriptScene(id) {
+    await DRIVER.remove("script_lines", { scene_id: id });
+    return DRIVER.remove("script_scenes", { id });
+  },
+
+  async moveScriptScene(projectId, id, direction) {
+    return movePositionedRow(
+      "script_scenes",
+      { project_id: projectId },
+      id,
+      direction,
+    );
+  },
+
+  async createScriptLine(projectId, sceneId, input = {}) {
+    const lines = await DRIVER.select("script_lines", { scene_id: sceneId });
+    const position =
+      input.position ??
+      Math.max(-1, ...lines.map((line) => line.position ?? -1)) + 1;
+    return DRIVER.insert("script_lines", {
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
+      project_id: projectId,
+      scene_id: sceneId,
+      position,
+      line_type: "dialogue",
+      speaker_element_id: null,
+      voice_profile_id: null,
+      shot_id: null,
+      text: "",
+      language: "es",
+      emotion: "neutral",
+      direction: "",
+      pronunciation: {},
+      pace: 1,
+      intensity: 0.5,
+      pause_before_ms: 0,
+      pause_after_ms: 0,
+      target_duration_ms: null,
+      audio_asset_id: null,
+      selected_take: null,
+      status: "draft",
+      metadata: {},
+      ...input,
+      updated_at: nowISO(),
+    });
+  },
+
+  async updateScriptLine(id, patch) {
+    return DRIVER.update("script_lines", id, {
+      ...patch,
+      updated_at: nowISO(),
+    });
+  },
+
+  async deleteScriptLine(id) {
+    return DRIVER.remove("script_lines", { id });
+  },
+
+  async moveScriptLine(sceneId, id, direction) {
+    return movePositionedRow(
+      "script_lines",
+      { scene_id: sceneId },
+      id,
+      direction,
+    );
+  },
+
+  async linkScriptAsset(projectId, sceneId, scriptLineId, assetId, input = {}) {
+    return DRIVER.insert("script_asset_links", {
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
+      project_id: projectId,
+      scene_id: sceneId,
+      script_line_id: scriptLineId || null,
+      asset_id: assetId,
+      role: "reference",
+      instructions: "",
+      start_offset_ms: null,
+      end_offset_ms: null,
+      locked: true,
+      ...input,
+      updated_at: nowISO(),
+    });
+  },
+
+  async updateScriptAssetLink(id, patch) {
+    return DRIVER.update("script_asset_links", id, {
+      ...patch,
+      updated_at: nowISO(),
+    });
+  },
+
+  async unlinkScriptAsset(id) {
+    return DRIVER.remove("script_asset_links", { id });
+  },
+
+  async createVoiceProfile(projectId, input = {}) {
+    return DRIVER.insert("voice_profiles", {
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
+      project_id: projectId,
+      name: "Nueva voz",
+      provider: "elevenlabs",
+      provider_voice_id: null,
+      source: "library",
+      language: "es",
+      accent: "",
+      description: "",
+      settings: {},
+      pronunciation_rules: [],
+      consent_status: "not_required",
+      consent_evidence: {},
+      status: "draft",
+      ...input,
+      updated_at: nowISO(),
+    });
+  },
+
+  async updateVoiceProfile(id, patch) {
+    return DRIVER.update("voice_profiles", id, {
+      ...patch,
+      updated_at: nowISO(),
+    });
+  },
+
+  async deleteVoiceProfile(id) {
+    await DRIVER.remove("character_voices", { voice_profile_id: id });
+    return DRIVER.remove("voice_profiles", { id });
+  },
+
+  async assignCharacterVoice(projectId, elementId, voiceProfileId) {
+    await DRIVER.remove("character_voices", { element_id: elementId });
+    if (!voiceProfileId) return null;
+    return DRIVER.insert("character_voices", {
+      project_id: projectId,
+      element_id: elementId,
+      voice_profile_id: voiceProfileId,
+      is_default: true,
+      performance_defaults: {},
+      created_at: nowISO(),
+    });
+  },
+
+  async createAudioCue(projectId, input) {
+    return DRIVER.insert("audio_cues", {
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
+      project_id: projectId,
+      asset_id: input.asset_id,
+      shot_id: null,
+      script_line_id: null,
+      track_kind: "music",
+      start_ms: 0,
+      end_ms: 5000,
+      source_in_ms: 0,
+      source_out_ms: null,
+      gain_db: 0,
+      fade_in_ms: 0,
+      fade_out_ms: 0,
+      pan: 0,
+      loop: false,
+      locked: false,
+      approved: false,
+      ducking_group: null,
+      ducking_db: null,
+      priority: 0,
+      narrative_role: "",
+      context_tags: [],
+      metadata: {},
+      ...input,
+      updated_at: nowISO(),
+    });
+  },
+
+  async updateAudioCue(id, patch) {
+    return DRIVER.update("audio_cues", id, { ...patch, updated_at: nowISO() });
+  },
+
+  async deleteAudioCue(id) {
+    return DRIVER.remove("audio_cues", { id });
+  },
+
+  async createAudioTemplate(projectId, input) {
+    return DRIVER.insert("audio_templates", {
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
+      project_id: projectId,
+      name: input.name,
+      kind: input.kind || "sfx",
+      prompt: input.prompt || "",
+      duration_ms: input.duration_ms ?? null,
+      loop: Boolean(input.loop),
+      intensity: input.intensity ?? 0.5,
+      composition_plan: input.composition_plan || {},
+      tags: input.tags || [],
+      updated_at: nowISO(),
+    });
+  },
+
+  async updateAudioTemplate(id, patch) {
+    return DRIVER.update("audio_templates", id, {
+      ...patch,
+      updated_at: nowISO(),
+    });
+  },
+
+  async deleteAudioTemplate(id) {
+    return DRIVER.remove("audio_templates", { id });
   },
 
   async addAnnotation(projectId, annotation) {
@@ -1053,7 +1356,11 @@ export const db = {
     return DRIVER.replaceFor(
       "brief_blocks",
       projectId,
-      blocks.map((block, position) => ({ ...block, project_id: projectId, position })),
+      blocks.map((block, position) => ({
+        ...block,
+        project_id: projectId,
+        position,
+      })),
     );
   },
 
@@ -1108,7 +1415,10 @@ export const db = {
     return rows.sort((a, b) => a.created_at.localeCompare(b.created_at));
   },
 
-  async sendChatMessage(projectId, { senderId, senderName, senderAvatar, body }) {
+  async sendChatMessage(
+    projectId,
+    { senderId, senderName, senderAvatar, body },
+  ) {
     return DRIVER.insert("project_chat", {
       ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
       project_id: projectId,

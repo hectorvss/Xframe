@@ -94,6 +94,9 @@ import {
   SkipBack,
   SkipForward,
   Repeat,
+  Clapperboard,
+  Megaphone,
+  Presentation,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button as UIButton } from "@/components/ui/button";
@@ -165,6 +168,89 @@ const go = (p) => {
 // pulse ya autenticado va aquí, no a la landing pública de precios: dentro del
 // SaaS el usuario cambia de plan sin salir a la web de marketing.
 const goToPlans = () => go("/settings/billing?section=plans");
+
+const PROJECT_TYPES = {
+  cinema: {
+    label: "Cinema",
+    description: "Rodajes y narrativas cinematográficas",
+    Icon: Clapperboard,
+    className: "border-rose-200 bg-rose-50 text-rose-700",
+  },
+  marketing: {
+    label: "Marketing",
+    description: "Productos, avatares y campañas",
+    Icon: Megaphone,
+    className: "border-yellow-200 bg-yellow-50 text-yellow-700",
+  },
+  demo: {
+    label: "Demo",
+    description: "Demos de producto para SaaS",
+    Icon: Presentation,
+    className: "border-blue-200 bg-blue-50 text-blue-700",
+  },
+};
+
+const projectTypeMeta = (type) => PROJECT_TYPES[type] ?? PROJECT_TYPES.cinema;
+
+function ProjectTypePill({ type = "cinema", onChange, className }) {
+  const activeType = PROJECT_TYPES[type] ? type : "cinema";
+  const { label, description, Icon, className: colorClass } =
+    projectTypeMeta(activeType);
+  const pillClass = cn(
+    "gap-1 rounded-full border px-2 py-0.5 text-xs font-medium",
+    colorClass,
+    className,
+  );
+
+  if (!onChange) {
+    return (
+      <Badge variant="outline" className={pillClass}>
+        <Icon className="size-3" />
+        {label}
+      </Badge>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className={cn("flex items-center", pillClass)}>
+          <Icon className="size-3" />
+          {label}
+          <ChevronDown className="size-3" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64 p-1">
+        {Object.entries(PROJECT_TYPES).map(([id, item]) => {
+          const TypeIcon = item.Icon;
+          return (
+            <DropdownMenuItem
+              key={id}
+              onSelect={() => onChange(id)}
+              className="items-start gap-2.5 px-2 py-2"
+            >
+              <span
+                className={cn(
+                  "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md border",
+                  item.className,
+                )}
+              >
+                <TypeIcon className="size-3.5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">{item.label}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {item.description}
+                </span>
+              </span>
+              {id === activeType && <Check className="mt-1 size-3.5" />}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 /**
  * Escribe una frase letra a letra, la borra y pasa a la siguiente.
  * Se usa como placeholder para sugerir qué se puede pedir.
@@ -1485,7 +1571,13 @@ function DirectorPanel({ assets = [] }) {
   );
 }
 
-function GenSettingsBar({ trailing, onMention, onAttach }) {
+function GenSettingsBar({
+  trailing,
+  onMention,
+  onAttach,
+  projectType,
+  onProjectTypeChange,
+}) {
   const { genSettings: s, setGenSettings } = useStudio();
   const { mode, model, aspect, res, dur, count, sound, genre, style, camera } =
     s;
@@ -1565,6 +1657,12 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
             </button>
           ))}
         </div>
+        {onProjectTypeChange && (
+          <ProjectTypePill
+            type={projectType}
+            onChange={onProjectTypeChange}
+          />
+        )}
         <ModelPicker value={model} onChange={setModel} mode={mode} />
 
         <div className="relative">
@@ -1721,6 +1819,7 @@ function GenSettingsBar({ trailing, onMention, onAttach }) {
 function PromptBox() {
   const [t, setT] = useState("");
   const [creating, setCreating] = useState(false);
+  const [projectType, setProjectType] = useState("cinema");
   const { createProject, genSettings, ready } = useStudio();
   const placeholder = useTypewriter(promptExamples, { paused: Boolean(t) });
 
@@ -1732,6 +1831,7 @@ function PromptBox() {
       title: titleFromPrompt(prompt),
       prompt,
       settings: genSettings,
+      projectType,
     });
     go(`/projects/${project.id}?run=1`);
   };
@@ -1751,6 +1851,8 @@ function PromptBox() {
         className="min-h-[76px] resize-none border-0 text-base shadow-none focus-visible:ring-0"
       />
       <GenSettingsBar
+        projectType={projectType}
+        onProjectTypeChange={setProjectType}
         trailing={
           <UIButton
             size="sm"
@@ -3266,6 +3368,19 @@ const relativeDate = (iso) => {
 };
 
 /** Rejilla de proyectos de la cuenta. */
+function ProjectTypeOverview() {
+  return (
+    <div className="mt-6 flex flex-wrap items-center gap-2">
+      <span className="mr-1 text-xs text-muted-foreground">
+        Tipos de proyecto
+      </span>
+      {Object.keys(PROJECT_TYPES).map((type) => (
+        <ProjectTypePill key={type} type={type} />
+      ))}
+    </div>
+  );
+}
+
 function ProjectGrid({ view }) {
   const { projects, deleteProject } = useStudio();
 
@@ -3284,19 +3399,24 @@ function ProjectGrid({ view }) {
 
   if (projects.length === 0) {
     return (
-      <div className="mt-6 rounded-xl border border-dashed p-10 text-center">
-        <Sparkles className="mx-auto size-7 text-muted-foreground" />
-        <p className="mt-3 font-medium">Aún no tienes proyectos</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Escribe tu idea arriba y Xframe creará el proyecto por ti.
-        </p>
-      </div>
+      <>
+        <ProjectTypeOverview />
+        <div className="mt-4 rounded-xl border border-dashed p-10 text-center">
+          <Sparkles className="mx-auto size-7 text-muted-foreground" />
+          <p className="mt-3 font-medium">Aún no tienes proyectos</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Escribe tu idea arriba y Xframe creará el proyecto por ti.
+          </p>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="mt-6 grid grid-cols-2 gap-x-5 gap-y-6 md:grid-cols-4">
-      {projects.map((project) => (
+    <>
+      <ProjectTypeOverview />
+      <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-6 md:grid-cols-4">
+        {projects.map((project) => (
         <div key={project.id} className="group relative cursor-pointer">
           <div
             onClick={() => go(`/projects/${project.id}`)}
@@ -3316,9 +3436,12 @@ function ProjectGrid({ view }) {
               onClick={() => go(`/projects/${project.id}`)}
             >
               <p className="truncate text-sm font-medium">{project.title}</p>
-              <p className="text-xs text-muted-foreground">
-                {relativeDate(project.updated_at)}
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <ProjectTypePill type={project.project_type} />
+                <p className="text-xs text-muted-foreground">
+                  {relativeDate(project.updated_at)}
+                </p>
+              </div>
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -3344,8 +3467,9 @@ function ProjectGrid({ view }) {
             </DropdownMenu>
           </div>
         </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </>
   );
 }
 function Dashboard({ kind = "home" }) {
@@ -7879,6 +8003,7 @@ function Editor({ projectId }) {
       )}
       <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3">
         <ProjectSwitcher project={project} projects={projects} />
+        <ProjectTypePill type={project.project_type} />
         <div className="flex items-center">
           {/* Recarga real: mismo camino que la carga inicial del proyecto — assets,
               mensajes, brief y canvas se releen de la base. */}

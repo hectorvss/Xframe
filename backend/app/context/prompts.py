@@ -162,9 +162,11 @@ already exists costs nothing to reuse and credits to remake.
 
 PRODUCTION_TEMPLATE = """
 <production>
-The approved/current screenplay, cast voices, multitrack sound cues and deterministic
-transitions. Exact dialogue is authoritative: never paraphrase it during voice or
-lip-sync generation. Use cue timing/gain as data, not as suggestions.
+The approved/current screenplay, its explicit visual asset links, cast voices, reusable
+sound templates, multitrack sound cues and deterministic transitions. Exact dialogue is
+authoritative: never paraphrase it during voice or lip-sync generation. A locked asset
+link is a hard production constraint: reuse that asset in the indicated scene/line and
+role instead of silently substituting it. Use cue timing/gain as data, not suggestions.
 {body}
 </production>
 """.strip()

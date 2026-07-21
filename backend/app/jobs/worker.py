@@ -346,9 +346,7 @@ class JobWorker:
             async with self._sem_for_project(job.project_id), self._sem_for_provider(job.provider):
                 await self._process(job)
         except asyncio.CancelledError:
-            await asyncio.shield(
-                self._finalize(job, "cancelled", error="worker detenido")
-            )
+            await asyncio.shield(self._finalize(job, "cancelled", error="worker detenido"))
             raise
         except Exception as exc:
             logger.exception("job_crashed", extra={"job_id": str(job.id)})
@@ -561,7 +559,9 @@ class JobWorker:
             except ProviderRejectedError:
                 raise
             except Exception as exc:
-                normalized = adapter.normalize_error(exc) if not isinstance(exc, ProviderError) else exc
+                normalized = (
+                    adapter.normalize_error(exc) if not isinstance(exc, ProviderError) else exc
+                )
                 if isinstance(normalized, ProviderRejectedError):
                     raise normalized
                 if not isinstance(normalized, ProviderError):
@@ -627,9 +627,7 @@ class JobWorker:
 
     # -- aterrizaje del resultado ------------------------------------------ #
 
-    async def _land_output(
-        self, job: ClaimedJob, status: ProviderJobStatus, adapter: Any
-    ) -> None:
+    async def _land_output(self, job: ClaimedJob, status: ProviderJobStatus, adapter: Any) -> None:
         """
         Descarga, sube al storage, escribe el asset y cobra. En ese orden.
 
@@ -721,7 +719,9 @@ class JobWorker:
                     metrics.get("score") if metrics else None,
                     True if metrics and metrics.get("passed") is True else None,
                     metrics or {},
-                    [] if metrics else [
+                    []
+                    if metrics
+                    else [
                         {
                             "code": "objective_metrics_unavailable",
                             "message": "Review mouth timing, speaker identity and occlusions before approval.",
@@ -738,6 +738,27 @@ class JobWorker:
                     operation_id,
                     asset_id,
                 )
+            placement = job.request.get("extra", {}).get("placement")
+            if job.request.get("modality") == "audio" and isinstance(placement, dict):
+                start_ms = int(placement.get("start_ms", 0))
+                end_ms = int(placement.get("end_ms", 0))
+                if end_ms > start_ms:
+                    await conn.execute(
+                        """
+                        insert into public.audio_cues
+                          (project_id, asset_id, script_line_id, track_kind, start_ms,
+                           end_ms, loop, narrative_role)
+                        values ($1,$2,$3::uuid,$4,$5,$6,$7,$8)
+                        """,
+                        job.project_id,
+                        asset_id,
+                        placement.get("script_line_id"),
+                        placement.get("track_kind", "sfx"),
+                        start_ms,
+                        end_ms,
+                        bool(job.request.get("extra", {}).get("loop", False)),
+                        "Generated and placed from the sound designer",
+                    )
             if job.shot_id:
                 await conn.execute(
                     """
@@ -833,8 +854,10 @@ class JobWorker:
         existing = await conn.fetchval(
             "select asset_id from public.generation_jobs where id = $1", job.id
         )
-        kind = "video" if content_type.startswith("video") else (
-            "audio" if content_type.startswith("audio") else "image"
+        kind = (
+            "video"
+            if content_type.startswith("video")
+            else ("audio" if content_type.startswith("audio") else "image")
         )
         prompt = job.request.get("prompt", "")
 
@@ -968,9 +991,7 @@ class JobWorker:
         """Publica en el stream de la conversación, si el job pertenece a alguna."""
         if job.conversation_id is None:
             return
-        await self._bus.publish(
-            job.conversation_id, event_type, {"job_id": str(job.id), **data}
-        )
+        await self._bus.publish(job.conversation_id, event_type, {"job_id": str(job.id), **data})
 
     async def _bump_attempts(self, job_id: UUID) -> None:
         """
@@ -1039,7 +1060,11 @@ class JobWorker:
                  where id = $1 and status not in ('succeeded','failed','cancelled','nsfw')
                 """,
                 job_id,
-                {"provider": ref.provider, "external_id": ref.external_id, "poll_url": ref.poll_url},
+                {
+                    "provider": ref.provider,
+                    "external_id": ref.external_id,
+                    "poll_url": ref.poll_url,
+                },
             )
 
     async def _set_progress(self, job_id: UUID, progress: float | None) -> None:
