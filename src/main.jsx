@@ -2263,8 +2263,13 @@ function ProjectGrid({ view }) {
   );
 }
 function Dashboard({ kind = "home" }) {
+  const { profile } = useStudio();
   const [projectView, setProjectView] = useState("mine");
   const [sidebarW, resizeSidebar] = useResizableWidth("xf-dash-sidebar", 240, 60, 420);
+  // Solo el primer nombre, para que el saludo suene natural ("¿Cuál es la visión,
+  // Marta?") en vez de soltar el nombre completo o el correo. Antes iba "Héctor"
+  // escrito a mano, así que a cualquier usuario le salía ese nombre.
+  const firstName = (profile?.name ?? "").trim().split(/\s+/)[0];
   return (
     <div className="min-h-screen bg-background">
       <DashboardSide width={sidebarW} onResize={resizeSidebar} />
@@ -2295,7 +2300,7 @@ function Dashboard({ kind = "home" }) {
                 <ArrowRight className="size-4" />
               </button>
               <h1 className="text-center text-3xl font-bold tracking-tight sm:text-4xl">
-                ¿Cuál es la visión, Héctor?
+                {firstName ? `¿Cuál es la visión, ${firstName}?` : "¿Cuál es la visión?"}
               </h1>
               <PromptBox />
             </section>
