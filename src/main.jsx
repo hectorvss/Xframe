@@ -843,17 +843,237 @@ function ModelPicker({ value, onChange, mode = "video" }) {
  * que elijas en el panel se mantiene al entrar en el editor y se persiste.
  * `onMention` engancha el botón @ con el compositor que lo aloja.
  */
-function GenSettingsBar({ trailing, onMention, onAttach, assets = [], videoDirection = false }) {
+/**
+ * DIRECTOR PANEL — la banda de dirección encima de la caja del compositor de assets.
+ *
+ * Aquí vive lo que define el LENGUAJE del plano de vídeo: los frames de anclaje (el
+ * vídeo arranca en el inicial y aterriza en el final — la mecánica de las transiciones
+ * escena a escena), el movimiento de cámara y la rampa de velocidad. Está a la vista y
+ * no enterrado en el popover de ajustes porque son decisiones de dirección, no
+ * preferencias: se tocan en cada plano.
+ */
+function DirectorPanel({ assets = [] }) {
   const { genSettings: s, setGenSettings } = useStudio();
-  const { mode, model, aspect, res, dur, count, sound, genre, style, camera } = s;
+  const [open, setOpen] = useState(true);
+  const [pop, setPop] = useState(null);
   const cameraMove = s.camera_move ?? null;
   const speedRamp = s.speed_ramp ?? null;
-  const startFrame = s.start_frame ?? null;
-  const endFrame = s.end_frame ?? null;
-  // Imágenes del proyecto elegibles como frame inicial/final del vídeo.
+  const frames = {
+    start_frame: s.start_frame ?? null,
+    end_frame: s.end_frame ?? null,
+  };
   const frameCandidates = assets.filter(
     (a) => a.url && a.status === "ready" && !/video|cut|audio/i.test(String(a.type)),
   );
+  const moveLabel = CAMERA_MOVES.find(([id]) => id === cameraMove)?.[1] ?? "Auto";
+  const MoveIcon = MOVE_ICONS[cameraMove] ?? CameraIcon;
+
+  return (
+    <div className="relative mb-2 rounded-xl border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-white shadow-lg">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => {
+            setOpen((v) => !v);
+            setPop(null);
+          }}
+          className="flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] font-medium text-neutral-300 transition-colors hover:bg-white/5"
+        >
+          <Video className="size-3.5" />
+          Director
+          <ChevronDown className={cn("size-3 transition-transform", !open && "-rotate-90")} />
+        </button>
+
+        {open && (
+          <>
+            {/* Frames de anclaje: inicio y fin del plano. */}
+            {[
+              ["start_frame", "Inicio"],
+              ["end_frame", "Fin"],
+            ].map(([key, label]) => {
+              const val = frames[key];
+              return (
+                <div key={key} className="group/frame relative flex flex-col items-center gap-0.5">
+                  <button
+                    onClick={() => setPop(pop === key ? null : key)}
+                    title={
+                      val
+                        ? `${label}: ${val.name ?? "imagen"}`
+                        : `Elegir el frame de ${label.toLowerCase()} entre las imágenes del proyecto`
+                    }
+                    className={cn(
+                      "flex size-9 items-center justify-center overflow-hidden rounded-lg border border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500",
+                      pop === key && "ring-2 ring-primary",
+                    )}
+                  >
+                    {val?.url ? (
+                      <div
+                        className="size-full bg-cover bg-center"
+                        style={{ backgroundImage: `url(${val.url})` }}
+                      />
+                    ) : (
+                      <ImageIcon className="size-3.5 text-neutral-500" />
+                    )}
+                  </button>
+                  <span className="text-[8px] leading-none text-neutral-400">{label}</span>
+                  {val && (
+                    <button
+                      onClick={() => setGenSettings({ [key]: null })}
+                      title="Quitar"
+                      className="absolute -right-1 -top-1 flex size-3.5 items-center justify-center rounded-full bg-black/80 text-white opacity-0 transition-opacity group-hover/frame:opacity-100"
+                    >
+                      <X className="size-2" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+
+            <div className="h-8 w-px shrink-0 bg-neutral-800" />
+
+            <button
+              onClick={() => setPop(pop === "move" ? null : "move")}
+              className={cn(
+                "flex min-w-0 items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-2 py-1 text-left transition-colors hover:border-neutral-500",
+                pop === "move" && "ring-2 ring-primary",
+              )}
+            >
+              <MoveIcon className="size-4 shrink-0 text-neutral-300" />
+              <div className="min-w-0">
+                <p className="text-[8px] uppercase leading-none tracking-wide text-neutral-400">
+                  Movement
+                </p>
+                <p className="truncate text-xs leading-tight">{moveLabel}</p>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setPop(pop === "ramp" ? null : "ramp")}
+              className={cn(
+                "flex min-w-0 items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-2 py-1 text-left transition-colors hover:border-neutral-500",
+                pop === "ramp" && "ring-2 ring-primary",
+              )}
+            >
+              <Zap className="size-4 shrink-0 text-neutral-300" />
+              <div className="min-w-0">
+                <p className="text-[8px] uppercase leading-none tracking-wide text-neutral-400">
+                  Speed ramp
+                </p>
+                <p className="truncate text-xs leading-tight">{speedRamp ?? "Ninguno"}</p>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setPop(pop === "dur" ? null : "dur")}
+              className={cn(
+                "ml-auto flex shrink-0 items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-2 py-1 text-left transition-colors hover:border-neutral-500",
+                pop === "dur" && "ring-2 ring-primary",
+              )}
+            >
+              <div>
+                <p className="text-[8px] uppercase leading-none tracking-wide text-neutral-400">
+                  Duración
+                </p>
+                <p className="text-xs leading-tight tabular-nums">{s.dur}</p>
+              </div>
+            </button>
+          </>
+        )}
+      </div>
+
+      {pop && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setPop(null)} />
+          <div className="absolute bottom-[calc(100%+8px)] left-0 z-50 w-[340px] rounded-xl border bg-background p-2 text-foreground shadow-2xl">
+            {pop === "move" && (
+              <div className="grid grid-cols-3 gap-1">
+                {CAMERA_MOVES.map(([id, label]) => {
+                  const I = MOVE_ICONS[id] ?? CameraIcon;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => {
+                        setGenSettings({ camera_move: cameraMove === id ? null : id });
+                        setPop(null);
+                      }}
+                      className={cn(
+                        "flex flex-col items-center gap-1 rounded-lg border p-2 text-center transition-colors hover:bg-accent",
+                        cameraMove === id && "border-primary bg-primary/10 text-primary",
+                      )}
+                    >
+                      <I className="size-4" />
+                      <span className="text-[10px] leading-tight">{label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {pop === "ramp" &&
+              SPEED_RAMPS.map((r) => (
+                <button
+                  key={r}
+                  onClick={() => {
+                    setGenSettings({ speed_ramp: r === "Ninguno" ? null : r });
+                    setPop(null);
+                  }}
+                  className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+                >
+                  {r}
+                  {(speedRamp ?? "Ninguno") === r && <Check className="size-3.5" />}
+                </button>
+              ))}
+            {(pop === "start_frame" || pop === "end_frame") && (
+              <>
+                <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {pop === "start_frame" ? "Frame inicial" : "Frame final"} — imágenes del proyecto
+                </p>
+                {frameCandidates.length === 0 && (
+                  <p className="p-2 text-xs text-muted-foreground">
+                    No hay imágenes listas en el proyecto. Genera una escena o un
+                    personaje primero: los frames de anclaje salen de ahí.
+                  </p>
+                )}
+                <div className="grid max-h-56 grid-cols-3 gap-1 overflow-y-auto">
+                  {frameCandidates.map((a) => (
+                    <button
+                      key={a.id}
+                      title={a.name}
+                      onClick={() => {
+                        setGenSettings({
+                          [pop]: { id: String(a.id), url: a.url, name: a.name },
+                        });
+                        setPop(null);
+                      }}
+                      className="aspect-video overflow-hidden rounded-md border bg-muted bg-cover bg-center transition-shadow hover:shadow-md"
+                      style={{ backgroundImage: `url(${a.url})` }}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+            {pop === "dur" &&
+              durationList.map((d) => (
+                <button
+                  key={d}
+                  onClick={() => {
+                    setGenSettings({ dur: d });
+                    setPop(null);
+                  }}
+                  className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+                >
+                  {d}
+                  {s.dur === d && <Check className="size-3.5" />}
+                </button>
+              ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function GenSettingsBar({ trailing, onMention, onAttach }) {
+  const { genSettings: s, setGenSettings } = useStudio();
+  const { mode, model, aspect, res, dur, count, sound, genre, style, camera } = s;
   const setMode = (v) => setGenSettings({ mode: v });
   const setModel = (v) => setGenSettings({ model: v });
   const setAspect = (v) => setGenSettings({ aspect: v });
@@ -1000,80 +1220,8 @@ function GenSettingsBar({ trailing, onMention, onAttach, assets = [], videoDirec
                   </div>
                 )}
 
-                {/* --- Dirección de vídeo: movimiento, ritmo y frames de anclaje.
-                    SOLO en el compositor de All assets (videoDirection), que es donde
-                    se generan las escenas — en el dashboard o en otras pestañas estos
-                    controles no tienen assets sobre los que operar. --- */}
-                {mode === "video" && videoDirection && (
-                  <>
-                    <Separator className="my-1.5" />
-                    {[
-                      [
-                        "Movimiento",
-                        CAMERA_MOVES.find(([id]) => id === cameraMove)?.[1] ?? "Auto",
-                        CameraIcon,
-                        "move",
-                      ],
-                      ["Speed ramp", speedRamp ?? "Ninguno", Zap, "ramp"],
-                    ].map(([label, value, I, key]) => (
-                      <button
-                        key={key}
-                        onClick={() => setFlyout(flyout === key ? null : key)}
-                        className={cn(
-                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent",
-                          flyout === key && "bg-accent",
-                        )}
-                      >
-                        <I className="size-3.5 shrink-0 text-muted-foreground" />
-                        <span className="text-muted-foreground">{label}</span>
-                        <span className="ml-auto max-w-[120px] truncate">{value}</span>
-                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                      </button>
-                    ))}
-                    {/* Frames de anclaje: el vídeo ARRANCA en el frame inicial y ATERRIZA
-                        en el final. Encadenar escenas = el final de una es el inicio de
-                        la siguiente. */}
-                    <div className="mt-1 grid grid-cols-2 gap-1.5 px-1 pb-1">
-                      {[
-                        ["start_frame", "Frame inicial", startFrame],
-                        ["end_frame", "Frame final", endFrame],
-                      ].map(([key, label, val]) => (
-                        <div key={key} className="relative">
-                          <button
-                            onClick={() => setFlyout(flyout === key ? null : key)}
-                            className={cn(
-                              "w-full overflow-hidden rounded-lg border text-left transition-colors hover:bg-accent",
-                              flyout === key && "ring-2 ring-primary",
-                            )}
-                          >
-                            {val?.url ? (
-                              <div
-                                className="aspect-video bg-muted bg-cover bg-center"
-                                style={{ backgroundImage: `url(${val.url})` }}
-                              />
-                            ) : (
-                              <div className="flex aspect-video items-center justify-center border-b border-dashed bg-muted/40">
-                                <ImageIcon className="size-4 text-muted-foreground/60" />
-                              </div>
-                            )}
-                            <p className="truncate px-1.5 py-1 text-[10px] text-muted-foreground">
-                              {label}
-                            </p>
-                          </button>
-                          {val && (
-                            <button
-                              onClick={() => setGenSettings({ [key]: null })}
-                              title="Quitar"
-                              className="absolute right-1 top-1 flex size-4 items-center justify-center rounded bg-black/55 text-white"
-                            >
-                              <X className="size-2.5" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                {/* La dirección de vídeo (movimiento, speed ramp, frames) vive en el
+                    DIRECTOR PANEL, encima de la caja del compositor de All assets. */}
 
                 {flyout && (
                   <div className="absolute left-full top-0 ml-2 w-[280px] rounded-xl border bg-background p-2 shadow-2xl">
@@ -1111,73 +1259,6 @@ function GenSettingsBar({ trailing, onMention, onAttach, assets = [], videoDirec
                           onChange={(v) => setCamera({ ...camera, [k]: v })}
                         />
                       ))}
-                    {flyout === "move" && (
-                      <div className="grid grid-cols-3 gap-1">
-                        {CAMERA_MOVES.map(([id, label]) => {
-                          const I = MOVE_ICONS[id] ?? CameraIcon;
-                          return (
-                            <button
-                              key={id}
-                              onClick={() => {
-                                setGenSettings({ camera_move: cameraMove === id ? null : id });
-                                setFlyout(null);
-                              }}
-                              className={cn(
-                                "flex flex-col items-center gap-1 rounded-lg border p-2 text-center transition-colors hover:bg-accent",
-                                cameraMove === id &&
-                                  "border-primary bg-primary/10 text-primary",
-                              )}
-                            >
-                              <I className="size-4" />
-                              <span className="text-[10px] leading-tight">{label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {flyout === "ramp" &&
-                      SPEED_RAMPS.map((r) => (
-                        <button
-                          key={r}
-                          onClick={() => {
-                            setGenSettings({ speed_ramp: r === "Ninguno" ? null : r });
-                            setFlyout(null);
-                          }}
-                          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
-                        >
-                          {r}
-                          {(speedRamp ?? "Ninguno") === r && <Check className="size-3.5" />}
-                        </button>
-                      ))}
-                    {(flyout === "start_frame" || flyout === "end_frame") && (
-                      <>
-                        <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          {flyout === "start_frame" ? "Frame inicial" : "Frame final"} — imágenes del proyecto
-                        </p>
-                        {frameCandidates.length === 0 && (
-                          <p className="p-2 text-xs text-muted-foreground">
-                            No hay imágenes listas en el proyecto. Genera una escena o un
-                            personaje primero: los frames de anclaje salen de ahí.
-                          </p>
-                        )}
-                        <div className="grid max-h-56 grid-cols-3 gap-1 overflow-y-auto">
-                          {frameCandidates.map((a) => (
-                            <button
-                              key={a.id}
-                              title={a.name}
-                              onClick={() => {
-                                setGenSettings({
-                                  [flyout]: { id: String(a.id), url: a.url, name: a.name },
-                                });
-                                setFlyout(null);
-                              }}
-                              className="aspect-video overflow-hidden rounded-md border bg-muted bg-cover bg-center transition-shadow hover:shadow-md"
-                              style={{ backgroundImage: `url(${a.url})` }}
-                            />
-                          ))}
-                        </div>
-                      </>
-                    )}
                   </div>
                 )}
               </div>
@@ -3356,7 +3437,7 @@ function EditorChat({
 }) {
   const [draft, setDraft] = useState("");
   const [mentionAt, setMentionAt] = useState(null);
-  const { preferences } = useStudio();
+  const { preferences, genSettings } = useStudio();
   const ctx = chatContext[tab] ?? chatContext.assets;
   const placeholder = useTypewriter(ctx.examples ?? [ctx.placeholder], {
     paused: Boolean(draft),
@@ -3607,6 +3688,12 @@ function EditorChat({
           </div>
         )}
 
+        {/* El Director Panel solo tiene sentido donde se generan las escenas (All
+            assets) y cuando el compositor está en modo vídeo. */}
+        {tab === "assets" && genSettings.mode === "video" && (
+          <DirectorPanel assets={assets} />
+        )}
+
         <Card className="p-2">
           <input
             ref={fileRef}
@@ -3656,8 +3743,6 @@ function EditorChat({
           <GenSettingsBar
             onMention={openMention}
             onAttach={() => fileRef.current?.click()}
-            assets={assets}
-            videoDirection={tab === "assets"}
             trailing={
               <>
                 <EditorIconBtn>
