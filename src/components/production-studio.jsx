@@ -172,6 +172,11 @@ const builtInSoundTemplates = [
   },
 ];
 
+const systemSoundTemplates = builtInSoundTemplates.map((template) => ({
+  ...template,
+  builtIn: true,
+}));
+
 const lineMeta = {
   dialogue: ["Diálogo", "bg-blue-50 text-blue-700 border-blue-100"],
   voiceover: ["Voz en off", "bg-violet-50 text-violet-700 border-violet-100"],
@@ -1603,7 +1608,7 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
   );
 }
 
-function VoiceLibrary({ projectId, voices, run }) {
+function VoiceLibrary({ projectId, voices, run, onAskAgent }) {
   const [name, setName] = useState("");
   const [providerId, setProviderId] = useState("");
   const [open, setOpen] = useState(false);
@@ -1624,6 +1629,17 @@ function VoiceLibrary({ projectId, voices, run }) {
   };
   return (
     <div className="space-y-2">
+      <div className="rounded-xl border bg-muted/20 p-3">
+        <p className="text-xs font-semibold">VOCES DEL PROYECTO</p>
+        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+          Pide al agente narradores, personajes o voces de marca. Cada perfil
+          conserva su nombre, proveedor e ID para reutilizarlo en diÃ¡logos,
+          escenas y vÃ­deos.
+        </p>
+        <Button className="mt-3 w-full" size="sm" onClick={onAskAgent}>
+          <Sparkles /> Crear voces con el agente
+        </Button>
+      </div>
       {voices.map((voice) => (
         <Card key={voice.id} className="shadow-none">
           <CardContent className="p-3">
@@ -1679,6 +1695,8 @@ function VoiceLibrary({ projectId, voices, run }) {
                         <SelectContent>
                           <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
                           <SelectItem value="openai">OpenAI</SelectItem>
+                          <SelectItem value="google">Google Cloud</SelectItem>
+                          <SelectItem value="azure">Microsoft Azure</SelectItem>
                           <SelectItem value="uploaded">Audio subido</SelectItem>
                         </SelectContent>
                       </Select>
@@ -1791,11 +1809,11 @@ function VoiceLibrary({ projectId, voices, run }) {
               placeholder="Narradora principal"
             />
           </Field>
-          <Field label="ID de ElevenLabs" hint="opcional">
+          <Field label="ID del proveedor" hint="opcional">
             <Input
               value={providerId}
               onChange={(event) => setProviderId(event.target.value)}
-              placeholder="voice_id"
+              placeholder="voice_id o clave de clonaciÃ³n"
             />
           </Field>
           <DialogFooter>
@@ -1809,271 +1827,696 @@ function VoiceLibrary({ projectId, voices, run }) {
   );
 }
 
-function SoundComposer({ projectId, scenes, lines, seed, onGenerate, run }) {
+function RangeSetting({
+  label,
+  low,
+  high,
+  value,
+  onChange,
+  min = 0,
+  max = 1,
+  step = 0.01,
+}) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium underline decoration-dotted underline-offset-4">
+        {label}
+      </p>
+      <div className="flex justify-between text-[10px] text-muted-foreground">
+        <span>{low}</span>
+        <span>{high}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-muted accent-foreground"
+      />
+    </div>
+  );
+}
+
+function SoundComposer({
+  projectId,
+  scenes,
+  lines,
+  voices,
+  audioAssets,
+  seed,
+  onGenerate,
+  onVariant,
+  onOpenVoices,
+  run,
+}) {
+  const [panelTab, setPanelTab] = useState("settings");
+  const [kind, setKind] = useState("voice");
   const [prompt, setPrompt] = useState("");
-  const [kind, setKind] = useState("sfx");
   const [duration, setDuration] = useState("5");
-  const [intensity, setIntensity] = useState("0.5");
+  const [intensity, setIntensity] = useState(0.5);
   const [loop, setLoop] = useState(false);
   const [sceneId, setSceneId] = useState("__none__");
   const [lineId, setLineId] = useState("__none__");
   const [start, setStart] = useState("0");
-  const [templateName, setTemplateName] = useState("");
+  const [voiceId, setVoiceId] = useState("");
+  const [voicePickerOpen, setVoicePickerOpen] = useState(false);
+  const [voiceSearch, setVoiceSearch] = useState("");
+  const [voiceTab, setVoiceTab] = useState("explore");
+  const [modelId, setModelId] = useState("eleven-multilingual-v2");
+  const [speed, setSpeed] = useState(1);
+  const [stability, setStability] = useState(0.5);
+  const [similarity, setSimilarity] = useState(0.75);
+  const [style, setStyle] = useState(0);
+  const [languageOverride, setLanguageOverride] = useState(false);
+  const [speakerBoost, setSpeakerBoost] = useState(true);
+  const [outputFormat, setOutputFormat] = useState("mp3_44100_128");
 
-  useEffect(() => {
-    if (!seed) return;
-    setPrompt(seed.prompt || "");
-    setKind(seed.kind || "sfx");
-    setDuration(String((seed.duration_ms || 5000) / 1000));
-    setIntensity(String(seed.intensity ?? 0.5));
-    setLoop(Boolean(seed.loop));
-  }, [seed]);
-
+  const selectedVoice = voices.find(
+    (voice) => String(voice.id) === String(voiceId),
+  );
   const selectedSceneLines = lines.filter(
     (line) =>
       sceneId === "__none__" || String(line.scene_id) === String(sceneId),
   );
+  const selectedLine = lines.find((line) => String(line.id) === String(lineId));
+  const visibleVoices = voices.filter((voice) => {
+    const text =
+      `${voice.name} ${voice.description || ""} ${voice.accent || ""}`.toLowerCase();
+    return text.includes(voiceSearch.trim().toLowerCase());
+  });
+
+  useEffect(() => {
+    if (!seed) return;
+    setPanelTab("settings");
+    setKind(seed.kind || "sfx");
+    setPrompt(seed.prompt || "");
+    setDuration(String((seed.duration_ms || 5000) / 1000));
+    setIntensity(Number(seed.intensity ?? 0.5));
+    setLoop(Boolean(seed.loop));
+  }, [seed]);
+
+  useEffect(() => {
+    if (!selectedVoice) return;
+    const settings = selectedVoice.settings || {};
+    setSpeed(Number(settings.speed ?? 1));
+    setStability(Number(settings.stability ?? 0.5));
+    setSimilarity(Number(settings.similarity_boost ?? 0.75));
+    setStyle(Number(settings.style ?? 0));
+    setSpeakerBoost(settings.use_speaker_boost !== false);
+  }, [voiceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const defaults = {
+      voice: "eleven-multilingual-v2",
+      music: "eleven-music-v2",
+      sfx: "eleven-sfx-v2",
+      ambience: "eleven-sfx-v2",
+    };
+    setModelId(defaults[kind]);
+  }, [kind]);
+
   const config = () => ({
-    prompt: prompt.trim(),
+    prompt: kind === "voice" ? selectedLine?.text || "" : prompt.trim(),
     kind,
+    model_id: modelId,
+    voice_profile_id: voiceId || null,
     duration_ms: Math.max(100, Math.round(Number(duration || 0) * 1000)),
     intensity: Math.min(1, Math.max(0, Number(intensity || 0))),
     loop,
     scene_id: sceneId === "__none__" ? null : sceneId,
     script_line_id: lineId === "__none__" ? null : lineId,
     start_ms: Math.max(0, Math.round(Number(start || 0) * 1000)),
+    output_format: outputFormat,
+    settings: {
+      speed,
+      stability,
+      similarity_boost: similarity,
+      style,
+      use_speaker_boost: speakerBoost,
+      language_override: languageOverride,
+    },
   });
-  const saveTemplate = async () => {
-    if (!templateName.trim() || !prompt.trim()) return;
+
+  const submit = async () => {
     const values = config();
-    const ok = await run(() =>
-      db.createAudioTemplate(projectId, {
-        name: templateName.trim(),
-        kind: values.kind,
-        prompt: values.prompt,
-        duration_ms: values.duration_ms,
-        loop: values.loop,
-        intensity: values.intensity,
-      }),
-    );
-    if (ok) setTemplateName("");
+    if (kind === "voice" && selectedVoice) {
+      const ok = await run(() =>
+        db.updateVoiceProfile(selectedVoice.id, {
+          settings: values.settings,
+          status: selectedVoice.provider_voice_id ? "ready" : "draft",
+        }),
+      );
+      if (!ok) return;
+    }
+    onGenerate(values);
   };
 
+  const canGenerate =
+    kind === "voice"
+      ? Boolean(selectedVoice?.provider_voice_id && selectedLine?.text)
+      : Boolean(prompt.trim());
+
   return (
-    <div className="space-y-4">
-      <div>
-        <p className="text-xs font-semibold">CREAR SONIDO</p>
-        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-          Describe el resultado; el modelo determina la interpretación sonora
-          concreta.
-        </p>
-      </div>
-      <Field label="Tipo">
-        <Select value={kind} onValueChange={setKind}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="sfx">Efecto de sonido</SelectItem>
-            <SelectItem value="ambience">Ambiente</SelectItem>
-            <SelectItem value="music">Música</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
-      <Field label="Descripción para el modelo">
-        <Textarea
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          className="min-h-36 resize-y"
-          placeholder="Un dron grave y controlado que crece lentamente, sin melodía, con textura tecnológica limpia…"
-        />
-      </Field>
-      <div className="flex flex-wrap gap-1.5">
-        {[
-          "Pasos sobre grava",
-          "Lluvia sobre cristal",
-          "Interfaz holográfica",
-        ].map((suggestion) => (
-          <Button
-            key={suggestion}
-            variant="outline"
-            size="sm"
-            className="h-7 text-[10px]"
-            onClick={() => setPrompt(suggestion)}
-          >
-            {suggestion}
-          </Button>
+    <Tabs value={panelTab} onValueChange={setPanelTab} className="min-h-full">
+      <TabsList className="grid h-10 w-full grid-cols-2 rounded-none border-b bg-transparent p-0">
+        <TabsTrigger
+          value="settings"
+          className="h-10 rounded-none border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+        >
+          Configuración
+        </TabsTrigger>
+        <TabsTrigger
+          value="history"
+          className="h-10 rounded-none border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+        >
+          Historial
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="history" className="mt-0 space-y-2 p-4">
+        {audioAssets.map((asset) => (
+          <div key={asset.id} className="rounded-xl border p-3">
+            <div className="flex items-center gap-2">
+              <FileAudio className="size-4 text-muted-foreground" />
+              <p className="min-w-0 flex-1 truncate text-xs font-medium">
+                {asset.name}
+              </p>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onVariant(asset)}
+              >
+                <WandSparkles className="size-3.5" />
+              </Button>
+            </div>
+            {asset.url && (
+              <audio controls src={asset.url} className="mt-2 h-8 w-full" />
+            )}
+          </div>
         ))}
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Duración" hint="seg">
-          <Input
-            type="number"
-            min="0.1"
-            step="0.1"
-            value={duration}
-            onChange={(event) => setDuration(event.target.value)}
+        {!audioAssets.length && (
+          <EmptyState
+            icon={AudioLines}
+            title="Aún no hay generaciones"
+            description="Los audios creados aparecerán aquí para reproducirlos o generar una variante."
           />
+        )}
+      </TabsContent>
+
+      <TabsContent value="settings" className="mt-0 space-y-5 p-4">
+        <div className="flex items-center gap-3 rounded-xl border p-2.5">
+          <span className="flex size-14 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-900 text-white">
+            <AudioLines className="size-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium">Diseño de voz y sonido</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Ajusta la interpretación y genera una toma vinculada al guion.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 rounded-lg border bg-muted/30 p-1">
+          {[
+            ["voice", "Voz"],
+            ["music", "Música"],
+            ["sfx", "Efecto"],
+            ["ambience", "Ambiente"],
+          ].map(([value, label]) => (
+            <Button
+              key={value}
+              variant={kind === value ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8 px-1 text-[11px]"
+              onClick={() => setKind(value)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+
+        {kind === "voice" ? (
+          <>
+            <Field label="Voz">
+              <Dialog open={voicePickerOpen} onOpenChange={setVoicePickerOpen}>
+                <DialogTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="h-11 w-full justify-between px-3 font-normal"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="size-6 shrink-0 rounded-full bg-gradient-to-br from-slate-300 to-slate-700" />
+                      <span className="truncate">
+                        {selectedVoice?.name || "Selecciona una voz"}
+                      </span>
+                    </span>
+                    <ChevronRight className="size-4" />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="flex max-h-[82vh] max-w-lg flex-col gap-0 overflow-hidden p-0">
+                  <DialogHeader className="border-b p-4">
+                    <DialogTitle className="flex items-center gap-2 text-base">
+                      <ArrowLeft className="size-4" /> Selecciona una voz
+                    </DialogTitle>
+                  </DialogHeader>
+                  <Tabs
+                    value={voiceTab}
+                    onValueChange={setVoiceTab}
+                    className="flex min-h-0 flex-1 flex-col"
+                  >
+                    <TabsList className="mx-4 mt-3 grid h-11 grid-cols-2 rounded-none border-b bg-transparent p-0">
+                      <TabsTrigger
+                        value="explore"
+                        className="h-11 rounded-none border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                      >
+                        Explorar
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="mine"
+                        className="h-11 rounded-none border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                      >
+                        Mis voces
+                      </TabsTrigger>
+                    </TabsList>
+                    <div className="flex gap-2 p-4 pb-2">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          value={voiceSearch}
+                          onChange={(event) =>
+                            setVoiceSearch(event.target.value)
+                          }
+                          placeholder="Empieza a escribir para buscar…"
+                          className="h-10 pl-9"
+                        />
+                      </div>
+                      <Button variant="outline" size="icon">
+                        <ListFilter className="size-4" />
+                      </Button>
+                    </div>
+                    <div className="flex gap-1.5 overflow-x-auto px-4 pb-2">
+                      {["Idiomas", "Acento", "Categoría", "Género", "Edad"].map(
+                        (filter) => (
+                          <Badge
+                            key={filter}
+                            variant="outline"
+                            className="whitespace-nowrap font-normal"
+                          >
+                            + {filter}
+                          </Badge>
+                        ),
+                      )}
+                    </div>
+                    <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+                      <div className="space-y-0.5">
+                        {visibleVoices.map((voice, index) => (
+                          <button
+                            key={voice.id}
+                            type="button"
+                            onClick={() => {
+                              setVoiceId(String(voice.id));
+                              setVoicePickerOpen(false);
+                            }}
+                            className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-accent"
+                          >
+                            <span
+                              className={cn(
+                                "size-9 shrink-0 rounded-full",
+                                index % 3 === 0
+                                  ? "bg-gradient-to-br from-slate-300 to-slate-800"
+                                  : index % 3 === 1
+                                    ? "bg-gradient-to-br from-amber-200 to-rose-500"
+                                    : "bg-gradient-to-br from-cyan-200 to-indigo-600",
+                              )}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-xs font-semibold">
+                                {voice.name}
+                              </span>
+                              <span className="block truncate text-[11px] text-muted-foreground">
+                                {voice.description ||
+                                  `${voice.language} · ${voice.accent || "Voz de proyecto"}`}
+                              </span>
+                            </span>
+                            <Play className="size-3.5 fill-current" />
+                            <MoreVertical className="size-4 text-muted-foreground" />
+                          </button>
+                        ))}
+                        {!visibleVoices.length && (
+                          <div className="p-6 text-center">
+                            <p className="text-sm font-medium">
+                              No hay voces configuradas
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Añade una voz con su ID del proveedor para poder
+                              generar.
+                            </p>
+                            <Button
+                              className="mt-4"
+                              onClick={() => {
+                                setVoicePickerOpen(false);
+                                onOpenVoices();
+                              }}
+                            >
+                              <Plus /> Añadir voz
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </Tabs>
+                </DialogContent>
+              </Dialog>
+            </Field>
+
+            <Field label="Modelo">
+              <Select value={modelId} onValueChange={setModelId}>
+                <SelectTrigger className="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="eleven-multilingual-v2">
+                    Eleven Multilingual v2
+                  </SelectItem>
+                  <SelectItem value="eleven-v3-voice">
+                    Eleven v3 Voice
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <RangeSetting
+              label="Velocidad"
+              low="Más lento"
+              high="Más rápido"
+              min={0.7}
+              max={1.2}
+              step={0.01}
+              value={speed}
+              onChange={setSpeed}
+            />
+            <RangeSetting
+              label="Estabilidad"
+              low="Más variable"
+              high="Más estable"
+              value={stability}
+              onChange={setStability}
+            />
+            <RangeSetting
+              label="Similitud"
+              low="Baja"
+              high="Alta"
+              value={similarity}
+              onChange={setSimilarity}
+            />
+            <RangeSetting
+              label="Exageración de estilo"
+              low="Ninguno"
+              high="Exagerado"
+              value={style}
+              onChange={setStyle}
+            />
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium underline decoration-dotted underline-offset-4">
+                Anulación de idioma
+              </p>
+              <Switch
+                checked={languageOverride}
+                onCheckedChange={setLanguageOverride}
+              />
+            </div>
+            <Field label="Formato de salida">
+              <Select value={outputFormat} onValueChange={setOutputFormat}>
+                <SelectTrigger className="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mp3_44100_128">
+                    MP3 44.1 kHz (128 kbps)
+                  </SelectItem>
+                  <SelectItem value="mp3_44100_192">
+                    MP3 44.1 kHz (192 kbps)
+                  </SelectItem>
+                  <SelectItem value="pcm_44100">WAV PCM 44.1 kHz</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <div className="flex items-center justify-between border-y py-3">
+              <p className="text-xs font-medium">Aumento de altavoz</p>
+              <Switch
+                checked={speakerBoost}
+                onCheckedChange={setSpeakerBoost}
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            <Field label="Modelo">
+              <Select value={modelId} onValueChange={setModelId}>
+                <SelectTrigger className="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {kind === "music" ? (
+                    <SelectItem value="eleven-music-v2">
+                      Eleven Music
+                    </SelectItem>
+                  ) : (
+                    <SelectItem value="eleven-sfx-v2">
+                      Eleven Sound Effects
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Descripción">
+              <Textarea
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                className="min-h-32 resize-y"
+                placeholder="Describe con precisión el sonido, su evolución y lo que debe evitar…"
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Duración" hint="seg">
+                <Input
+                  type="number"
+                  min="0.5"
+                  step="0.1"
+                  value={duration}
+                  onChange={(event) => setDuration(event.target.value)}
+                />
+              </Field>
+              <Field label="Intensidad">
+                <Input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={intensity}
+                  onChange={(event) => setIntensity(Number(event.target.value))}
+                />
+              </Field>
+            </div>
+            <div className="flex items-center justify-between border-y py-3">
+              <p className="text-xs font-medium">Bucle continuo</p>
+              <Switch checked={loop} onCheckedChange={setLoop} />
+            </div>
+          </>
+        )}
+
+        <Separator />
+        <Field label="Escena">
+          <Select
+            value={sceneId}
+            onValueChange={(value) => {
+              setSceneId(value);
+              setLineId("__none__");
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">Todo el proyecto</SelectItem>
+              {scenes.map((scene, index) => (
+                <SelectItem key={scene.id} value={String(scene.id)}>
+                  {index + 1}. {scene.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
-        <Field label="Intensidad" hint="0–1">
+        <Field
+          label={kind === "voice" ? "Texto del guion" : "Línea contextual"}
+        >
+          <Select value={lineId} onValueChange={setLineId}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {kind !== "voice" && (
+                <SelectItem value="__none__">Contexto general</SelectItem>
+              )}
+              {selectedSceneLines.map((line) => (
+                <SelectItem key={line.id} value={String(line.id)}>
+                  {line.text.slice(0, 52) || line.line_type}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label="Empieza en" hint="segundos">
           <Input
             type="number"
             min="0"
-            max="1"
-            step="0.05"
-            value={intensity}
-            onChange={(event) => setIntensity(event.target.value)}
+            step="0.1"
+            value={start}
+            onChange={(event) => setStart(event.target.value)}
           />
         </Field>
-      </div>
-      <div className="flex items-center justify-between rounded-lg border p-3">
-        <div>
-          <p className="text-xs font-medium">Bucle continuo</p>
-          <p className="text-[10px] text-muted-foreground">
-            Para ambientes y camas
-          </p>
-        </div>
-        <Switch checked={loop} onCheckedChange={setLoop} />
-      </div>
-      <Separator />
-      <div>
-        <p className="text-xs font-medium">Contexto y colocación</p>
-        <p className="mt-0.5 text-[10px] text-muted-foreground">
-          Opcional: el agente usará la escena completa y lo colocará en el
-          segundo indicado.
-        </p>
-      </div>
-      <Field label="Escena">
-        <Select
-          value={sceneId}
-          onValueChange={(value) => {
-            setSceneId(value);
-            setLineId("__none__");
-          }}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">Todo el proyecto</SelectItem>
-            {scenes.map((scene, index) => (
-              <SelectItem key={scene.id} value={String(scene.id)}>
-                {index + 1}. {scene.title}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
-      <Field label="Línea del guion">
-        <Select value={lineId} onValueChange={setLineId}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">Contexto general de escena</SelectItem>
-            {selectedSceneLines.map((line) => (
-              <SelectItem key={line.id} value={String(line.id)}>
-                {line.text.slice(0, 48) || line.line_type}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
-      <Field label="Empieza en" hint="segundos">
-        <Input
-          type="number"
-          min="0"
-          step="0.1"
-          value={start}
-          onChange={(event) => setStart(event.target.value)}
-        />
-      </Field>
-      <Button
-        className="w-full"
-        disabled={!prompt.trim()}
-        onClick={() => onGenerate(config())}
-      >
-        <Zap />
-        Generar y guardar en Assets
-      </Button>
-      <div className="rounded-lg border bg-muted/10 p-3">
-        <p className="text-xs font-medium">Guardar como plantilla</p>
-        <div className="mt-2 flex gap-2">
-          <Input
-            value={templateName}
-            onChange={(event) => setTemplateName(event.target.value)}
-            placeholder="Nombre de plantilla"
-          />
+        {kind === "voice" &&
+          selectedVoice &&
+          !selectedVoice.provider_voice_id && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              Esta voz todavía no tiene un ID de proveedor y no puede generar
+              una toma.
+            </p>
+          )}
+        <div className="flex gap-2">
           <Button
             variant="outline"
             size="icon"
-            disabled={!templateName.trim() || !prompt.trim()}
-            onClick={saveTemplate}
+            title="Restablecer valores"
+            onClick={() => {
+              setSpeed(1);
+              setStability(0.5);
+              setSimilarity(0.75);
+              setStyle(0);
+              setSpeakerBoost(true);
+            }}
           >
-            <Bookmark className="size-4" />
+            <RotateCcw className="size-4" />
+          </Button>
+          <Button className="flex-1" disabled={!canGenerate} onClick={submit}>
+            <Zap /> Generar y guardar
           </Button>
         </div>
-      </div>
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }
 
-function SoundTemplates({ templates, onUse, run }) {
-  const all = [...builtInSoundTemplates, ...templates];
+function SoundTemplates({ templates, mediaAssets, onUse, onVariant, run }) {
+  const startDrag = (event, asset) => {
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData(
+      "application/x-xframe-audio-template",
+      JSON.stringify({
+        assetId: String(asset.id),
+        trackKind: asset.templateKind || "music",
+      }),
+    );
+  };
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div>
-        <p className="text-xs font-semibold">PLANTILLAS</p>
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          Puntos de partida editables, no resultados cerrados.
+        <p className="text-xs font-semibold">RECURSOS GUARDADOS</p>
+        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+          Guarda desde Biblioteca las generaciones que quieras reutilizar. El
+          original nunca se modifica y el agente tambiÃ©n puede encontrarlas.
         </p>
       </div>
-      {all.map((template) => (
-        <Card key={template.id} className="shadow-none">
+      {mediaAssets.map((asset) => (
+        <Card
+          key={asset.id}
+          draggable
+          onDragStart={(event) => startDrag(event, asset)}
+          className="cursor-grab shadow-none active:cursor-grabbing"
+        >
           <CardContent className="p-3">
-            <div className="flex items-start gap-2">
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
-                <Waves className="size-4" />
+            <div className="flex items-center gap-2">
+              <GripVertical className="size-4 shrink-0 text-muted-foreground" />
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <FileAudio className="size-4" />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium">{template.name}</p>
-                <p className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-muted-foreground">
-                  {template.prompt}
+                <p className="truncate text-xs font-medium">{asset.name}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  Archivo listo · arrastra a la timeline
                 </p>
               </div>
-              {!builtInSoundTemplates.some(
-                (item) => item.id === template.id,
-              ) && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => run(() => db.deleteAudioTemplate(template.id))}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => onVariant(asset)}>
+                    <WandSparkles className="mr-2 size-4" />
+                    Editar con el agente
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-            <div className="mt-3 flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px]">
-                {template.kind}
-              </Badge>
-              <span className="text-[10px] text-muted-foreground">
-                {template.duration_ms
-                  ? `${template.duration_ms / 1000}s`
-                  : "Auto"}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-auto h-7 text-[10px]"
-                onClick={() => onUse(template)}
-              >
-                Usar plantilla
-              </Button>
-            </div>
+            {asset.url &&
+              (/video/i.test(String(asset.type)) ? (
+                <video
+                  src={asset.url}
+                  controls
+                  className="mt-3 aspect-video w-full rounded-lg bg-black"
+                />
+              ) : (
+                <audio src={asset.url} controls className="mt-3 h-8 w-full" />
+              ))}
           </CardContent>
         </Card>
       ))}
+      {!mediaAssets.length && (
+        <EmptyState
+          icon={FileAudio}
+          title="No hay archivos de plantilla"
+          description="Sube o genera un MP4/audio y aparecerá aquí listo para arrastrarlo a una pista."
+        />
+      )}
+      {!!templates.length && (
+        <>
+          <Separator />
+          <p className="text-xs font-semibold">PRESETS DE GENERACIÓN</p>
+          {templates.map((template) => (
+            <div key={template.id} className="rounded-xl border p-3">
+              <div className="flex items-start gap-2">
+                <Waves className="mt-0.5 size-4 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium">{template.name}</p>
+                  <p className="mt-1 line-clamp-2 text-[10px] text-muted-foreground">
+                    {template.prompt}
+                  </p>
+                </div>
+                {!template.builtIn && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => run(() => db.deleteAudioTemplate(template.id))}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3 w-full"
+                onClick={() => onUse(template)}
+              >
+                Abrir configuración
+              </Button>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -2340,6 +2783,39 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
       ),
     [assets],
   );
+  const templateAssets = useMemo(
+    () =>
+      assets.filter(
+        (asset) =>
+          asset.status === "ready" &&
+          /audio|video|mp4/i.test(
+            `${asset.type || ""} ${asset.url || ""} ${asset.path || ""}`,
+          ),
+      ),
+    [assets],
+  );
+  const templateAssetIds = useMemo(
+    () =>
+      new Set(
+        data.audioTemplates
+          .filter((template) => template.asset_id)
+          .map((template) => String(template.asset_id)),
+      ),
+    [data.audioTemplates],
+  );
+  const savedTemplateAssets = useMemo(
+    () =>
+      templateAssets
+        .filter((asset) => templateAssetIds.has(String(asset.id)))
+        .map((asset) => ({
+          ...asset,
+          templateKind:
+            data.audioTemplates.find(
+              (template) => String(template.asset_id) === String(asset.id),
+            )?.kind || "music",
+        })),
+    [data.audioTemplates, templateAssetIds, templateAssets],
+  );
   const totalMs = Math.max(10000, ...data.cues.map((cue) => cue.end_ms || 0));
   const cue =
     data.cues.find((item) => String(item.id) === String(cueId)) || null;
@@ -2349,20 +2825,26 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
     if (cueId && !data.cues.some((item) => String(item.id) === String(cueId)))
       setCueId(null);
   }, [data.cues, cueId]);
-  const addCue = async (asset, track_kind = "music") => {
+  const addCue = async (asset, track_kind = "music", requestedStart = null) => {
     const lastEnd = Math.max(
       0,
       ...data.cues
         .filter((item) => item.track_kind === track_kind)
         .map((item) => item.end_ms || 0),
     );
+    const startMs =
+      requestedStart === null ? lastEnd : Math.max(0, requestedStart);
+    const durationMs = Math.max(
+      500,
+      Number(asset.duration_ms || asset.params?.duration_ms || 5000),
+    );
     let created;
     const ok = await run(async () => {
       created = await db.createAudioCue(projectId, {
         asset_id: asset.id,
         track_kind,
-        start_ms: lastEnd,
-        end_ms: lastEnd + 5000,
+        start_ms: startMs,
+        end_ms: startMs + durationMs,
       });
     });
     if (ok && created) setCueId(created.id);
@@ -2375,6 +2857,40 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
     setBrief("");
     setBriefOpen(false);
   };
+  const askForVoices = () =>
+    onSeedChat?.(
+      "Crea los perfiles de voz que necesito para este proyecto. Para cada voz, define nombre, idioma, acento, tono y uso narrativo; guÃ¡rdala con create_voice_profile en Audio > Voces con su proveedor e ID reutilizable. Si el proveedor no puede crear o devolver un ID de voz, guÃ¡rdala honestamente como borrador y dime quÃ© falta. No clones ni imites voces reales sin consentimiento verificable.",
+    );
+  const inferTemplateKind = (asset) => {
+    const description = `${asset.name || ""} ${asset.meta || ""} ${asset.type || ""}`.toLowerCase();
+    if (/music|mÃºsica|song|track|score/.test(description)) return "music";
+    if (/ambient|ambience|room tone|atmÃ³sfera/.test(description)) return "ambience";
+    return "sfx";
+  };
+  const saveAsVoice = (asset) => {
+    const providerVoiceId =
+      asset.provider_voice_id || asset.voice_id || asset.params?.voice_id || null;
+    return run(() =>
+      db.createVoiceProfile(projectId, {
+        name: asset.name || "Voz guardada",
+        provider: asset.provider || "generated",
+        provider_voice_id: providerVoiceId,
+        source: "designed",
+        description: `Guardada desde Biblioteca (asset ${asset.id}).`,
+        status: providerVoiceId ? "ready" : "draft",
+      }),
+    );
+  };
+  const saveAsTemplate = (asset) =>
+    run(() =>
+      db.createAudioTemplate(projectId, {
+        name: asset.name || "Audio guardado",
+        asset_id: asset.id,
+        kind: inferTemplateKind(asset),
+        prompt: asset.meta || `Reutilizar el asset ${asset.id}.`,
+        duration_ms: asset.duration_ms || asset.params?.duration_ms || null,
+      }),
+    );
   const generateSound = (config) => {
     const scene = data.scenes.find(
       (item) => String(item.id) === String(config.scene_id),
@@ -2383,9 +2899,21 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
       (item) => String(item.id) === String(config.script_line_id),
     );
     const endMs = config.start_ms + config.duration_ms;
+    if (config.kind === "voice") {
+      onSeedChat?.(
+        `Genera una toma de voz reutilizable con generate_audio y guárdala en Assets.\n` +
+          `Modelo obligatorio: ${config.model_id}. Perfil de voz: ${config.voice_profile_id}. ` +
+          `Línea exacta del guion: ${config.script_line_id} — “${line?.text || config.prompt}”. No cambies ninguna palabra.\n` +
+          `Formato: ${config.output_format}. Ajustes interpretativos guardados en el perfil: ${JSON.stringify(config.settings)}.\n` +
+          `Colócala desde ${config.start_ms} ms hasta ${endMs} ms usando placement_start_ms y placement_end_ms. ` +
+          `Estima los créditos antes de generar.`,
+      );
+      return;
+    }
     onSeedChat?.(
       `Genera un asset de audio reutilizable con generate_audio y guárdalo en Assets.\n` +
         `Tipo: ${config.kind}. Descripción aprobada: ${config.prompt}\n` +
+        `Modelo obligatorio: ${config.model_id}.\n` +
         `Duración: ${config.duration_ms / 1000}s. Intensidad creativa: ${config.intensity}. Loop: ${config.loop}.\n` +
         (scene
           ? `Contexto obligatorio: escena ${scene.id} (“${scene.title}”), usando su guion completo y sus assets vinculados.\n`
@@ -2401,6 +2929,36 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
   const useTemplate = (template) => {
     setComposerSeed({ ...template, selectedAt: Date.now() });
     setLibraryTab("create");
+  };
+  const varyAsset = (asset) =>
+    onSeedChat?.(
+      `Crea una variante del archivo @${asset.name} (id ${asset.id}) sin modificar el original. Conserva duración y función narrativa; pregúntame qué propiedad debo cambiar, registra el linaje y guarda el resultado como un asset nuevo.`,
+    );
+  const dropTemplate = (event, trackKind) => {
+    event.preventDefault();
+    const raw = event.dataTransfer.getData(
+      "application/x-xframe-audio-template",
+    );
+    if (!raw) return;
+    try {
+      const payload = JSON.parse(raw);
+      const asset = templateAssets.find(
+        (item) => String(item.id) === String(payload.assetId),
+      );
+      if (!asset) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const ratio = Math.min(
+        1,
+        Math.max(0, (event.clientX - rect.left) / rect.width),
+      );
+      addCue(
+        asset,
+        trackKind || payload.trackKind || "music",
+        Math.round(totalMs * ratio),
+      );
+    } catch {
+      // Un payload externo o corrupto no debe afectar a la timeline.
+    }
   };
 
   return (
@@ -2454,7 +3012,7 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns: `${audioLibraryVisible ? "300px" : "0px"} minmax(500px, 1fr) ${audioInspectorVisible ? "310px" : "0px"}`,
+            gridTemplateColumns: `${audioLibraryVisible ? "400px" : "0px"} minmax(500px, 1fr) ${audioInspectorVisible ? "310px" : "0px"}`,
           }}
         >
           <aside
@@ -2528,6 +3086,19 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                                       </DropdownMenuItem>
                                     ),
                                   )}
+                                  <DropdownMenuItem onClick={() => saveAsVoice(asset)}>
+                                    <Mic2 className="mr-2 size-4" />
+                                    Guardar en Voces
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={templateAssetIds.has(String(asset.id))}
+                                    onClick={() => saveAsTemplate(asset)}
+                                  >
+                                    <Bookmark className="mr-2 size-4" />
+                                    {templateAssetIds.has(String(asset.id))
+                                      ? "Ya estÃ¡ en Plantillas"
+                                      : "Guardar en Plantillas"}
+                                  </DropdownMenuItem>
                                   <DropdownMenuItem
                                     onClick={() =>
                                       onSeedChat?.(
@@ -2568,8 +3139,12 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                         projectId={projectId}
                         scenes={data.scenes}
                         lines={data.lines}
+                        voices={data.voices}
+                        audioAssets={audioAssets}
                         seed={composerSeed}
                         onGenerate={generateSound}
+                        onVariant={varyAsset}
+                        onOpenVoices={() => setLibraryTab("voices")}
                         run={run}
                       />
                     </div>
@@ -2579,8 +3154,10 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                   <ScrollArea className="h-full">
                     <div className="p-3">
                       <SoundTemplates
-                        templates={data.audioTemplates}
+                        templates={[...systemSoundTemplates, ...data.audioTemplates]}
+                        mediaAssets={savedTemplateAssets}
                         onUse={useTemplate}
+                        onVariant={varyAsset}
                         run={run}
                       />
                     </div>
@@ -2593,6 +3170,7 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                         projectId={projectId}
                         voices={data.voices}
                         run={run}
+                        onAskAgent={askForVoices}
                       />
                     </div>
                   </ScrollArea>
@@ -2658,7 +3236,18 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                             </p>
                           </div>
                         </div>
-                        <div className="relative h-16 overflow-hidden rounded-lg border bg-muted/15">
+                        <div
+                          className="relative h-16 overflow-hidden rounded-lg border bg-muted/15 transition-colors hover:bg-accent/30"
+                          onDragOver={(event) => {
+                            if (
+                              event.dataTransfer.types.includes(
+                                "application/x-xframe-audio-template",
+                              )
+                            )
+                              event.preventDefault();
+                          }}
+                          onDrop={(event) => dropTemplate(event, kind)}
+                        >
                           <div className="absolute inset-0 grid grid-cols-4 divide-x divide-dashed">
                             {[0, 1, 2, 3].map((i) => (
                               <span key={i} />

@@ -713,6 +713,7 @@ class GenerateAudioTool(_GenerationTool):
         loop: bool = False,
         placement_start_ms: int | None = None,
         placement_end_ms: int | None = None,
+        output_format: str | None = None,
         **_: Any,
     ) -> tuple[str, Any]:
         model = self.require_model(model_id, "audio")
@@ -774,6 +775,13 @@ class GenerateAudioTool(_GenerationTool):
             "script_line_ids": line_ids,
             "composition_plan": composition_plan,
             "loop": loop,
+            "output_format": output_format or "mp3_44100_128",
+            "provider_model_id": {
+                "eleven-v3-voice": "eleven_v3",
+                "eleven-v3-dialogue": "eleven_v3",
+                "eleven-multilingual-v2": "eleven_multilingual_v2",
+                "eleven-music-v2": "music_v2",
+            }.get(model.id),
         }
         if placement_start_ms is not None:
             if placement_start_ms < 0:
@@ -874,13 +882,19 @@ class GenerateAudioTool(_GenerationTool):
                     "the generated duration.",
                     None,
                 ),
+                output_format=described(
+                    str | None,
+                    "Provider output format, for example mp3_44100_128 or pcm_44100.",
+                    None,
+                ),
             ),
             description=(
                 "Generate reusable voice, multi-character dialogue, music, sound effects or "
                 "ambience assets. USE THIS after screenplay wording and voice identities are "
                 "defined, or after the music/SFX brief is explicit. DO NOT generate speech "
                 "from free-form invented copy; pass screenplay line ids. Generated audio is "
-                "an asset and must be placed later with create_audio_plan.\n\nAudio models:\n"
+                "an asset; when exact placement arguments are supplied, it is inserted "
+                "into the audio timeline automatically.\n\nAudio models:\n"
                 + enumerate_for_prompt(models)
             ),
         )

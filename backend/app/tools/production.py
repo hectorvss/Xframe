@@ -53,6 +53,98 @@ class VoiceProfileArgs(BaseModel):
     )
 
 
+class ReusableVoiceProfileArgs(BaseModel):
+    profile_name: str
+    provider: str
+    provider_voice_id: str | None = None
+    source: Literal["library", "designed", "cloned", "uploaded"] = "library"
+    language: str = "es"
+    accent: str | None = None
+    description: str = ""
+    performance_defaults: dict[str, Any] = Field(default_factory=dict)
+    pronunciation_rules: list[dict[str, Any]] = Field(default_factory=list)
+    consent_status: Literal["not_required", "pending", "verified", "rejected"] = (
+        "not_required"
+    )
+
+
+class CreateVoiceProfileTool(SnapshotTool):
+    name: str = "create_voice_profile"
+    args_schema: type[BaseModel] = ReusableVoiceProfileArgs
+    description: str = (
+        "Create or update a reusable project voice in the Audio > Voices library. "
+        "Use it when the user asks for a narrator, character or brand voice before "
+        "assigning it to a screenplay character. A provider voice ID makes the profile "
+        "ready for synthesis; without one it remains an explicit draft, never pretend it "
+        "can already speak. Cloned or uploaded voices require verified consent."
+    )
+
+    async def _arun_impl(
+        self,
+        profile_name: str,
+        provider: str,
+        provider_voice_id: str | None = None,
+        source: str = "library",
+        language: str = "es",
+        accent: str | None = None,
+        description: str = "",
+        performance_defaults: dict[str, Any] | None = None,
+        pronunciation_rules: list[dict[str, Any]] | None = None,
+        consent_status: str = "not_required",
+        **_: Any,
+    ) -> tuple[str, Any]:
+        if source in {"cloned", "uploaded"} and consent_status != "verified":
+            raise XframeToolRetryableError(
+                "Cloned or uploaded voices require consent_status='verified' before they "
+                "can be saved. Ask the user to provide or confirm consent evidence."
+            )
+
+        status = "ready" if provider_voice_id else "draft"
+        row = await db.fetchrow(
+            """
+            insert into public.voice_profiles
+              (project_id, name, provider, provider_voice_id, source, language,
+               accent, description, settings, pronunciation_rules, consent_status, status)
+            values ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12)
+            on conflict (project_id, name) do update set
+              provider=excluded.provider,
+              provider_voice_id=excluded.provider_voice_id,
+              source=excluded.source,
+              language=excluded.language,
+              accent=excluded.accent,
+              description=excluded.description,
+              settings=excluded.settings,
+              pronunciation_rules=excluded.pronunciation_rules,
+              consent_status=excluded.consent_status,
+              status=excluded.status
+            returning id, status
+            """,
+            self.ctx.project_id,
+            profile_name,
+            provider,
+            provider_voice_id,
+            source,
+            language,
+            accent,
+            description,
+            performance_defaults or {},
+            pronunciation_rules or [],
+            consent_status,
+            status,
+        )
+        voice_id = str(row["id"])
+        readiness = "ready to synthesize" if row["status"] == "ready" else "saved as a draft"
+        return (
+            f"Voice '{profile_name}' {readiness} in the project library.",
+            {
+                "kind": "voice_profile",
+                "voice_profile_id": voice_id,
+                "provider_voice_id": provider_voice_id,
+                "status": row["status"],
+            },
+        )
+
+
 class AssignCharacterVoiceTool(SnapshotTool):
     name: str = "assign_character_voice"
     args_schema: type[BaseModel] = VoiceProfileArgs
@@ -836,6 +928,7 @@ class PlanAssetOperationTool(SnapshotTool):
 
 
 PRODUCTION_TOOL_CLASSES: tuple[type[SnapshotTool], ...] = (
+    CreateVoiceProfileTool,
     AssignCharacterVoiceTool,
     CreateScreenplayTool,
     CreateAudioPlanTool,

@@ -542,6 +542,7 @@ def _format_production(ctx: XframeUIContext, detail: ContextDetail) -> str:
             lines.append(
                 f'<sound_template id="{_attr(template.get("id", ""))}" '
                 f'name="{_attr(template.get("name", ""))}" '
+                f'asset_id="{_attr(template.get("asset_id", ""))}" '
                 f'kind="{_attr(template.get("kind", ""))}" '
                 f'duration_ms="{_attr(template.get("duration_ms", ""))}" '
                 f'loop="{str(bool(template.get("loop", False))).lower()}" '
@@ -1041,7 +1042,7 @@ class XframeContextManager:
                 self._project_id,
             ),
             db.fetch(
-                """select id, name, kind, prompt, duration_ms, loop, intensity,
+                """select id, name, asset_id, kind, prompt, duration_ms, loop, intensity,
                           composition_plan, tags
                      from public.audio_templates where project_id=$1::uuid
                     order by updated_at desc""",

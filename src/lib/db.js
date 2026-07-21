@@ -1056,6 +1056,18 @@ export const db = {
   /* --- production studio: screenplay, voices, audio and review --- */
 
   async getProduction(projectId) {
+    const tables = [
+      "script_scenes",
+      "script_lines",
+      "voice_profiles",
+      "character_voices",
+      "audio_cues",
+      "asset_annotations",
+      "asset_operations",
+      "timeline_transitions",
+      "script_asset_links",
+      "audio_templates",
+    ];
     const [
       scenes,
       lines,
@@ -1067,18 +1079,11 @@ export const db = {
       transitions,
       assetLinks,
       audioTemplates,
-    ] = await Promise.all([
-      DRIVER.select("script_scenes", { project_id: projectId }),
-      DRIVER.select("script_lines", { project_id: projectId }),
-      DRIVER.select("voice_profiles", { project_id: projectId }),
-      DRIVER.select("character_voices", { project_id: projectId }),
-      DRIVER.select("audio_cues", { project_id: projectId }),
-      DRIVER.select("asset_annotations", { project_id: projectId }),
-      DRIVER.select("asset_operations", { project_id: projectId }),
-      DRIVER.select("timeline_transitions", { project_id: projectId }),
-      DRIVER.select("script_asset_links", { project_id: projectId }),
-      DRIVER.select("audio_templates", { project_id: projectId }),
-    ]);
+    ] = (
+      await Promise.allSettled(
+        tables.map((table) => DRIVER.select(table, { project_id: projectId })),
+      )
+    ).map((result) => (result.status === "fulfilled" ? result.value : []));
     return {
       scenes: scenes.sort((a, b) => a.position - b.position),
       lines: lines.sort((a, b) => a.position - b.position),
@@ -1307,6 +1312,7 @@ export const db = {
       ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
       project_id: projectId,
       name: input.name,
+      asset_id: input.asset_id || null,
       kind: input.kind || "sfx",
       prompt: input.prompt || "",
       duration_ms: input.duration_ms ?? null,

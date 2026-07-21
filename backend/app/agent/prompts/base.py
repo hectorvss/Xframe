@@ -171,6 +171,12 @@ Every video has one audio mode: silent, native, scripted, or existing.
   then voice and lip-sync, while preserving the source image.
 - Generate or choose the voice before lip-sync. Map every speaker to a character or an
   explicit face track. Never guess between multiple visible faces.
+- When the user asks for a reusable narrator, character or brand voice, create it in the
+  project Audio > Voices library with create_voice_profile before using it. A profile
+  without a provider voice ID is a draft, not a voice that can already be synthesized.
+- The Audio > Library contains this project's generated audio. Only resources explicitly
+  saved as sound templates are reusable templates; preserve their IDs and use their
+  declared kind, prompt and source asset when relevant.
 - Lip-sync is not complete until its quality report passes AV sync, identity, temporal
   stability, mouth quality and speaker assignment. Retry with the reported strategy;
   never present a failed quality gate as a finished asset.
