@@ -1,5 +1,6 @@
 import React, { Suspense, useState, useRef, useEffect, useMemo } from "react";
 import { createRoot } from "react-dom/client";
+import { Area, AreaChart } from "recharts";
 import {
   ArrowLeft,
   ArrowRight,
@@ -106,6 +107,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -152,7 +158,7 @@ import {
   AGENT_DOWN_MESSAGE,
   mcpApi,
 } from "@/lib/agent";
-import { I18nProvider, LanguageDock } from "@/lib/i18n";
+import { I18nProvider, useI18n } from "@/lib/i18n";
 import { buildUIContext } from "@/lib/uiContext";
 import { AudioStudio, ScreenplayStudio } from "@/components/production-studio";
 import "./index.css";
@@ -8620,8 +8626,6 @@ const brandLabel = (provider) =>
 const languageOptions = [
   ["es", "Español"],
   ["en", "English"],
-  ["fr", "Français"],
-  ["pt", "Português"],
 ];
 const themeOptions = [
   ["light", "Claro"],
@@ -8642,6 +8646,7 @@ const soundOptions = [
 function AccountSettings() {
   const { profile, preferences, setPreferences, updateProfile, isRemote } =
     useStudio();
+  const { setLanguage } = useI18n();
   const [identities, setIdentities] = useState([]);
   const [dialog, setDialog] = useState(null);
   const [toast, setToast] = useState(null);
@@ -8833,9 +8838,12 @@ function AccountSettings() {
       >
         <SettingsRow title="Idioma" desc="El idioma de la interfaz de Xframe.">
           <SettingSelect
-            value={preferences.language}
+            value={preferences.language === "en" ? "en" : "es"}
             options={languageOptions}
-            onChange={(language) => setPreferences({ language })}
+            onChange={(language) => {
+              setPreferences({ language });
+              setLanguage(language);
+            }}
           />
         </SettingsRow>
         <SettingsRow title="Tema" desc="Claro, oscuro o el del sistema.">
@@ -12728,7 +12736,6 @@ function App() {
       {page}
       {showConnectors && <ConnectorsDialog onClose={closeOverlay} />}
       {showSearch && <CommandPalette close={closeOverlay} />}
-      <LanguageDock />
     </>
   );
 }
