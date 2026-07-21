@@ -1152,14 +1152,23 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns: `${scenePanelVisible ? "220px" : "44px"} minmax(420px, 1fr) ${scriptInspectorVisible ? "310px" : "44px"}`,
+            gridTemplateColumns: `${scenePanelVisible ? "220px" : "0px"} minmax(420px, 1fr) ${scriptInspectorVisible ? "310px" : "0px"}`,
           }}
         >
-          <aside className="flex min-h-0 flex-col border-r bg-muted/10">
+          <aside
+            className={cn(
+              "relative flex min-h-0 flex-col",
+              scenePanelVisible
+                ? "overflow-hidden border-r bg-muted/10"
+                : "overflow-visible",
+            )}
+          >
             <div
               className={cn(
-                "flex h-14 shrink-0 items-center border-b",
-                scenePanelVisible ? "justify-between px-3" : "justify-center",
+                "flex shrink-0 items-center",
+                scenePanelVisible
+                  ? "h-14 justify-between border-b px-3"
+                  : "absolute left-2 top-2 z-20",
               )}
             >
               {scenePanelVisible && (
@@ -1485,13 +1494,20 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
             )}
           </main>
 
-          <aside className="flex min-h-0 flex-col border-l bg-muted/10">
+          <aside
+            className={cn(
+              "relative flex min-h-0 flex-col",
+              scriptInspectorVisible
+                ? "overflow-hidden border-l bg-muted/10"
+                : "overflow-visible",
+            )}
+          >
             <div
               className={cn(
-                "flex h-14 shrink-0 items-center border-b",
+                "flex shrink-0 items-center",
                 scriptInspectorVisible
-                  ? "justify-between px-3"
-                  : "justify-center",
+                  ? "h-14 justify-between border-b px-3"
+                  : "absolute right-2 top-2 z-20",
               )}
             >
               {scriptInspectorVisible && (
@@ -2427,14 +2443,23 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns: `${audioLibraryVisible ? "300px" : "44px"} minmax(500px, 1fr) ${audioInspectorVisible ? "310px" : "44px"}`,
+            gridTemplateColumns: `${audioLibraryVisible ? "300px" : "0px"} minmax(500px, 1fr) ${audioInspectorVisible ? "310px" : "0px"}`,
           }}
         >
-          <aside className="flex min-h-0 flex-col border-r bg-muted/10">
+          <aside
+            className={cn(
+              "relative flex min-h-0 flex-col",
+              audioLibraryVisible
+                ? "overflow-hidden border-r bg-muted/10"
+                : "overflow-visible",
+            )}
+          >
             <div
               className={cn(
-                "flex h-14 shrink-0 items-center border-b",
-                audioLibraryVisible ? "justify-between px-3" : "justify-center",
+                "flex shrink-0 items-center",
+                audioLibraryVisible
+                  ? "h-14 justify-between border-b px-3"
+                  : "absolute left-2 top-2 z-20",
               )}
             >
               {audioLibraryVisible && (
@@ -2694,13 +2719,20 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
             </div>
           </main>
 
-          <aside className="flex min-h-0 flex-col border-l bg-muted/10">
+          <aside
+            className={cn(
+              "relative flex min-h-0 flex-col",
+              audioInspectorVisible
+                ? "overflow-hidden border-l bg-muted/10"
+                : "overflow-visible",
+            )}
+          >
             <div
               className={cn(
-                "flex h-14 shrink-0 items-center border-b",
+                "flex shrink-0 items-center",
                 audioInspectorVisible
-                  ? "justify-between px-3"
-                  : "justify-center",
+                  ? "h-14 justify-between border-b px-3"
+                  : "absolute right-2 top-2 z-20",
               )}
             >
               {audioInspectorVisible && (
