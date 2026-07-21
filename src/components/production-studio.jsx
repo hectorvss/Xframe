@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
   AudioLines,
   Bookmark,
@@ -11,9 +12,11 @@ import {
   GripVertical,
   LoaderCircle,
   Lock,
+  ListFilter,
   MessageSquareText,
   Mic2,
   MoreHorizontal,
+  MoreVertical,
   Music2,
   Pause,
   PanelLeftClose,
@@ -23,7 +26,9 @@ import {
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Settings2,
   Trash2,
@@ -320,7 +325,7 @@ function SidebarToggle({ side, expanded, onChange, label }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          variant="ghost"
+          variant="outline"
           size="icon"
           className="size-9 shrink-0"
           onClick={() => onChange(!expanded)}
@@ -1168,7 +1173,7 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
                 "flex shrink-0 items-center",
                 scenePanelVisible
                   ? "h-14 justify-between border-b px-3"
-                  : "absolute left-2 top-2 z-20",
+                  : "absolute left-2 top-5 z-20",
               )}
             >
               {scenePanelVisible && (
@@ -1513,7 +1518,7 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
                 "flex shrink-0 items-center",
                 scriptInspectorVisible
                   ? "h-14 justify-between border-b px-3"
-                  : "absolute right-2 top-2 z-20",
+                  : "absolute right-2 top-5 z-20",
               )}
             >
               {scriptInspectorVisible && (
@@ -2465,7 +2470,7 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                 "flex shrink-0 items-center",
                 audioLibraryVisible
                   ? "h-14 justify-between border-b px-3"
-                  : "absolute left-2 top-2 z-20",
+                  : "absolute left-2 top-5 z-20",
               )}
             >
               {audioLibraryVisible && (
@@ -2744,7 +2749,7 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                 "flex shrink-0 items-center",
                 audioInspectorVisible
                   ? "h-14 justify-between border-b px-3"
-                  : "absolute right-2 top-2 z-20",
+                  : "absolute right-2 top-5 z-20",
               )}
             >
               {audioInspectorVisible && (
