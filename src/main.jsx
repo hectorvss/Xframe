@@ -152,6 +152,7 @@ import {
   AGENT_DOWN_MESSAGE,
   mcpApi,
 } from "@/lib/agent";
+import { I18nProvider, LanguageDock } from "@/lib/i18n";
 import { buildUIContext } from "@/lib/uiContext";
 import { AudioStudio, ScreenplayStudio } from "@/components/production-studio";
 import "./index.css";
@@ -12727,6 +12728,7 @@ function App() {
       {page}
       {showConnectors && <ConnectorsDialog onClose={closeOverlay} />}
       {showSearch && <CommandPalette close={closeOverlay} />}
+      <LanguageDock />
     </>
   );
 }
@@ -12735,7 +12737,9 @@ function App() {
 const container = document.getElementById("root");
 const root = (window.__xframeRoot ??= createRoot(container));
 root.render(
-  <StudioProvider>
-    <App />
-  </StudioProvider>,
+  <I18nProvider>
+    <StudioProvider>
+      <App />
+    </StudioProvider>
+  </I18nProvider>,
 );
