@@ -322,7 +322,7 @@ function SidebarToggle({ side, expanded, onChange, label }) {
         <Button
           variant="ghost"
           size="icon"
-          className="size-8 shrink-0"
+          className="size-9 shrink-0"
           onClick={() => onChange(!expanded)}
           aria-label={`${action} ${label}`}
         >
@@ -1282,7 +1282,13 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
             )}
           </aside>
 
-          <main className="min-h-0 overflow-y-auto">
+          <main
+            className={cn(
+              "min-h-0 overflow-y-auto",
+              !scenePanelVisible && "pl-14",
+              !scriptInspectorVisible && "pr-14",
+            )}
+          >
             {!scene && !loading ? (
               <div className="p-6">
                 <EmptyState
@@ -2590,7 +2596,13 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
             )}
           </aside>
 
-          <main className="min-h-0 overflow-auto p-5">
+          <main
+            className={cn(
+              "min-h-0 overflow-auto p-5",
+              !audioLibraryVisible && "pl-14",
+              !audioInspectorVisible && "pr-14",
+            )}
+          >
             <div className="min-w-[660px]">
               <div className="mb-4 flex items-center justify-between">
                 <div>
