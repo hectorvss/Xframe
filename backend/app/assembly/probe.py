@@ -270,7 +270,7 @@ def _rotation_of(video: dict[str, Any]) -> int:
         if "rotation" in side:
             try:
                 # La displaymatrix da la rotación con signo invertido respecto a `rotate`.
-                return int(round(-float(side["rotation"]))) % 360
+                return round(-float(side["rotation"])) % 360
             except (TypeError, ValueError):
                 continue
     return 0

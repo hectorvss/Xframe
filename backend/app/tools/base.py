@@ -19,7 +19,7 @@ from abc import abstractmethod
 from typing import Any, ClassVar, Literal
 
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.tools.errors import XframeToolError
 
@@ -36,6 +36,8 @@ class ToolContext(BaseModel):
     conversation_id: str
     mode: str
     credits_available: int
+    user_message: str = ""
+    resource_refs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class XframeTool(BaseTool):

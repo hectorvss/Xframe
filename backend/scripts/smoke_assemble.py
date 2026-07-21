@@ -136,7 +136,7 @@ async def main() -> int:
             "and type = 'shot' order by position",
             project_id,
         )
-        content, payload = await assemble.bind_context(ctx)._arun_impl(
+        content, _payload = await assemble.bind_context(ctx)._arun_impl(
             shot_ids=[str(r["id"]) for r in shots], title="Corte de prueba"
         )
         print("resultado:", str(content)[:220])

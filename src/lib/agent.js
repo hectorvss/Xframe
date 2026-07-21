@@ -167,6 +167,17 @@ export async function mcpApi(path, init = {}) {
   return response.json();
 }
 
+/** REST autenticado del backend para catálogos y controles de producción. */
+export async function agentApi(path, init = {}) {
+  const response = await authorizedFetch(`${AGENT_URL}${path}`, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+  });
+  if (!response.ok) throw httpError(response);
+  if (response.status === 204) return null;
+  return response.json();
+}
+
 /**
  * Ticket de un solo uso para el SSE de reenganche.
  *

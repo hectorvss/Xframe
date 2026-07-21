@@ -20,6 +20,7 @@ from app.production.types import (
     TrackKind,
     TransitionSpec,
 )
+from app.tools.quality import RecordQualityReviewArgs
 
 
 def test_new_artifact_kinds_are_registered() -> None:
@@ -48,6 +49,29 @@ def test_audio_cue_rejects_impossible_fades() -> None:
             end_ms=1000,
             fade_in_ms=700,
             fade_out_ms=700,
+        )
+
+
+def test_audio_cue_keeps_explicit_scene_scope() -> None:
+    cue = AudioCueSpec(
+        asset_id="music",
+        scene_id="scene-2",
+        track_kind=TrackKind.MUSIC,
+        start_ms=4200,
+        end_ms=9600,
+    )
+    assert cue.scene_id == "scene-2"
+    assert cue.start_ms == 4200
+
+
+def test_human_quality_review_requires_written_evidence() -> None:
+    with pytest.raises(ValidationError, match="evidence"):
+        RecordQualityReviewArgs(
+            asset_id="asset",
+            check_type="render",
+            passed=True,
+            score=1,
+            evidence="too short",
         )
 
 

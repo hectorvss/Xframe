@@ -44,6 +44,9 @@ class BriefBlockIn(BaseModel):
     text: str = Field("", description="Block content. Plain text, no markdown syntax.")
     checked: bool = Field(False, description="Only meaningful for 'todo' blocks.")
     src: str | None = Field(None, description="Image URL. Only for 'image' blocks.")
+    asset_id: str | None = Field(
+        None, description="Existing project asset id for an image block; preferred over a raw URL."
+    )
 
 
 class WriteBriefArgs(BaseModel):
@@ -86,19 +89,29 @@ class WriteBriefTool(SnapshotTool):
             )
             rows = []
             for i, block in enumerate(parsed):
+                src = block.src
+                if block.asset_id:
+                    asset = await conn.fetchrow(
+                        "select url from public.assets where id=$1::uuid and project_id=$2::uuid",
+                        block.asset_id, self.ctx.project_id,
+                    )
+                    if not asset:
+                        raise UnknownEntityError("asset", block.asset_id, [])
+                    src = asset["url"]
                 row = await conn.fetchrow(
                     """
                     insert into public.brief_blocks
-                           (project_id, position, type, text, checked, src)
-                    values ($1, $2, $3, $4, $5, $6)
-                    returning id, position, type, text, checked, src
+                           (project_id, position, type, text, checked, src, asset_id)
+                    values ($1, $2, $3, $4, $5, $6, $7::uuid)
+                    returning id, position, type, text, checked, src, asset_id
                     """,
                     self.ctx.project_id,
                     i,
                     BLOCK_TYPE_TO_UI.get(block.type, block.type),
                     block.text,
                     block.checked,
-                    block.src,
+                    src,
+                    block.asset_id,
                 )
                 rows.append(dict(row) | {"id": str(row["id"])})
 
@@ -162,7 +175,7 @@ class UpdateBriefBlockTool(SnapshotTool):
             block_id,
             self.ctx.project_id,
             text,
-            type,
+            BLOCK_TYPE_TO_UI.get(type, type) if type else None,
             checked,
         )
         if row is None:
@@ -181,3 +194,87 @@ class UpdateBriefBlockTool(SnapshotTool):
 
         ui = dict(row) | {"id": str(row["id"])}
         return f"Block {row['position']} updated: {row['text'][:120]}", ui
+
+
+class AppendBriefBlockArgs(BaseModel):
+    block: BriefBlockIn
+    after_block_id: str | None = Field(
+        None, description="Insert after this exact block id; omit to append at the end."
+    )
+
+
+class AppendBriefBlockTool(SnapshotTool):
+    name: str = "append_brief_block"
+    args_schema: type[BaseModel] = AppendBriefBlockArgs
+    modes: ClassVar[tuple[str, ...]] = ("preproduction", "production", "edit")
+    description: str = (
+        "Insert one new block into the project brief without rewriting existing content. "
+        "USE THIS to add a section, paragraph, requirement, todo or project-asset image at "
+        "an exact location. DO NOT use write_brief for an incremental addition, invent an "
+        "after_block_id, or persist a temporary/signed browser URL as an image reference."
+    )
+
+    async def _arun_impl(self, block: Any, after_block_id: str | None = None,
+                         **_: Any) -> tuple[str, Any]:
+        parsed = block if isinstance(block, BriefBlockIn) else BriefBlockIn.model_validate(block)
+        rows = await db.fetch(
+            "select id,position from public.brief_blocks where project_id=$1::uuid order by position",
+            self.ctx.project_id,
+        )
+        position = len(rows)
+        if after_block_id:
+            target = next((row for row in rows if str(row["id"]) == after_block_id), None)
+            if not target:
+                raise UnknownEntityError("brief block", after_block_id, [str(row["id"]) for row in rows])
+            position = int(target["position"]) + 1
+        src = parsed.src
+        if parsed.asset_id:
+            asset = await db.fetchrow(
+                "select url from public.assets where id=$1::uuid and project_id=$2::uuid",
+                parsed.asset_id, self.ctx.project_id,
+            )
+            if not asset:
+                raise UnknownEntityError("asset", parsed.asset_id, [])
+            src = asset["url"]
+        async with db.transaction() as conn:
+            await conn.execute(
+                "update public.brief_blocks set position=position+1 where project_id=$1::uuid and position >= $2",
+                self.ctx.project_id, position,
+            )
+            row = await conn.fetchrow(
+                """insert into public.brief_blocks
+                   (project_id,position,type,text,checked,src,asset_id)
+                   values ($1::uuid,$2,$3,$4,$5,$6,$7::uuid)
+                   returning id,position,type,text,checked,src,asset_id""",
+                self.ctx.project_id, position, BLOCK_TYPE_TO_UI.get(parsed.type, parsed.type),
+                parsed.text, parsed.checked, src, parsed.asset_id,
+            )
+        return f"Brief block inserted at position {position}.", dict(row) | {"id": str(row["id"])}
+
+
+class DeleteBriefBlockArgs(BaseModel):
+    block_id: str
+
+
+class DeleteBriefBlockTool(SnapshotTool):
+    name: str = "delete_brief_block"
+    args_schema: type[BaseModel] = DeleteBriefBlockArgs
+    modes: ClassVar[tuple[str, ...]] = ("preproduction", "production", "edit")
+    description: str = (
+        "Delete exactly one identified block from the project brief and compact positions. "
+        "USE THIS when the user explicitly removes a requirement or obsolete section. DO "
+        "NOT delete a block merely to rewrite it, guess its id, or replace the whole brief."
+    )
+
+    async def _arun_impl(self, block_id: str, **_: Any) -> tuple[str, Any]:
+        row = await db.fetchrow(
+            "delete from public.brief_blocks where id=$1::uuid and project_id=$2::uuid returning position",
+            block_id, self.ctx.project_id,
+        )
+        if not row:
+            raise UnknownEntityError("brief block", block_id, [])
+        await db.execute(
+            "update public.brief_blocks set position=position-1 where project_id=$1::uuid and position > $2",
+            self.ctx.project_id, row["position"],
+        )
+        return f"Brief block {block_id} deleted.", {"block_id": block_id, "deleted": True}

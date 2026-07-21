@@ -43,7 +43,6 @@ from app.agent.state import (
     Todo,
     XframeState,
 )
-from app.config import get_settings
 from app.context.manager import (
     CONTEXT_MESSAGE_FLAG,
     context_message,
@@ -466,7 +465,6 @@ async def _default_summarizer(messages: Sequence[BaseMessage]) -> str:
     el módulo se pueda importar sin `langchain_anthropic`.
     """
 
-    settings = get_settings()
     from app import llm
 
     model = llm.chat_model("summarize", max_tokens=8_192, streaming=False)

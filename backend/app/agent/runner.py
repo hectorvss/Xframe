@@ -198,7 +198,13 @@ class ConversationRunner:
             # maestro + pedir aprobación, en vez de una imagen.
             mode=AgentMode(stored_mode) if stored_mode else AgentMode.PRODUCTION,
             open_tab=ui.get("open_tab"),
-            selected_asset_ids=ui.get("selected_asset_ids") or None,
+            # Empty lists are meaningful: they clear the selection/references from the
+            # previous turn. Converting them to None makes the state reducer preserve a
+            # stale @asset, which can target an edit or approval at the wrong resource.
+            selected_asset_ids=(
+                ui.get("selected_asset_ids") if "selected_asset_ids" in ui else None
+            ),
+            resource_refs=ui.get("resource_refs") if "resource_refs" in ui else None,
             messages=[self._entry_message(message, system_event)],
         )
 

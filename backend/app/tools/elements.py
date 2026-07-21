@@ -52,17 +52,19 @@ class DefineElementTool(SnapshotTool):
         reference_url: str | None = None
         if reference_asset_id:
             row = await db.fetchrow(
-                "select url, status from public.assets where id = $1::uuid and project_id = $2::uuid",
+                "select url, status, type from public.assets where id = $1::uuid and project_id = $2::uuid",
                 reference_asset_id,
                 self.ctx.project_id,
             )
-            if row is None:
+            asset_type = str(row["type"] if row else "").lower()
+            if row is None or not any(token in asset_type for token in ("image", "imagen", "imágen")):
                 from app.tools.errors import UnknownEntityError
 
                 valid = await db.fetch(
                     """
                     select id, name from public.assets
-                     where project_id = $1::uuid and type = 'image' and status = 'ready'
+                     where project_id = $1::uuid and status = 'ready'
+                       and (lower(type) like '%image%' or lower(type) like '%imagen%')
                      order by created_at desc limit 40
                     """,
                     self.ctx.project_id,

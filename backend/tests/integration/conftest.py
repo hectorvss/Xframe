@@ -43,7 +43,31 @@ import pytest
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 SUPABASE_DIR = BACKEND_ROOT.parent / "supabase"
 
-SCHEMA_FILES = ("schema.sql", "002_agent.sql", "004_conversation_resume.sql")
+# `schema.sql` already contains the browser-facing migrations through team chat.
+# The agent schema and every production-studio migration must still be applied here:
+# otherwise integration tests can pass against a database that cannot open Guion/Audio.
+SCHEMA_FILES = (
+    "schema.sql",
+    "002_agent.sql",
+    "004_conversation_resume.sql",
+    "007_mcp_api.sql",
+    "008_production_studio.sql",
+    "009_audio_lipsync_models.sql",
+    "010_oauth_mcp_grants.sql",
+    "010_script_asset_links_sound_templates.sql",
+    "011_project_types.sql",
+    "012_audio_library_assets.sql",
+    "013_resource_bindings.sql",
+    "014_production_manifests_quality.sql",
+    "015_persistent_visual_references.sql",
+    "016_manifest_approval_evidence.sql",
+    "017_stable_brief_blocks.sql",
+    "018_audio_scene_scope.sql",
+    "019_quality_review_evidence.sql",
+    "020_delivery_approvals.sql",
+    "021_scene_shots_and_timeline.sql",
+    "022_manifest_execution_snapshot.sql",
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -151,7 +175,8 @@ def _normalise(url: str) -> str:
 @pytest.fixture(scope="session")
 def schema(postgres_url: str) -> str:
     """
-    Aplica `schema.sql` y `002_agent.sql` sobre la base limpia, una vez por sesión.
+    Aplica el esquema base, el agente y todas las migraciones de producción sobre una
+    base limpia, una vez por sesión.
 
     Se ejecuta con `asyncio.run` en una fixture síncrona por el mismo motivo que arriba:
     aislar el ciclo de vida del esquema del ciclo de vida del bucle de los tests.

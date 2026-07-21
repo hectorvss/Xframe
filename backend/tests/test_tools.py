@@ -435,6 +435,58 @@ async def test_production_mounts_the_generation_tools(fake_db) -> None:
     assert "finalize_plan" not in names
 
 
+async def test_production_exposes_full_director_control_surface(fake_db) -> None:
+    fake_db()
+    snapshot = make_snapshot(
+        models=[
+            make_model("flux-2-pro", "image"),
+            make_model("kling-3.0-turbo", "video", supports_last_frame=True),
+            make_model("eleven-v3", "audio"),
+            make_model("sync-3", "lipsync"),
+        ]
+    )
+    names = {
+        tool.name
+        for tool in await build_tools_for_mode(make_ctx("production"), snapshot=snapshot)
+    }
+    required = {
+        "create_script_scene",
+        "update_script_scene",
+        "delete_script_scene",
+        "create_script_line",
+        "update_script_line",
+        "delete_script_line",
+        "assign_shot_to_scene",
+        "remove_shot_from_scene",
+        "create_voice_profile",
+        "update_voice_profile",
+        "delete_voice_profile",
+        "set_character_voice",
+        "create_audio_template",
+        "update_audio_template",
+        "delete_audio_template",
+        "place_audio_asset",
+        "update_audio_cue",
+        "delete_audio_cue",
+        "create_canvas_node",
+        "update_canvas_node",
+        "delete_canvas_node",
+        "connect_canvas_nodes",
+        "disconnect_canvas_nodes",
+        "build_production_manifest",
+        "approve_production_manifest",
+        "complete_production_manifest",
+        "inspect_asset_technical",
+        "inspect_audio_signal",
+        "inspect_asset_creative",
+        "generate_audio",
+        "generate_lipsync",
+        "generate_transition",
+        "assemble_video",
+    }
+    assert required <= names, f"missing director tools: {sorted(required - names)}"
+
+
 async def test_generation_tool_disappears_without_models(fake_db) -> None:
     """Sin un solo modelo de vídeo, la tool no se monta con un enum vacío: no se monta."""
     fake_db()

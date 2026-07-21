@@ -824,7 +824,7 @@ def test_grant_survives_the_profile_mirror(monkeypatch: pytest.MonkeyPatch) -> N
     aplicada directamente sobre la columna se evapora en el siguiente gasto del usuario.
     `grant()` escribe en el libro, y por eso sobrevive.
     """
-    db, profile_id, project_id, job_id = seeded(reserved=160, balance=1000)
+    db, profile_id, _project_id, job_id = seeded(reserved=160, balance=1000)
     install_fake_db(monkeypatch, db)
     db.ledger.append(
         {"profile_id": profile_id, "project_id": None, "job_id": job_id, "kind": "reserve", "amount": -160}

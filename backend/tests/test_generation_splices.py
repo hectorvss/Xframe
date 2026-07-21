@@ -58,6 +58,7 @@ from app.providers.base import (
 )
 from app.taxonomy.builder import build_tools_for_mode
 from app.tools.errors import InsufficientCreditsError
+from app.tools.generation import _asset_or_raise
 from tests.test_tools import FakeDB, make_ctx, make_model, make_snapshot
 
 pytestmark = pytest.mark.asyncio
@@ -66,6 +67,45 @@ PROJECT_ID = "22222222-2222-2222-2222-222222222222"
 CONVERSATION_ID = "44444444-4444-4444-4444-444444444444"
 SHOT_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 SHOT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+
+@pytest.mark.parametrize(
+    ("stored_type", "requested_kind"),
+    [
+        ("Audio", "audio"),
+        ("Música", "audio"),
+        ("Vídeos", "video"),
+        ("cut", "video"),
+        ("Imágenes", "image"),
+    ],
+)
+async def test_asset_kind_accepts_legacy_localized_upload_types(
+    monkeypatch: pytest.MonkeyPatch,
+    stored_type: str,
+    requested_kind: str,
+) -> None:
+    """Old UI uploads remain usable after canonical lowercase types were introduced."""
+    import app.tools.generation as generation_mod
+
+    asset_id = "11111111-1111-1111-1111-111111111111"
+    double = FakeDB(
+        {
+            "from public.assets": {
+                "id": asset_id,
+                "name": "Legacy upload",
+                "type": stored_type,
+                "url": "project/object.ext",
+                "status": "ready",
+                "shot_id": None,
+                "params": {},
+            }
+        }
+    )
+    monkeypatch.setattr(generation_mod, "db", double, raising=False)
+
+    result = await _asset_or_raise(PROJECT_ID, asset_id, kind=requested_kind)
+
+    assert result["id"] == asset_id
 
 
 # --------------------------------------------------------------------------- #
@@ -305,6 +345,18 @@ def _shot_rows() -> list[dict[str, Any]]:
     ]
 
 
+MANIFEST_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+
+
+def _approved_manifest() -> dict[str, Any]:
+    return {
+        "id": MANIFEST_ID,
+        "status": "approved",
+        "fingerprint": "manifest-fingerprint",
+        "specification": {"shots": [{"id": SHOT_A}, {"id": SHOT_B}]},
+    }
+
+
 async def test_el_fanout_encola_de_verdad(wired) -> None:
     """
     El empalme de `generation.py:471`. `run_shots` no existía; `run_fanout` sí, con otra
@@ -312,11 +364,14 @@ async def test_el_fanout_encola_de_verdad(wired) -> None:
     a la cola: este test es lo que comprueba que ahora lo está.
     """
     tool, spy, _, _ = await wired(
-        "generate_shot_batch", responses={"from public.canvas_nodes": _shot_rows()}
+        "generate_shot_batch", responses={
+            "from public.canvas_nodes": _shot_rows(),
+            "from public.production_manifests": _approved_manifest(),
+        }
     )
 
     content, payload = await tool._arun_impl(
-        shot_ids=[SHOT_A, SHOT_B], model_id="kling-3.0-turbo"
+        shot_ids=[SHOT_A, SHOT_B], model_id="kling-3.0-turbo", manifest_id=MANIFEST_ID
     )
 
     assert len(spy.calls) == 2, "el fan-out no ha llegado a la cola"
@@ -336,14 +391,17 @@ async def test_un_plano_sin_saldo_no_cancela_a_sus_hermanos(wired) -> None:
     sea limpio: el plano que no cabe se reporta como fallo, los que ya se reservaron
     siguen vivos, y los créditos anunciados son los realmente reservados.
     """
-    tool, spy, _, _ = await wired(
+    tool, _spy, _, _ = await wired(
         "generate_shot_batch",
-        responses={"from public.canvas_nodes": _shot_rows()},
+        responses={
+            "from public.canvas_nodes": _shot_rows(),
+            "from public.production_manifests": _approved_manifest(),
+        },
         spy=EnqueueSpy(fail_after=1),
     )
 
     content, payload = await tool._arun_impl(
-        shot_ids=[SHOT_A, SHOT_B], model_id="kling-3.0-turbo"
+        shot_ids=[SHOT_A, SHOT_B], model_id="kling-3.0-turbo", manifest_id=MANIFEST_ID
     )
 
     assert "1 queued, 1 failed" in content
@@ -351,6 +409,63 @@ async def test_un_plano_sin_saldo_no_cancela_a_sus_hermanos(wired) -> None:
     assert payload["credits_reserved"] == 40, "se anuncian los créditos reservados de verdad"
     # 4s y 6s a 0.50 USD/s = 5 USD, que `usd_to_credits` convierte con margen.
     assert payload["credits_quoted"] == 800
+
+
+async def test_retry_dirigido_acepta_solo_un_plano_fallido(wired) -> None:
+    manifest = _approved_manifest() | {"status": "executing"}
+    tool, spy, _, _ = await wired(
+        "generate_shot_batch",
+        responses={
+            "from public.production_manifests": manifest,
+            "from public.generation_jobs": [
+                {
+                    "shot_id": SHOT_B,
+                    "status": "failed",
+                    "asset_id": None,
+                    "has_current_rejection": False,
+                }
+            ],
+            "from public.canvas_nodes": [_shot_rows()[1]],
+        },
+    )
+
+    _, payload = await tool._arun_impl(
+        shot_ids=[SHOT_B],
+        model_id="kling-3.0-turbo",
+        manifest_id=MANIFEST_ID,
+    )
+
+    assert [call["shot_id"] for call in spy.calls] == [SHOT_B]
+    assert payload["results"][0]["shot_id"] == SHOT_B
+
+
+async def test_retry_dirigido_no_regenera_un_output_sano(wired) -> None:
+    from app.tools.errors import XframeToolRetryableError
+
+    manifest = _approved_manifest() | {"status": "executing"}
+    tool, spy, _, _ = await wired(
+        "generate_shot_batch",
+        responses={
+            "from public.production_manifests": manifest,
+            "from public.generation_jobs": [
+                {
+                    "shot_id": SHOT_A,
+                    "status": "succeeded",
+                    "asset_id": "asset-a",
+                    "has_current_rejection": False,
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(XframeToolRetryableError, match="Retry refused"):
+        await tool._arun_impl(
+            shot_ids=[SHOT_A],
+            model_id="kling-3.0-turbo",
+            manifest_id=MANIFEST_ID,
+        )
+
+    assert spy.calls == []
 
 
 # --------------------------------------------------------------------------- #
@@ -370,13 +485,28 @@ async def test_el_montaje_usa_assemble_cut_y_persiste_el_corte(
     import app.assembly.ffmpeg as ffmpeg_mod
 
     rows = [
-        {"shot_id": SHOT_A, "position": 1, "title": "Plano 1",
-         "asset_id": "asset-a", "url": "https://x/a.mp4", "status": "ready"},
-        {"shot_id": SHOT_B, "position": 2, "title": "Plano 2",
-         "asset_id": "asset-b", "url": "https://x/b.mp4", "status": "ready"},
+        {"shot_id": SHOT_A, "asset_id": "asset-a", "type": "video",
+         "url": "https://x/a.mp4", "status": "ready"},
+        {"shot_id": SHOT_B, "asset_id": "asset-b", "type": "video",
+         "url": "https://x/b.mp4", "status": "ready"},
     ]
     tool, _, _, double = await wired(
-        "assemble_video", responses={"from public.canvas_nodes": rows}
+        "assemble_video", responses={
+            "from public.production_manifests": {
+                "status": "complete",
+                "specification": {"shots": [{"id": SHOT_A}, {"id": SHOT_B}]},
+                "execution_snapshot": {
+                    "outputs": [
+                        {"shot_id": SHOT_A, "asset_id": "asset-a"},
+                        {"shot_id": SHOT_B, "asset_id": "asset-b"},
+                    ],
+                    "audio_cues": [],
+                    "transitions": [],
+                },
+                "execution_fingerprint": "frozen",
+            },
+            "from public.assets": rows,
+        }
     )
 
     # `artifacts.manager` tiene su propio `db`; sin esto la creación del artefacto se
@@ -420,7 +550,7 @@ async def test_el_montaje_usa_assemble_cut_y_persiste_el_corte(
     double.responses["insert into public.assets"] = {"id": "cut-asset-1"}
 
     content, payload = await tool._arun_impl(
-        shot_ids=[SHOT_A, SHOT_B], title="Montaje final"
+        manifest_id="manifest-1", shot_ids=[SHOT_A, SHOT_B], title="Montaje final"
     )
 
     # La firma real: AssemblySpec con TimelineClip, no listas de urls sueltas.
@@ -443,10 +573,23 @@ async def test_no_se_monta_con_planos_pendientes(wired) -> None:
     """Comportamiento que ya estaba bien y que la reescritura no debía perder."""
     from app.tools.errors import XframeToolRetryableError
 
-    tool, _, _, _ = await wired("assemble_video", responses={"from public.canvas_nodes": []})
+    tool, _, _, _ = await wired(
+        "assemble_video",
+        responses={
+            "from public.production_manifests": {
+                "status": "complete", "specification": {"shots": [{"id": SHOT_A}]},
+                "execution_snapshot": {
+                    "outputs": [{"shot_id": SHOT_A, "asset_id": "asset-a"}],
+                    "audio_cues": [], "transitions": [],
+                },
+                "execution_fingerprint": "frozen",
+            },
+            "from public.assets": [],
+        },
+    )
 
     with pytest.raises(XframeToolRetryableError):
-        await tool._arun_impl(shot_ids=[SHOT_A], title="Montaje")
+        await tool._arun_impl(manifest_id="manifest-1", shot_ids=[SHOT_A], title="Montaje")
 
 
 # --------------------------------------------------------------------------- #
@@ -462,7 +605,7 @@ async def test_upscale_no_se_monta(wired) -> None:
     """
     import app.tools.generation as generation_mod
 
-    tool, _, _, _ = await wired("generate_video")
+    _tool, _, _, _ = await wired("generate_video")
     assert not hasattr(generation_mod, "UpscaleAssetTool")
 
     snap = make_snapshot(models=[make_model("kling-3.0-turbo", "video")])

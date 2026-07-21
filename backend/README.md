@@ -38,16 +38,13 @@ El esquema base (`profiles`, `projects`, `assets`, `canvas_nodes`, …) está en
 ```bash
 # contra el Postgres del compose
 psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/schema.sql
-psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/002_agent.sql
-psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/003_storage.sql
-psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/004_conversation_resume.sql
-psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/005_migrate_asset_paths.sql
-psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/006_team_chat_realtime.sql
-psql postgresql://xframe:xframe@localhost:5432/xframe -f ../supabase/007_mcp_api.sql
+for file in ../supabase/[0-9][0-9][0-9]_*.sql; do
+  psql postgresql://xframe:xframe@localhost:5432/xframe -v ON_ERROR_STOP=1 -f "$file"
+done
 
 # contra Supabase
-supabase db push
-# o: aplica los ficheros 002...006 en orden contra "$DATABASE_URL"
+# aplica cada fichero numerado pendiente, en orden, contra "$DATABASE_URL"
+python scripts/apply_migration.py ../supabase/022_manifest_execution_snapshot.sql
 ```
 
 ### API y MCP
@@ -66,9 +63,10 @@ supabase functions deploy resolve-asset
 supabase functions deploy extract-url
 ```
 
-Los ficheros numerados son migraciones incrementales e idempotentes. En una instalación
+Los ficheros numerados 002–022 son migraciones incrementales. En una instalación
 nueva se aplica primero `schema.sql`; en una ya existente se aplican solo las migraciones
-pendientes y en orden. No se vuelve a ejecutar el esquema base para actualizar producción.
+pendientes y en orden (incluidos ambos ficheros `010_*`). No se vuelve a ejecutar el
+esquema base para actualizar producción ni se reaplica a ciegas una migración ya registrada.
 
 ### Seeds de taxonomía
 
@@ -154,9 +152,10 @@ TEST_DATABASE_URL=postgresql://xframe:xframe@localhost:5432/xframe pytest -m int
 pytest -m integration
 ```
 
-El esquema se aplica desde `supabase/schema.sql` y `supabase/002_agent.sql` sobre una base
-limpia, no desde un DDL paralelo: un esquema de test mantenido a mano diverge del real y la
-divergencia se descubre en producción. `conftest.py` añade un prólogo que finge lo que pone
+El esquema se aplica desde `supabase/schema.sql` y las migraciones de producción hasta
+`022_manifest_execution_snapshot.sql` sobre una base limpia, no desde un DDL paralelo: un
+esquema de test mantenido a mano diverge del real y la divergencia se descubre en
+producción. `conftest.py` añade un prólogo que finge lo que pone
 la plataforma Supabase (los esquemas `auth` y `storage`, los roles `anon`/`authenticated`)
 y que no existe en un Postgres desnudo.
 

@@ -386,6 +386,12 @@ class DeleteShotTool(SnapshotTool):
         shot = await _shot_or_raise(self.ctx.project_id, shot_id)
         async with db.transaction() as conn:
             await conn.execute(
+                """delete from public.resource_bindings
+                    where project_id=$1::uuid and scope_type='shot' and scope_id=$2::uuid""",
+                self.ctx.project_id,
+                shot_id,
+            )
+            await conn.execute(
                 "delete from public.canvas_nodes where id = $1::uuid and project_id = $2::uuid",
                 shot_id,
                 self.ctx.project_id,

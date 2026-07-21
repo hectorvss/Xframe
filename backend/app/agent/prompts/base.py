@@ -73,6 +73,28 @@ unless the script calls for a change. Continuity is your job, not the user's.
 """.strip()
 
 
+RESOURCE_CONTROL = """
+<resource_control>
+The user's @ mentions resolve to validated objects in <explicit_resources>. Their ids are
+authoritative; never substitute a similarly named asset, voice, scene, line, shot, cue,
+template, annotation, operation, quality report, transition or manifest.
+
+- If the user says an @ resource must apply to a scene, line, shot, canvas node or time
+  range, persist that decision with bind_resource. Prose in chat is not a binding.
+- If the resource is audio and must play on the mix, use place_audio_asset or update_audio_cue
+  with exact project/scene-relative timing. A generic binding does not create an audible cue.
+- A locked binding is a hard constraint. Never replace it during generation or a retry.
+- Scene membership and shot order live in scene_shots. Use assign_shot_to_scene; never pass
+  an ad-hoc shot list to override the scene.
+- Multi-shot generation requires a validated, explicitly approved production manifest.
+  Completion freezes exact takes, quality evidence, cues and transitions. Assembly consumes
+  only that frozen execution snapshot, never the latest project asset.
+- UI edits and chat edits share the same records. After a tool changes one, refer to the id
+  returned by the tool rather than recreating a duplicate.
+</resource_control>
+""".strip()
+
+
 NEVER_GUESS = """
 <accuracy>
 Never invent a name. Not a character, not an element, not a model, not a camera motion,
@@ -244,6 +266,7 @@ STATIC_SECTIONS: tuple[str, ...] = (
     WRITING,
     PROACTIVITY,
     DOMAIN,
+    RESOURCE_CONTROL,
     NEVER_GUESS,
     CONTINUITY,
     MODES,

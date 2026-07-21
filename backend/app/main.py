@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -325,3 +326,75 @@ async def reattach(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/projects/{project_id}/provider-status")
+async def provider_status(
+    project_id: str, user: AuthUser = Depends(current_user)
+) -> dict[str, bool]:
+    await assert_project_owner(project_id, user.id)
+    settings = get_settings()
+    return {
+        provider: settings.provider_is_configured(provider)
+        for provider in (
+            "openai", "openai_image", "google", "kling", "minimax", "bytedance",
+            "wan", "higgsfield", "bfl", "elevenlabs", "sync"
+        )
+    }
+
+
+@app.get("/projects/{project_id}/voices")
+async def provider_voices(
+    project_id: str,
+    search: str | None = Query(default=None, max_length=120),
+    page_size: int = Query(default=50, ge=1, le=100),
+    next_page_token: str | None = Query(default=None, max_length=500),
+    user: AuthUser = Depends(current_user),
+) -> dict[str, Any]:
+    """Proxy ElevenLabs' authenticated voice catalogue without exposing its API key."""
+    await assert_project_owner(project_id, user.id)
+    key = get_settings().elevenlabs_api_key
+    if not key:
+        raise HTTPException(503, "ElevenLabs is not configured")
+    params: dict[str, Any] = {"page_size": page_size, "include_total_count": "true"}
+    if search:
+        params["search"] = search
+    if next_page_token:
+        params["next_page_token"] = next_page_token
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(
+                "https://api.elevenlabs.io/v2/voices",
+                headers={"xi-api-key": key},
+                params=params,
+            )
+        if response.status_code in {401, 403}:
+            raise HTTPException(503, "ElevenLabs credentials or plan do not allow voice listing")
+        response.raise_for_status()
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        logger.warning("elevenlabs_voice_catalog_failed", exc_info=exc)
+        raise HTTPException(502, "Voice provider unavailable") from exc
+    payload = response.json()
+    voices = []
+    for voice in payload.get("voices") or []:
+        labels = voice.get("labels") or {}
+        voices.append(
+            {
+                "voice_id": voice.get("voice_id"),
+                "name": voice.get("name") or "Voice",
+                "category": voice.get("category"),
+                "description": voice.get("description") or labels.get("description") or "",
+                "preview_url": voice.get("preview_url"),
+                "labels": labels,
+                "verified_languages": voice.get("verified_languages") or [],
+                "settings": voice.get("settings") or {},
+            }
+        )
+    return {
+        "voices": voices,
+        "has_more": bool(payload.get("has_more")),
+        "next_page_token": payload.get("next_page_token"),
+        "total_count": payload.get("total_count"),
+    }

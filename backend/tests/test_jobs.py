@@ -559,7 +559,7 @@ def test_concurrent_enqueue_cannot_overspend(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_reserve_rejects_when_short(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sin saldo no se encola, y el error lleva las cifras para que el agente las diga."""
-    db, profile_id, project_id = seeded_db(credits_available=10)
+    db, _profile_id, project_id = seeded_db(credits_available=10)
     install_fake_db(monkeypatch, db)
 
     with pytest.raises(InsufficientCreditsError) as exc:

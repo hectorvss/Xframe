@@ -590,7 +590,7 @@ def test_las_comillas_de_una_ficha_no_rompen_los_atributos():
 
 
 async def _resumen_falso(messages) -> str:
-    return "RESUMEN FALSO de %d mensajes." % len(messages)
+    return f"RESUMEN FALSO de {len(messages)} mensajes."
 
 
 if __name__ == "__main__":  # pragma: no cover

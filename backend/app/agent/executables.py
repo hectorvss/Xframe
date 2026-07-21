@@ -27,7 +27,6 @@ from app.agent.state import (
     XframeState,
     count_tool_calls,
 )
-from app.config import get_settings
 from app.tools.base import ToolContext, ToolFactory
 
 logger = logging.getLogger(__name__)
@@ -39,8 +38,6 @@ class RootNode:
     async def __call__(
         self, state: XframeState, config: dict[str, Any] | None = None
     ) -> PartialXframeState:
-        settings = get_settings()
-
         # 1. Compactación. Va ANTES de montar el contexto: si el historial no cabe,
         #    añadirle contexto encima solo empeora las cosas.
         #
@@ -103,10 +100,23 @@ class RootNode:
             messages,
             open_tab=state.open_tab or "assets",
             selected_asset_ids=state.selected_asset_ids,
+            resource_refs=state.resource_refs,
         )
 
     async def _build_tool_context(self, state: XframeState) -> ToolContext:
         from app.jobs.credits import balance
+
+        # Approval-sensitive tools need evidence from the actual human turn. Context
+        # injections and automatic worker events are not user consent.
+        user_message = ""
+        for message in reversed(state.messages):
+            if not isinstance(message, HumanMessage):
+                continue
+            flags = getattr(message, "additional_kwargs", {}) or {}
+            if flags.get("xframe_context") or flags.get("xframe_job_event"):
+                continue
+            user_message = str(message.content or "")
+            break
 
         return ToolContext(
             project_id=state.project_id,
@@ -117,6 +127,8 @@ class RootNode:
             conversation_id=state.conversation_id or state.project_id,
             mode=str(state.mode or AgentMode.PREPRODUCTION),
             credits_available=await balance(state.user_id),
+            user_message=user_message,
+            resource_refs=state.resource_refs or [],
         )
 
     def _exhausted(self, messages: list[Any], billable: set[str]) -> str:

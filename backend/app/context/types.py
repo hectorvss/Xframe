@@ -68,6 +68,7 @@ class BriefBlock(BaseModel):
     text: str = ""
     checked: bool = False
     src: str | None = None
+    asset_id: str | None = None
 
 
 class CameraSpec(BaseModel):
@@ -334,7 +335,12 @@ class XframeUIContext(BaseModel):
     character_voices: list[dict[str, Any]] = Field(default_factory=list)
     audio_cues: list[dict[str, Any]] = Field(default_factory=list)
     audio_templates: list[dict[str, Any]] = Field(default_factory=list)
+    annotations: list[dict[str, Any]] = Field(default_factory=list)
+    """Pixel/time annotations available for exact non-destructive edits."""
     transitions: list[dict[str, Any]] = Field(default_factory=list)
+    resource_bindings: list[dict[str, Any]] = Field(default_factory=list)
+    """Locked resources assigned to an exact narrative or timeline scope."""
+    production_manifests: list[dict[str, Any]] = Field(default_factory=list)
 
     gen_settings: GenSettings = Field(default_factory=GenSettings)
     credits: int = 0

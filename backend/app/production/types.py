@@ -95,6 +95,7 @@ class AudioCueSpec(BaseModel):
     context_tags: list[str] = Field(default_factory=list)
     shot_id: str | None = None
     script_line_id: str | None = None
+    scene_id: str | None = None
 
     @model_validator(mode="after")
     def valid_range(self) -> AudioCueSpec:

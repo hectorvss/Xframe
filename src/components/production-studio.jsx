@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -67,6 +67,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -78,10 +79,13 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/db";
+import { agentApi } from "@/lib/agent";
 
 const EMPTY = {
   scenes: [],
   lines: [],
+  sceneShots: [],
+  shots: [],
   voices: [],
   characterVoices: [],
   cues: [],
@@ -90,6 +94,9 @@ const EMPTY = {
   transitions: [],
   assetLinks: [],
   audioTemplates: [],
+  resourceBindings: [],
+  productionManifests: [],
+  qualityReports: [],
 };
 
 const visualRoles = {
@@ -193,7 +200,7 @@ const trackMeta = {
   native: [FileAudio, "Audio nativo", "bg-slate-600"],
 };
 
-function useProduction(projectId) {
+function useProduction(projectId, onChange, externalData = null) {
   const [data, setData] = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -202,7 +209,9 @@ function useProduction(projectId) {
   const reload = async (showLoader = true) => {
     if (showLoader) setLoading(true);
     try {
-      setData(await db.getProduction(projectId));
+      const next = await db.getProduction(projectId);
+      setData(next);
+      onChange?.(next);
       setError("");
     } catch (reason) {
       setError(reason?.message || "No se pudo cargar la producción.");
@@ -229,6 +238,12 @@ function useProduction(projectId) {
   useEffect(() => {
     reload();
   }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!externalData || !Array.isArray(externalData.scenes)) return;
+    setData(externalData);
+    setLoading(false);
+    setError("");
+  }, [externalData]);
   return { data, loading, saving, error, reload, run };
 }
 
@@ -344,6 +359,39 @@ function SidebarToggle({ side, expanded, onChange, label }) {
   );
 }
 
+function ProductionListSkeleton({ rows = 4 }) {
+  return (
+    <div className="space-y-2 p-3" aria-busy="true" aria-label="Cargando contenido">
+      {Array.from({ length: rows }, (_, index) => (
+        <div key={index} className="flex items-center gap-2.5 rounded-md p-2.5">
+          <Skeleton className="size-7" />
+          <div className="min-w-0 flex-1 space-y-1.5"><Skeleton className="h-3 w-3/4" /><Skeleton className="h-2.5 w-1/2" /></div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ScreenplayWorkspaceSkeleton() {
+  return (
+    <div className="space-y-5 p-5" aria-busy="true" aria-label="Cargando guion">
+      <div className="grid grid-cols-3 gap-3"><Skeleton className="h-16" /><Skeleton className="h-16" /><Skeleton className="h-16" /></div>
+      {[0, 1, 2, 3].map((item) => <Card key={item} className="p-4"><Skeleton className="h-4 w-32" /><Skeleton className="mt-3 h-3 w-full" /><Skeleton className="mt-2 h-3 w-4/5" /></Card>)}
+    </div>
+  );
+}
+
+function AudioWorkspaceSkeleton() {
+  return (
+    <div className="min-w-[660px] space-y-4" aria-busy="true" aria-label="Cargando mezcla de audio">
+      <div className="flex items-center justify-between"><div className="space-y-2"><Skeleton className="h-4 w-36" /><Skeleton className="h-3 w-64" /></div><div className="flex gap-2"><Skeleton className="size-9" /><Skeleton className="size-9" /></div></div>
+      <Skeleton className="h-3 w-full" />
+      {[0, 1, 2, 3, 4, 5].map((item) => <div key={item} className="grid grid-cols-[112px_minmax(0,1fr)] gap-2"><Skeleton className="h-16" /><Skeleton className="h-16" /></div>)}
+      <Skeleton className="h-24 w-full" />
+    </div>
+  );
+}
+
 function EmptyState({ icon: Icon, title, description, action }) {
   return (
     <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed bg-muted/10 p-8 text-center">
@@ -424,6 +472,10 @@ function AssetReferences({
       String(link.script_line_id || "") === String(lineId || ""),
   );
   const add = async (asset) => {
+    if (scoped.some((link) => String(link.asset_id) === String(asset.id))) {
+      setOpen(false);
+      return;
+    }
     const ok = await run(() =>
       db.linkScriptAsset(projectId, sceneId, lineId, asset.id),
     );
@@ -651,9 +703,19 @@ function SceneInspector({
   assignments,
   assets,
   links,
+  manifests,
+  sceneShots,
+  shots,
   run,
+  onSeedChat,
+  onSendAgent,
 }) {
   if (!scene) return null;
+  const manifest = [...(manifests || [])]
+    .filter((item) => String(item.scene_id) === String(scene.id))
+    .sort((a, b) => Number(b.version || 0) - Number(a.version || 0))[0];
+  const manifestErrors = manifest?.validation?.errors || [];
+  const manifestWarnings = manifest?.validation?.warnings || [];
   return (
     <div className="space-y-4">
       <Field label="Estado">
@@ -692,6 +754,21 @@ function SceneInspector({
           }
         />
       </Field>
+      <Field label="Inicio en el proyecto" hint="segundos">
+        <DraftInput
+          number
+          min="0"
+          step="0.1"
+          value={(scene.timeline_start_ms || 0) / 1000}
+          onCommit={(seconds) =>
+            run(() =>
+              db.updateScriptScene(scene.id, {
+                timeline_start_ms: Math.max(0, Math.round((seconds || 0) * 1000)),
+              }),
+            )
+          }
+        />
+      </Field>
       <Field label="Resumen narrativo">
         <DraftInput
           multiline
@@ -715,6 +792,55 @@ function SceneInspector({
         />
       </Field>
       <Separator />
+      <div className="space-y-2">
+        <div>
+          <p className="text-xs font-medium">Planos de la escena</p>
+          <p className="text-[10px] leading-relaxed text-muted-foreground">
+            El agente, el manifiesto y el render usarán exactamente estos planos
+            y este orden.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          {(shots || []).map((shot, index) => {
+            const link = (sceneShots || []).find(
+              (item) => String(item.shot_id) === String(shot.id),
+            );
+            const selected = String(link?.scene_id) === String(scene.id);
+            return (
+              <Button
+                key={shot.id}
+                type="button"
+                variant={selected ? "secondary" : "outline"}
+                size="sm"
+                className="h-auto w-full justify-start py-2 text-left"
+                onClick={() =>
+                  run(() =>
+                    selected
+                      ? db.removeShotFromScene(projectId, scene.id, shot.id)
+                      : db.assignShotToScene(projectId, scene.id, shot.id),
+                  )
+                }
+              >
+                {selected ? <Check className="size-3.5" /> : <Plus className="size-3.5" />}
+                <span className="min-w-0 flex-1 truncate text-xs">
+                  {shot.title || `Plano ${index + 1}`}
+                </span>
+                {link && !selected && (
+                  <Badge variant="outline" className="text-[9px]">
+                    reasignar
+                  </Badge>
+                )}
+              </Button>
+            );
+          })}
+          {!shots?.length && (
+            <p className="rounded-md border border-dashed p-2 text-[10px] text-muted-foreground">
+              Crea planos en el canvas para poder asignarlos a esta escena.
+            </p>
+          )}
+        </div>
+      </div>
+      <Separator />
       <AssetReferences
         projectId={projectId}
         sceneId={scene.id}
@@ -722,6 +848,70 @@ function SceneInspector({
         links={links}
         run={run}
       />
+      <Card className="shadow-none">
+        <CardContent className="space-y-2 p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-xs font-medium">Manifiesto de producción</p>
+              <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+                Congela guion, planos, recursos, voces, audio y entrega antes de renderizar.
+              </p>
+            </div>
+            {manifest && (
+              <Badge
+                variant={manifest.status === "invalid" ? "destructive" : "outline"}
+                className="shrink-0 text-[10px]"
+              >
+                v{manifest.version} · {manifest.status}
+              </Badge>
+            )}
+          </div>
+          {manifest ? (
+            <div className="space-y-1 rounded-md border bg-muted/20 p-2 text-[10px]">
+              <p>{manifestErrors.length} errores · {manifestWarnings.length} avisos</p>
+              {manifestErrors.slice(0, 3).map((issue, index) => (
+                <p key={`${issue.code}-${index}`} className="text-destructive">
+                  {issue.code}{issue.shot_id ? ` · ${issue.shot_id}` : ""}
+                </p>
+              ))}
+              <p className="truncate text-muted-foreground" title={manifest.fingerprint}>
+                Huella: {manifest.fingerprint}
+              </p>
+            </div>
+          ) : (
+            <p className="rounded-md border border-dashed p-2 text-[10px] text-muted-foreground">
+              Aún no existe una especificación ejecutable para esta escena.
+            </p>
+          )}
+          <div className="grid grid-cols-1 gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                (onSendAgent || onSeedChat)?.(
+                  `Construye un manifiesto de producción completo para la escena ${scene.id}. Identifica sus planos del canvas, valida guion, recursos @ bloqueados, voces, cues, continuidad y entrega. No generes todavía; muéstrame errores, avisos, coste y la versión para revisarla.`,
+                )
+              }
+            >
+              <Settings2 />
+              {manifest ? "Crear nueva versión" : "Construir manifiesto"}
+            </Button>
+            {manifest?.status === "validated" && (
+              <Button
+                size="sm"
+                onClick={() =>
+                  (onSendAgent || onSeedChat)?.(
+                    `Apruebo explícitamente el manifiesto ${manifest.id}, versión ${manifest.version}, para la escena ${scene.id}. Registra esta aprobación, conserva su huella ${manifest.fingerprint} y no cambies la especificación.`,
+                  )
+                }
+              >
+                <Check />
+                Aprobar esta versión
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
       <Card className="border-blue-200 bg-blue-50/50 shadow-none">
         <CardContent className="p-3">
           <p className="text-xs font-medium">Producir esta escena</p>
@@ -734,7 +924,7 @@ function SceneInspector({
             size="sm"
             className="mt-3 w-full bg-background"
             onClick={() =>
-              onSeedChat?.(
+              (onSendAgent || onSeedChat)?.(
                 `Genera o rehace la escena de guion ${scene.id} como una secuencia de vídeo completa. ` +
                   `Respeta literalmente sus líneas aprobadas y usa todos sus asset links y los de cada línea según role, instructions, range_ms y locked. ` +
                   `Sincroniza tomas de voz, lipsync y cues asociados; no sustituyas referencias bloqueadas. ` +
@@ -817,6 +1007,7 @@ function LineInspector({
   voices,
   run,
   onSeedChat,
+  onSendAgent,
   onDelete,
   onMoveUp,
   onMoveDown,
@@ -1043,7 +1234,7 @@ function LineInspector({
               size="sm"
               className="mt-3 w-full bg-background"
               onClick={() =>
-                onSeedChat?.(
+                (onSendAgent || onSeedChat)?.(
                   `Genera y guarda como asset una toma de audio para la línea de guion ${line.id}. ` +
                     `Usa exactamente su texto aprobado, personaje, emoción, dirección, ritmo, intensidad y pausas. ` +
                     `No me pidas escoger una voz concreta del modelo: usa el perfil asignado como intención y deja que el modelo produzca la interpretación. ` +
@@ -1069,9 +1260,16 @@ function LineInspector({
   );
 }
 
-export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
+export function ScreenplayStudio({
+  projectId,
+  assets = [],
+  onSeedChat,
+  onSendAgent,
+  onProductionChange,
+  productionData,
+}) {
   const { data, loading, saving, error, reload, run } =
-    useProduction(projectId);
+    useProduction(projectId, onProductionChange, productionData);
   const [sceneId, setSceneId] = useState(null);
   const [lineId, setLineId] = useState(null);
   const [draft, setDraft] = useState("");
@@ -1127,7 +1325,7 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
   };
   const sendBrief = () => {
     if (!draft.trim()) return;
-    onSeedChat?.(
+    (onSendAgent || onSeedChat)?.(
       `Convierte este texto en el guion estructurado y editable del proyecto. Separa escenas, acciones, diálogo, voz en off y rótulos; conserva literalmente el copy aprobado y añade emoción, ritmo, pausas y duración objetivo. No generes audio todavía.\n\n${draft.trim()}`,
     );
     setDraft("");
@@ -1210,7 +1408,7 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
             </div>
             {scenePanelVisible && (
               <>
-                <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+                {loading ? <ProductionListSkeleton /> : <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
                   <div className="space-y-1">
                     {data.scenes.map((item, index) => {
                       const count = data.lines.filter(
@@ -1254,7 +1452,7 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
                       );
                     })}
                   </div>
-                </ScrollArea>
+                </ScrollArea>}
                 <div className="border-t p-3">
                   <Dialog>
                     <DialogTrigger asChild>
@@ -1299,7 +1497,7 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
               !scriptInspectorVisible && "pr-14",
             )}
           >
-            {!scene && !loading ? (
+            {loading ? <ScreenplayWorkspaceSkeleton /> : !scene ? (
               <div className="p-6">
                 <EmptyState
                   icon={MessageSquareText}
@@ -1536,8 +1734,7 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
                 label="inspector"
               />
             </div>
-            {scriptInspectorVisible && (
-              <Tabs
+            {scriptInspectorVisible && (loading ? <ProductionListSkeleton rows={5} /> : <Tabs
                 defaultValue="line"
                 className="flex min-h-0 flex-1 flex-col"
               >
@@ -1557,6 +1754,7 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
                         voices={data.voices}
                         run={run}
                         onSeedChat={onSeedChat}
+                        onSendAgent={onSendAgent}
                         onDelete={() =>
                           run(() => db.deleteScriptLine(selectedLine.id))
                         }
@@ -1593,14 +1791,17 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
                         assignments={data.characterVoices}
                         assets={assets}
                         links={data.assetLinks}
+                        manifests={data.productionManifests}
+                        sceneShots={data.sceneShots}
+                        shots={data.shots}
                         run={run}
                         onSeedChat={onSeedChat}
+                        onSendAgent={onSendAgent}
                       />
                     </div>
                   </ScrollArea>
                 </TabsContent>
-              </Tabs>
-            )}
+              </Tabs>)}
           </aside>
         </div>
       </div>
@@ -1612,6 +1813,57 @@ function VoiceLibrary({ projectId, voices, run, onAskAgent }) {
   const [name, setName] = useState("");
   const [providerId, setProviderId] = useState("");
   const [open, setOpen] = useState(false);
+  const [providerSearch, setProviderSearch] = useState("");
+  const [providerVoices, setProviderVoices] = useState([]);
+  const [providerLoading, setProviderLoading] = useState(false);
+  const [providerError, setProviderError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    const timer = setTimeout(async () => {
+      setProviderLoading(true);
+      setProviderError("");
+      try {
+        const query = new URLSearchParams({ page_size: "50" });
+        if (providerSearch.trim()) query.set("search", providerSearch.trim());
+        const result = await agentApi(
+          `/projects/${projectId}/voices?${query.toString()}`,
+        );
+        if (alive) setProviderVoices(result.voices || []);
+      } catch {
+        if (alive) {
+          setProviderVoices([]);
+          setProviderError(
+            "Conecta ElevenLabs para explorar y previsualizar su catálogo real.",
+          );
+        }
+      } finally {
+        if (alive) setProviderLoading(false);
+      }
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [projectId, providerSearch]);
+
+  const importProviderVoice = (voice) =>
+    run(() =>
+      db.createVoiceProfile(projectId, {
+        name: voice.name,
+        provider: "elevenlabs",
+        provider_voice_id: voice.voice_id,
+        source: "library",
+        language:
+          voice.verified_languages?.[0]?.language ||
+          voice.labels?.language ||
+          "es",
+        accent:
+          voice.verified_languages?.[0]?.accent || voice.labels?.accent || "",
+        description: voice.description || "",
+        settings: voice.settings || {},
+        status: "ready",
+      }),
+    );
   const create = async () => {
     if (!name.trim()) return;
     const ok = await run(() =>
@@ -1629,12 +1881,70 @@ function VoiceLibrary({ projectId, voices, run, onAskAgent }) {
   };
   return (
     <div className="space-y-2">
+      <div className="rounded-xl border p-3">
+        <div className="flex items-center gap-2">
+          <AudioLines className="size-4" />
+          <p className="text-xs font-semibold">EXPLORAR ELEVENLABS</p>
+          {providerLoading && <LoaderCircle className="ml-auto size-3.5 animate-spin" />}
+        </div>
+        <div className="relative mt-3">
+          <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+          <Input
+            value={providerSearch}
+            onChange={(event) => setProviderSearch(event.target.value)}
+            className="pl-8"
+            placeholder="Nombre, acento, estilo o caso de uso…"
+          />
+        </div>
+        {providerError && (
+          <p className="mt-2 text-[11px] text-muted-foreground">{providerError}</p>
+        )}
+        {providerVoices.length > 0 && (
+          <div className="mt-2 max-h-72 space-y-1 overflow-y-auto">
+            {providerVoices.map((voice) => (
+              <div
+                key={voice.voice_id}
+                className="flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-muted/60"
+              >
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
+                  <Mic2 className="size-3.5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium">{voice.name}</p>
+                  <p className="truncate text-[10px] text-muted-foreground">
+                    {[voice.labels?.accent, voice.labels?.age, voice.labels?.use_case]
+                      .filter(Boolean)
+                      .join(" · ") || voice.description}
+                  </p>
+                </div>
+                {voice.preview_url && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => new Audio(voice.preview_url).play()}
+                    aria-label={`Escuchar ${voice.name}`}
+                  >
+                    <Play className="size-3.5" />
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => importProviderVoice(voice)}
+                >
+                  Usar
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="rounded-xl border bg-muted/20 p-3">
         <p className="text-xs font-semibold">VOCES DEL PROYECTO</p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
           Pide al agente narradores, personajes o voces de marca. Cada perfil
-          conserva su nombre, proveedor e ID para reutilizarlo en diÃ¡logos,
-          escenas y vÃ­deos.
+          conserva su nombre, proveedor e ID para reutilizarlo en diálogos,
+          escenas y vídeos.
         </p>
         <Button className="mt-3 w-full" size="sm" onClick={onAskAgent}>
           <Sparkles /> Crear voces con el agente
@@ -1813,7 +2123,7 @@ function VoiceLibrary({ projectId, voices, run, onAskAgent }) {
             <Input
               value={providerId}
               onChange={(event) => setProviderId(event.target.value)}
-              placeholder="voice_id o clave de clonaciÃ³n"
+              placeholder="voice_id o clave de clonación"
             />
           </Field>
           <DialogFooter>
@@ -1863,8 +2173,11 @@ function SoundComposer({
   projectId,
   scenes,
   lines,
+  sceneShots,
+  shots,
   voices,
   audioAssets,
+  providerReady,
   seed,
   onGenerate,
   onVariant,
@@ -1879,6 +2192,7 @@ function SoundComposer({
   const [loop, setLoop] = useState(false);
   const [sceneId, setSceneId] = useState("__none__");
   const [lineId, setLineId] = useState("__none__");
+  const [shotId, setShotId] = useState("__none__");
   const [start, setStart] = useState("0");
   const [voiceId, setVoiceId] = useState("");
   const [voicePickerOpen, setVoicePickerOpen] = useState(false);
@@ -1901,6 +2215,14 @@ function SoundComposer({
       sceneId === "__none__" || String(line.scene_id) === String(sceneId),
   );
   const selectedLine = lines.find((line) => String(line.id) === String(lineId));
+  const selectedSceneShotIds = new Set(
+    (sceneShots || [])
+      .filter((item) => sceneId === "__none__" || String(item.scene_id) === String(sceneId))
+      .map((item) => String(item.shot_id)),
+  );
+  const visibleShots = (shots || []).filter(
+    (shot) => sceneId === "__none__" || selectedSceneShotIds.has(String(shot.id)),
+  );
   const visibleVoices = voices.filter((voice) => {
     const text =
       `${voice.name} ${voice.description || ""} ${voice.accent || ""}`.toLowerCase();
@@ -1947,7 +2269,9 @@ function SoundComposer({
     loop,
     scene_id: sceneId === "__none__" ? null : sceneId,
     script_line_id: lineId === "__none__" ? null : lineId,
+    shot_id: shotId === "__none__" ? null : shotId,
     start_ms: Math.max(0, Math.round(Number(start || 0) * 1000)),
+    placement_time_basis: sceneId === "__none__" ? "project" : "scene",
     output_format: outputFormat,
     settings: {
       speed,
@@ -1962,21 +2286,27 @@ function SoundComposer({
   const submit = async () => {
     const values = config();
     if (kind === "voice" && selectedVoice) {
-      const ok = await run(() =>
-        db.updateVoiceProfile(selectedVoice.id, {
+      const ok = await run(async () => {
+        await db.updateVoiceProfile(selectedVoice.id, {
           settings: values.settings,
           status: selectedVoice.provider_voice_id ? "ready" : "draft",
-        }),
-      );
+        });
+        if (selectedLine) {
+          await db.updateScriptLine(selectedLine.id, {
+            voice_profile_id: selectedVoice.id,
+          });
+        }
+      });
       if (!ok) return;
     }
     onGenerate(values);
   };
 
   const canGenerate =
-    kind === "voice"
+    providerReady &&
+    (kind === "voice"
       ? Boolean(selectedVoice?.provider_voice_id && selectedLine?.text)
-      : Boolean(prompt.trim());
+      : Boolean(prompt.trim()));
 
   return (
     <Tabs value={panelTab} onValueChange={setPanelTab} className="min-h-full">
@@ -2333,6 +2663,7 @@ function SoundComposer({
             onValueChange={(value) => {
               setSceneId(value);
               setLineId("__none__");
+              setShotId("__none__");
             }}
           >
             <SelectTrigger>
@@ -2348,10 +2679,37 @@ function SoundComposer({
             </SelectContent>
           </Select>
         </Field>
+        <Field label="Plano" hint="opcional">
+          <Select value={shotId} onValueChange={setShotId}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">Sin plano específico</SelectItem>
+              {visibleShots.map((shot, index) => (
+                <SelectItem key={shot.id} value={String(shot.id)}>
+                  {index + 1}. {shot.title || "Plano"}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
         <Field
           label={kind === "voice" ? "Texto del guion" : "Línea contextual"}
         >
-          <Select value={lineId} onValueChange={setLineId}>
+          <Select
+            value={lineId}
+            onValueChange={(value) => {
+              setLineId(value);
+              if (value === "__none__") return;
+              const line = lines.find(
+                (item) => String(item.id) === String(value),
+              );
+              if (!line) return;
+              setSceneId(String(line.scene_id));
+              setShotId(line.shot_id ? String(line.shot_id) : "__none__");
+            }}
+          >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -2367,7 +2725,10 @@ function SoundComposer({
             </SelectContent>
           </Select>
         </Field>
-        <Field label="Empieza en" hint="segundos">
+        <Field
+          label="Empieza en"
+          hint={sceneId === "__none__" ? "segundos del proyecto" : "segundos de la escena"}
+        >
           <Input
             type="number"
             min="0"
@@ -2384,6 +2745,12 @@ function SoundComposer({
               una toma.
             </p>
           )}
+        {!providerReady && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            Conecta ElevenLabs para habilitar la generación real de voz, música,
+            efectos y ambientes. La edición de perfiles, plantillas y timeline sigue disponible.
+          </p>
+        )}
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -2425,7 +2792,7 @@ function SoundTemplates({ templates, mediaAssets, onUse, onVariant, run }) {
         <p className="text-xs font-semibold">RECURSOS GUARDADOS</p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
           Guarda desde Biblioteca las generaciones que quieras reutilizar. El
-          original nunca se modifica y el agente tambiÃ©n puede encontrarlas.
+          original nunca se modifica y el agente también puede encontrarlas.
         </p>
       </div>
       {mediaAssets.map((asset) => (
@@ -2523,7 +2890,7 @@ function SoundTemplates({ templates, mediaAssets, onUse, onVariant, run }) {
   );
 }
 
-function CueInspector({ cue, assets, scenes, lines, run }) {
+function CueInspector({ cue, assets, scenes, lines, shots, sceneShots, run }) {
   if (!cue)
     return (
       <EmptyState
@@ -2534,6 +2901,16 @@ function CueInspector({ cue, assets, scenes, lines, run }) {
     );
   const asset = assets.find((item) => String(item.id) === String(cue.asset_id));
   const update = (patch) => run(() => db.updateAudioCue(cue.id, patch));
+  const selectedScene = scenes.find((item) => String(item.id) === String(cue.scene_id));
+  const sceneOffset = Number(selectedScene?.timeline_start_ms || 0);
+  const availableShotIds = new Set(
+    (sceneShots || [])
+      .filter((item) => !cue.scene_id || String(item.scene_id) === String(cue.scene_id))
+      .map((item) => String(item.shot_id)),
+  );
+  const availableShots = (shots || []).filter(
+    (shot) => !cue.scene_id || availableShotIds.has(String(shot.id)),
+  );
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-3">
@@ -2574,23 +2951,25 @@ function CueInspector({ cue, assets, scenes, lines, run }) {
         </Select>
       </Field>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Inicio" hint="ms">
+        <Field label="Inicio" hint={selectedScene ? "s de escena" : "s de proyecto"}>
           <DraftInput
             number
             min="0"
-            value={cue.start_ms}
-            onCommit={(start_ms) =>
-              update({ start_ms: Math.min(start_ms, cue.end_ms - 1) })
+            step="0.1"
+            value={Math.max(0, (cue.start_ms - sceneOffset) / 1000)}
+            onCommit={(seconds) =>
+              update({ start_ms: Math.min(sceneOffset + Math.round(seconds * 1000), cue.end_ms - 1) })
             }
           />
         </Field>
-        <Field label="Final" hint="ms">
+        <Field label="Final" hint={selectedScene ? "s de escena" : "s de proyecto"}>
           <DraftInput
             number
-            min="1"
-            value={cue.end_ms}
-            onCommit={(end_ms) =>
-              update({ end_ms: Math.max(end_ms, cue.start_ms + 1) })
+            min="0.001"
+            step="0.1"
+            value={Math.max(0, (cue.end_ms - sceneOffset) / 1000)}
+            onCommit={(seconds) =>
+              update({ end_ms: Math.max(sceneOffset + Math.round(seconds * 1000), cue.start_ms + 1) })
             }
           />
         </Field>
@@ -2663,12 +3042,29 @@ function CueInspector({ cue, assets, scenes, lines, run }) {
       <Field label="Línea del guion">
         <Select
           value={cue.script_line_id || "__none__"}
-          onValueChange={(script_line_id) =>
+          onValueChange={(script_line_id) => {
+            if (script_line_id === "__none__") {
+              update({ script_line_id: null });
+              return;
+            }
+            const line = lines.find(
+              (item) => String(item.id) === String(script_line_id),
+            );
+            const nextScene = scenes.find(
+              (item) => String(item.id) === String(line?.scene_id),
+            );
+            const duration = cue.end_ms - cue.start_ms;
+            const currentRelativeStart = Math.max(0, cue.start_ms - sceneOffset);
+            const nextStart =
+              Number(nextScene?.timeline_start_ms || 0) + currentRelativeStart;
             update({
-              script_line_id:
-                script_line_id === "__none__" ? null : script_line_id,
-            })
-          }
+              script_line_id,
+              scene_id: line?.scene_id || null,
+              shot_id: line?.shot_id || null,
+              start_ms: nextStart,
+              end_ms: nextStart + duration,
+            });
+          }}
         >
           <SelectTrigger>
             <SelectValue />
@@ -2684,6 +3080,65 @@ function CueInspector({ cue, assets, scenes, lines, run }) {
                   </SelectItem>
                 )),
             )}
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field label="Escena" hint="contexto; tiempos globales">
+        <Select
+          value={cue.scene_id || "__none__"}
+          onValueChange={(scene_id) => {
+            const duration = cue.end_ms - cue.start_ms;
+            if (scene_id === "__none__") {
+              update({ scene_id: null, shot_id: null, script_line_id: null });
+              return;
+            }
+            const nextScene = scenes.find(
+              (item) => String(item.id) === String(scene_id),
+            );
+            const relativeStart = selectedScene
+              ? Math.max(0, cue.start_ms - sceneOffset)
+              : 0;
+            const nextStart =
+              Number(nextScene?.timeline_start_ms || 0) + relativeStart;
+            update({
+              scene_id,
+              shot_id: null,
+              script_line_id: null,
+              start_ms: nextStart,
+              end_ms: nextStart + duration,
+            });
+          }}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">Sin escena asignada</SelectItem>
+            {scenes.map((scene, index) => (
+              <SelectItem key={scene.id} value={String(scene.id)}>
+                {index + 1}. {scene.title}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field label="Plano" hint="contexto opcional">
+        <Select
+          value={cue.shot_id || "__none__"}
+          onValueChange={(shot_id) =>
+            update({ shot_id: shot_id === "__none__" ? null : shot_id })
+          }
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">Sin plano asignado</SelectItem>
+            {availableShots.map((shot, index) => (
+              <SelectItem key={shot.id} value={String(shot.id)}>
+                {index + 1}. {shot.title || "Plano"}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </Field>
@@ -2763,14 +3218,28 @@ function CueInspector({ cue, assets, scenes, lines, run }) {
   );
 }
 
-export function AudioStudio({ projectId, assets = [], onSeedChat }) {
+export function AudioStudio({
+  projectId,
+  assets = [],
+  resources = [],
+  onSeedChat,
+  onSendAgent,
+  onProductionChange,
+  productionData,
+}) {
   const { data, loading, saving, error, reload, run } =
-    useProduction(projectId);
+    useProduction(projectId, onProductionChange, productionData);
   const [cueId, setCueId] = useState(null);
   const [brief, setBrief] = useState("");
   const [briefOpen, setBriefOpen] = useState(false);
   const [libraryTab, setLibraryTab] = useState("library");
   const [composerSeed, setComposerSeed] = useState(null);
+  const [providerStatus, setProviderStatus] = useState(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const previewContextRef = useRef(null);
+  const previewSourcesRef = useRef([]);
+  const previewTimerRef = useRef(null);
   const [audioLibraryVisible, setAudioLibraryVisible] = useStoredVisibility(
     "xframe.audio.library-panel",
   );
@@ -2781,9 +3250,21 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
     () =>
       assets.filter(
         (asset) =>
-          /audio/i.test(String(asset.type)) && asset.status === "ready",
+          /audio|sound|sonido|music|música/i.test(String(asset.type)) &&
+          asset.status === "ready",
       ),
     [assets],
+  );
+  const mentionAsset = useCallback(
+    (asset) => {
+      const ref = resources.find(
+        (item) =>
+          ["asset", "element"].includes(item.type) &&
+          String(item.id) === String(asset?.id),
+      );
+      return ref ? `@${ref.mention}` : `asset ${asset?.id}`;
+    },
+    [resources],
   );
   const templateAssets = useMemo(
     () =>
@@ -2823,10 +3304,123 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
     data.cues.find((item) => String(item.id) === String(cueId)) || null;
   const approved = data.cues.filter((item) => item.approved).length;
 
+  const stopPreview = async () => {
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    previewTimerRef.current = null;
+    previewSourcesRef.current.forEach((source) => {
+      try {
+        source.stop();
+      } catch {
+        // A source may already have reached its deterministic end.
+      }
+    });
+    previewSourcesRef.current = [];
+    const context = previewContextRef.current;
+    previewContextRef.current = null;
+    if (context && context.state !== "closed") await context.close();
+    setPreviewing(false);
+  };
+
+  const playPreview = async () => {
+    await stopPreview();
+    setPreviewError("");
+    if (!data.cues.length) return;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      setPreviewError("Este navegador no permite previsualizar una mezcla multipista.");
+      return;
+    }
+    const context = new AudioContextClass();
+    previewContextRef.current = context;
+    try {
+      await context.resume();
+      const baseTime = context.currentTime + 0.08;
+      const speechWindows = data.cues
+        .filter((item) => ["dialogue", "voiceover"].includes(item.track_kind))
+        .map((item) => [item.start_ms / 1000, item.end_ms / 1000]);
+      const decoded = await Promise.all(
+        data.cues.map(async (item) => {
+          const asset = assets.find((candidate) => String(candidate.id) === String(item.asset_id));
+          if (!asset?.url) throw new Error(`El clip ${item.id} no tiene una URL reproducible.`);
+          const response = await fetch(asset.url);
+          if (!response.ok) throw new Error(`No se pudo cargar ${asset.name || item.asset_id}.`);
+          return [item, await context.decodeAudioData(await response.arrayBuffer())];
+        }),
+      );
+      for (const [item, buffer] of decoded) {
+        const source = context.createBufferSource();
+        const gain = context.createGain();
+        const panner = context.createStereoPanner?.();
+        source.buffer = buffer;
+        source.loop = Boolean(item.loop);
+        const cueStart = baseTime + item.start_ms / 1000;
+        const cueEnd = baseTime + item.end_ms / 1000;
+        const duration = Math.max(0.001, (item.end_ms - item.start_ms) / 1000);
+        const normalGain = Math.pow(10, Number(item.gain_db || 0) / 20);
+        const fadeIn = Math.min(duration, Number(item.fade_in_ms || 0) / 1000);
+        const fadeOut = Math.min(duration, Number(item.fade_out_ms || 0) / 1000);
+        gain.gain.setValueAtTime(fadeIn ? 0.0001 : normalGain, cueStart);
+        if (fadeIn) gain.gain.linearRampToValueAtTime(normalGain, cueStart + fadeIn);
+        if (fadeOut) {
+          gain.gain.setValueAtTime(normalGain, Math.max(cueStart, cueEnd - fadeOut));
+          gain.gain.linearRampToValueAtTime(0.0001, cueEnd);
+        }
+        if (["music", "ambience"].includes(item.track_kind) && item.ducking_db != null) {
+          const ducked = normalGain * Math.pow(10, Number(item.ducking_db) / 20);
+          speechWindows.forEach(([start, end]) => {
+            const overlapStart = Math.max(item.start_ms / 1000, start);
+            const overlapEnd = Math.min(item.end_ms / 1000, end);
+            if (overlapEnd > overlapStart) {
+              gain.gain.setTargetAtTime(ducked, baseTime + overlapStart, 0.03);
+              gain.gain.setTargetAtTime(normalGain, baseTime + overlapEnd, 0.08);
+            }
+          });
+        }
+        source.connect(gain);
+        if (panner) {
+          panner.pan.value = Number(item.pan || 0);
+          gain.connect(panner).connect(context.destination);
+        } else {
+          gain.connect(context.destination);
+        }
+        const sourceOffset = Math.max(0, Number(item.source_in_ms || 0) / 1000);
+        if (!source.loop && sourceOffset >= buffer.duration) {
+          throw new Error(
+            `La entrada de fuente de ${assets.find((candidate) => String(candidate.id) === String(item.asset_id))?.name || item.id} está fuera del archivo.`,
+          );
+        }
+        const availableDuration = source.loop
+          ? duration
+          : Math.min(duration, Math.max(0.001, buffer.duration - sourceOffset));
+        source.start(
+          cueStart,
+          source.loop ? sourceOffset % buffer.duration : sourceOffset,
+          availableDuration,
+        );
+        previewSourcesRef.current.push(source);
+      }
+      setPreviewing(true);
+      previewTimerRef.current = setTimeout(() => void stopPreview(), totalMs + 300);
+    } catch (previewFailure) {
+      await stopPreview();
+      setPreviewError(previewFailure?.message || "No se pudo previsualizar la mezcla.");
+    }
+  };
+
   useEffect(() => {
     if (cueId && !data.cues.some((item) => String(item.id) === String(cueId)))
       setCueId(null);
   }, [data.cues, cueId]);
+  useEffect(() => {
+    let alive = true;
+    agentApi(`/projects/${projectId}/provider-status`)
+      .then((status) => alive && setProviderStatus(status))
+      .catch(() => alive && setProviderStatus(null));
+    return () => {
+      alive = false;
+    };
+  }, [projectId]);
+  useEffect(() => () => void stopPreview(), []); // eslint-disable-line react-hooks/exhaustive-deps
   const addCue = async (asset, track_kind = "music", requestedStart = null) => {
     const lastEnd = Math.max(
       0,
@@ -2860,14 +3454,14 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
     setBriefOpen(false);
   };
   const askForVoices = () =>
-    onSeedChat?.(
-      "Crea los perfiles de voz que necesito para este proyecto. Para cada voz, define nombre, idioma, acento, tono y uso narrativo; guÃ¡rdala con create_voice_profile en Audio > Voces con su proveedor e ID reutilizable. Si el proveedor no puede crear o devolver un ID de voz, guÃ¡rdala honestamente como borrador y dime quÃ© falta. No clones ni imites voces reales sin consentimiento verificable.",
+    (onSendAgent || onSeedChat)?.(
+      "Crea los perfiles de voz que necesito para este proyecto. Para cada voz, define nombre, idioma, acento, tono y uso narrativo; guárdala con create_voice_profile en Audio > Voces con su proveedor e ID reutilizable. Si el proveedor no puede crear o devolver un ID de voz, guárdala honestamente como borrador y dime qué falta. No clones ni imites voces reales sin consentimiento verificable.",
     );
   const inferTemplateKind = (asset) => {
     const description =
       `${asset.name || ""} ${asset.meta || ""} ${asset.type || ""}`.toLowerCase();
-    if (/music|mÃºsica|song|track|score/.test(description)) return "music";
-    if (/ambient|ambience|room tone|atmÃ³sfera/.test(description))
+    if (/music|música|song|track|score/.test(description)) return "music";
+    if (/ambient|ambience|room tone|atmósfera/.test(description))
       return "ambience";
     return "sfx";
   };
@@ -2907,21 +3501,23 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
     );
     const endMs = config.start_ms + config.duration_ms;
     if (config.kind === "voice") {
-      onSeedChat?.(
+      (onSendAgent || onSeedChat)?.(
         `Genera una toma de voz reutilizable con generate_audio y guárdala en Assets.\n` +
-          `Modelo obligatorio: ${config.model_id}. Perfil de voz: ${config.voice_profile_id}. ` +
+        `Modelo obligatorio: ${config.model_id}. Perfil de voz: ${config.voice_profile_id}. ` +
+          `Usa script_line_ids=["${config.script_line_id}"] como única fuente verbal. ` +
           `Línea exacta del guion: ${config.script_line_id} — “${line?.text || config.prompt}”. No cambies ninguna palabra.\n` +
           `Formato: ${config.output_format}. Ajustes interpretativos guardados en el perfil: ${JSON.stringify(config.settings)}.\n` +
           `Colócala desde ${config.start_ms} ms hasta ${endMs} ms usando placement_start_ms y placement_end_ms. ` +
+          `Usa scene_id=${config.scene_id || "null"}, shot_id=${config.shot_id || "null"} y placement_time_basis=${config.placement_time_basis}. ` +
           `Estima los créditos antes de generar.`,
       );
       return;
     }
-    onSeedChat?.(
+    (onSendAgent || onSeedChat)?.(
       `Genera un asset de audio reutilizable con generate_audio y guárdalo en Assets.\n` +
         `Tipo: ${config.kind}. Descripción aprobada: ${config.prompt}\n` +
         `Modelo obligatorio: ${config.model_id}.\n` +
-        `Duración: ${config.duration_ms / 1000}s. Intensidad creativa: ${config.intensity}. Loop: ${config.loop}.\n` +
+        `Duración: ${config.duration_ms / 1000}s. Usa prompt_influence=${config.intensity}. Loop: ${config.loop}.\n` +
         (scene
           ? `Contexto obligatorio: escena ${scene.id} (“${scene.title}”), usando su guion completo y sus assets vinculados.\n`
           : "") +
@@ -2929,6 +3525,7 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
           ? `Línea contextual exacta: ${line.id} — “${line.text}”. No cambies sus palabras.\n`
           : "") +
         `Colócalo automáticamente en el plan de audio desde ${config.start_ms} ms hasta ${endMs} ms usando placement_start_ms y placement_end_ms. ` +
+        `Usa scene_id=${config.scene_id || "null"}, shot_id=${config.shot_id || "null"} y placement_time_basis=${config.placement_time_basis}. ` +
         `No me pidas elegir una voz concreta: para sonidos, música y ambientes la interpretación final corresponde al modelo. ` +
         `Estima los créditos antes de encolar la generación.`,
     );
@@ -2939,7 +3536,7 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
   };
   const varyAsset = (asset) =>
     onSeedChat?.(
-      `Crea una variante del archivo @${asset.name} (id ${asset.id}) sin modificar el original. Conserva duración y función narrativa; pregúntame qué propiedad debo cambiar, registra el linaje y guarda el resultado como un asset nuevo.`,
+      `Crea una variante del archivo ${mentionAsset(asset)} (id ${asset.id}) sin modificar el original. Conserva duración y función narrativa; pregúntame qué propiedad debo cambiar, registra el linaje y guarda el resultado como un asset nuevo.`,
     );
   const dropTemplate = (event, trackKind) => {
     event.preventDefault();
@@ -2979,6 +3576,18 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-3">
+            {providerStatus && (
+              <div className="hidden items-center gap-1.5 xl:flex">
+                <Badge variant="outline" className="gap-1 text-[10px]">
+                  <span className={cn("size-1.5 rounded-full", providerStatus.elevenlabs ? "bg-emerald-500" : "bg-amber-500")} />
+                  Voz y sonido {providerStatus.elevenlabs ? "listos" : "sin proveedor"}
+                </Badge>
+                <Badge variant="outline" className="gap-1 text-[10px]">
+                  <span className={cn("size-1.5 rounded-full", providerStatus.sync ? "bg-emerald-500" : "bg-amber-500")} />
+                  Lipsync {providerStatus.sync ? "listo" : "sin proveedor"}
+                </Badge>
+              </div>
+            )}
             <Badge variant="outline">
               {data.cues.length} clips · {approved} aprobados ·{" "}
               {(totalMs / 1000).toFixed(1)} s
@@ -3049,7 +3658,7 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
               />
             </div>
             {audioLibraryVisible && (
-              <Tabs
+              loading ? <ProductionListSkeleton rows={6} /> : <Tabs
                 value={libraryTab}
                 onValueChange={setLibraryTab}
                 className="flex min-h-0 flex-1 flex-col"
@@ -3107,13 +3716,13 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                                   >
                                     <Bookmark className="mr-2 size-4" />
                                     {templateAssetIds.has(String(asset.id))
-                                      ? "Ya estÃ¡ en Plantillas"
+                                      ? "Ya está en Plantillas"
                                       : "Guardar en Plantillas"}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     onClick={() =>
                                       onSeedChat?.(
-                                        `Edita o crea una variación del asset de audio @${asset.name} (id ${asset.id}). Conserva su función narrativa y pregúntame qué propiedad sonora quiero cambiar antes de generar. Guarda el resultado como un asset nuevo y mantén el linaje.`,
+                                        `Edita o crea una variación del asset de audio ${mentionAsset(asset)} (id ${asset.id}). Conserva su función narrativa y pregúntame qué propiedad sonora quiero cambiar antes de generar. Guarda el resultado como un asset nuevo y mantén el linaje.`,
                                       )
                                     }
                                   >
@@ -3150,8 +3759,11 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                         projectId={projectId}
                         scenes={data.scenes}
                         lines={data.lines}
+                        sceneShots={data.sceneShots}
+                        shots={data.shots}
                         voices={data.voices}
                         audioAssets={audioAssets}
+                        providerReady={Boolean(providerStatus?.elevenlabs)}
                         seed={composerSeed}
                         onGenerate={generateSound}
                         onVariant={varyAsset}
@@ -3200,7 +3812,7 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
               !audioInspectorVisible && "pr-14",
             )}
           >
-            <div className="min-w-[660px]">
+            {loading ? <AudioWorkspaceSkeleton /> : <div className="min-w-[660px]">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-semibold">Timeline de mezcla</h3>
@@ -3209,14 +3821,31 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="icon" disabled>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={!data.cues.length || previewing}
+                    onClick={playPreview}
+                    title="Previsualizar mezcla"
+                  >
                     <Play className="size-4" />
                   </Button>
-                  <Button variant="outline" size="icon" disabled>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={!previewing}
+                    onClick={() => void stopPreview()}
+                    title="Detener previsualización"
+                  >
                     <Pause className="size-4" />
                   </Button>
                 </div>
               </div>
+              {previewError && (
+                <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+                  {previewError}
+                </p>
+              )}
               <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
                 <div />
                 <div className="grid grid-cols-5 px-2 text-[10px] text-muted-foreground">
@@ -3336,7 +3965,7 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                   <Badge variant="outline">−14 LUFS</Badge>
                 </CardContent>
               </Card>
-            </div>
+            </div>}
           </main>
 
           <aside
@@ -3365,19 +3994,19 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
                 label="inspector de mezcla"
               />
             </div>
-            {audioInspectorVisible && (
-              <ScrollArea className="min-h-0 flex-1">
+            {audioInspectorVisible && (loading ? <ProductionListSkeleton rows={5} /> : <ScrollArea className="min-h-0 flex-1">
                 <div className="p-4">
                   <CueInspector
                     cue={cue}
                     assets={assets}
                     scenes={data.scenes}
                     lines={data.lines}
+                    shots={data.shots}
+                    sceneShots={data.sceneShots}
                     run={run}
                   />
                 </div>
-              </ScrollArea>
-            )}
+              </ScrollArea>)}
           </aside>
         </div>
       </div>

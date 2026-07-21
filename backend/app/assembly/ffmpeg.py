@@ -352,7 +352,7 @@ def resolve_target_format(
     smallest = min(probes, key=lambda p: p.pixels)
     aspect = _modal_aspect(probes)
     height = _even(_snap_height(smallest.height))
-    width = _even(int(round(height * float(aspect))))
+    width = _even(round(height * float(aspect)))
 
     # --- fps: la moda; a igualdad de frecuencia, el menor (menos frames inventados) ---
     counts: dict[Fraction, int] = {}

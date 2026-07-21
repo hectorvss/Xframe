@@ -74,7 +74,7 @@ async def main() -> int:
     ok = False
     try:
         registry = get_registry()
-        adapter, spec = await registry.resolve(model["id"])
+        adapter, _spec = await registry.resolve(model["id"])
         print(f"adaptador  : {adapter.provider_id}")
 
         request = GenerationRequest(

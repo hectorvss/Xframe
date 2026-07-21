@@ -1,4 +1,11 @@
-import React, { Suspense, useState, useRef, useEffect, useMemo } from "react";
+import React, {
+  Suspense,
+  useState,
+  useRef,
+  useEffect,
+  useMemo,
+  useCallback,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { Area, AreaChart } from "recharts";
 import {
@@ -106,6 +113,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChartContainer,
   ChartTooltip,
@@ -160,11 +168,68 @@ import {
 } from "@/lib/agent";
 import { I18nProvider, useI18n } from "@/lib/i18n";
 import { buildUIContext } from "@/lib/uiContext";
+import {
+  buildResourceCatalog,
+  resolveResourceMentions,
+} from "@/lib/resourceRefs";
 import { AudioStudio, ScreenplayStudio } from "@/components/production-studio";
 import "./index.css";
 import "./styles.css";
 
 const UsageChart = React.lazy(() => import("./components/usage-chart"));
+
+function SettingsSkeleton() {
+  return (
+    <div className="mx-auto max-w-3xl px-8 py-10" aria-busy="true" aria-label="Cargando ajustes">
+      <Skeleton className="h-8 w-36" />
+      <Skeleton className="mt-3 h-4 w-80 max-w-full" />
+      <div className="mt-7 space-y-6">
+        {[0, 1, 2].map((item) => (
+          <Card key={item} className="p-5">
+            <div className="flex items-center gap-4">
+              <Skeleton className="size-14 rounded-full" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-3 w-64 max-w-full" />
+              </div>
+              <Skeleton className="h-9 w-24" />
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProjectEditorSkeleton() {
+  return (
+    <div className="flex h-screen flex-col bg-muted/30" aria-busy="true" aria-label="Cargando proyecto">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-3">
+        <Skeleton className="h-8 w-44" />
+        <Skeleton className="h-6 w-16 rounded-full" />
+        <div className="ml-auto flex gap-2"><Skeleton className="size-8" /><Skeleton className="h-8 w-20" /></div>
+      </header>
+      <div className="border-b bg-background px-3 py-2"><Skeleton className="h-8 w-full max-w-xl" /></div>
+      <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_300px] gap-4 p-4">
+        <div className="space-y-4"><Skeleton className="h-8 w-56" /><Skeleton className="h-64 w-full" /><Skeleton className="h-32 w-full" /></div>
+        <div className="space-y-3 border-l pl-4"><Skeleton className="h-5 w-28" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /></div>
+      </main>
+    </div>
+  );
+}
+
+function AppShellSkeleton() {
+  return (
+    <div className="flex h-screen bg-muted/30" aria-busy="true" aria-label="Cargando aplicación">
+      <aside className="w-16 shrink-0 border-r bg-background p-3"><div className="space-y-4"><Skeleton className="size-9" />{[0, 1, 2, 3].map((item) => <Skeleton key={item} className="size-9" />)}</div></aside>
+      <main className="flex-1 p-6"><Skeleton className="h-8 w-48" /><Skeleton className="mt-3 h-4 w-80 max-w-full" /><div className="mt-7 grid gap-4 md:grid-cols-3">{[0, 1, 2].map((item) => <Skeleton key={item} className="h-40 w-full" />)}</div></main>
+    </div>
+  );
+}
+
+function UsageChartSkeleton() {
+  return <div className="mt-6 rounded-lg border p-4"><Skeleton className="h-[228px] w-full" /></div>;
+}
 
 const go = (p) => {
   history.pushState({}, "", p);
@@ -4541,11 +4606,12 @@ function EditorChat({
   onStop,
   busy,
   stream = null,
-  elements = [],
+  resources = [],
   assets = [],
   onUpload,
   insert = null,
   onInsertDone,
+  onMentionOpen,
 }) {
   const [draft, setDraft] = useState("");
   const [mentionAt, setMentionAt] = useState(null);
@@ -4587,14 +4653,14 @@ function EditorChat({
   }, [insert]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const mentionRegex = useMemo(() => {
-    const names = [...elements]
-      .map((e) => e.name)
+    const names = [...resources]
+      .map((resource) => resource.mention)
       .sort((a, b) => b.length - a.length)
       .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
     // «Clip-N» siempre es mencionable: son las tiras del timeline de la vista previa.
     const alternatives = [...names, "Clip-\\d+"];
     return new RegExp(`@(${alternatives.join("|")})`, "g");
-  }, [elements]);
+  }, [resources]);
 
   const draftWithPills = useMemo(() => {
     if (!mentionRegex || !draft) return draft;
@@ -4629,16 +4695,21 @@ function EditorChat({
   const matches =
     mentionQuery === null
       ? []
-      : elements.filter((e) => e.name.toLowerCase().includes(mentionQuery));
+      : resources.filter((resource) =>
+          `${resource.mention} ${resource.label} ${resource.type} ${resource.kind || ""}`
+            .toLowerCase()
+            .includes(mentionQuery),
+        );
 
-  const insertMention = (element) => {
+  const insertMention = (resource) => {
     const before = draft.slice(0, mentionAt);
-    setDraft(`${before}@${element.name} `);
+    setDraft(`${before}@${resource.mention} `);
     setMentionAt(null);
     areaRef.current?.focus();
   };
 
   const openMention = () => {
+    onMentionOpen?.();
     const next = draft.endsWith(" ") || !draft ? `${draft}@` : `${draft} @`;
     setMentionAt(next.length - 1);
     setDraft(next);
@@ -4654,6 +4725,7 @@ function EditorChat({
       (at === 0 || /\s/.test(value[at - 1])) &&
       !/\s/.test(value.slice(at + 1));
     setMentionAt(open ? at : null);
+    if (open) onMentionOpen?.();
   };
 
   // El autoscroll también depende del texto en curso: el turno del agente llega
@@ -4665,7 +4737,7 @@ function EditorChat({
   const send = (text) => {
     const value = (text ?? draft).trim();
     if (!value || busy) return;
-    onSend(value);
+    onSend(value, resolveResourceMentions(value, resources));
     setDraft("");
     setMentionAt(null);
   };
@@ -4775,29 +4847,29 @@ function EditorChat({
         {mentionAt !== null && matches.length > 0 && (
           <div className="absolute bottom-full left-3 right-3 z-30 mb-1 max-h-56 overflow-y-auto rounded-xl border bg-background p-1 shadow-2xl">
             <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Elements del proyecto
+              Recursos del proyecto
             </p>
-            {matches.map((element) => (
+            {matches.map((resource) => (
               <button
-                key={element.id}
+                key={`${resource.type}-${resource.id}`}
                 onMouseDown={(e) => (
                   e.preventDefault(),
-                  insertMention(element)
+                  insertMention(resource)
                 )}
                 className="flex w-full items-center gap-2 rounded-md p-1 text-left transition-colors hover:bg-accent"
               >
                 <div
                   className="size-7 shrink-0 rounded bg-muted bg-cover bg-center"
                   style={{
-                    backgroundImage: element.url
-                      ? `url(${element.url})`
+                    backgroundImage: resource.url
+                      ? `url(${resource.url})`
                       : undefined,
                   }}
                 />
                 <div className="min-w-0">
-                  <p className="truncate text-sm">{element.name}</p>
+                  <p className="truncate text-sm">{resource.label}</p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {element.role}
+                    @{resource.mention} · {resource.type}
                   </p>
                 </div>
               </button>
@@ -4806,9 +4878,9 @@ function EditorChat({
         )}
         {mentionAt !== null &&
           matches.length === 0 &&
-          elements.length === 0 && (
+          resources.length === 0 && (
             <div className="absolute bottom-full left-3 right-3 z-30 mb-1 rounded-xl border bg-background p-3 text-xs text-muted-foreground shadow-2xl">
-              Aún no hay elements. Genera assets y asígnalos desde All assets.
+              Aún no hay recursos mencionables en el proyecto.
             </div>
           )}
 
@@ -5605,9 +5677,37 @@ function AssetLightbox({
 }) {
   const [reviewMode, setReviewMode] = useState(null);
   const [pin, setPin] = useState(null);
+  const [region, setRegion] = useState(null);
+  const regionStart = useRef(null);
   const [comment, setComment] = useState("");
+  const [qualityReports, setQualityReports] = useState([]);
+  const [qualityType, setQualityType] = useState(() =>
+    /audio/i.test(String(asset.type)) ? "audio" : "render",
+  );
+  const [qualityNote, setQualityNote] = useState("");
+  const [qualitySaving, setQualitySaving] = useState(false);
+  const refreshQuality = useCallback(() => {
+    db.listQualityReports(asset.id).then(setQualityReports).catch(() => setQualityReports([]));
+  }, [asset.id]);
+  useEffect(refreshQuality, [refreshQuality]);
+  const saveQuality = async (passed) => {
+    if (!qualityNote.trim()) return;
+    setQualitySaving(true);
+    try {
+      await db.createHumanQualityReview(projectId, asset.id, {
+        check_type: qualityType,
+        passed,
+        score: passed ? 1 : 0,
+        note: qualityNote.trim(),
+      });
+      setQualityNote("");
+      refreshQuality();
+    } finally {
+      setQualitySaving(false);
+    }
+  };
   const placePin = (event) => {
-    if (reviewMode !== "comment") return;
+    if (!["comment", "text"].includes(reviewMode)) return;
     const rect = event.currentTarget.getBoundingClientRect();
     setPin({
       x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
@@ -5615,16 +5715,49 @@ function AssetLightbox({
     });
   };
   const saveComment = async () => {
-    if (!pin || !comment.trim()) return;
+    if ((!pin && !region) || !comment.trim()) return;
     await db.addAnnotation(projectId, {
       asset_id: asset.id,
-      kind: "comment",
+      kind: region ? "region" : reviewMode === "text" ? "text" : "comment",
       body: comment.trim(),
-      geometry: { type: "point", ...pin },
+      geometry: region || { type: "point", ...pin },
     });
     setComment("");
     setPin(null);
+    setRegion(null);
     setReviewMode(null);
+  };
+  const mediaPoint = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    };
+  };
+  const startRegion = (event) => {
+    if (reviewMode !== "region") return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    regionStart.current = mediaPoint(event);
+    setRegion({ type: "rect", ...regionStart.current, width: 0, height: 0 });
+  };
+  const moveRegion = (event) => {
+    if (reviewMode !== "region" || !regionStart.current) return;
+    const end = mediaPoint(event);
+    const start = regionStart.current;
+    setRegion({
+      type: "rect",
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y),
+    });
+  };
+  const finishRegion = () => {
+    if (reviewMode !== "region") return;
+    regionStart.current = null;
+    setRegion((value) =>
+      value && value.width >= 0.01 && value.height >= 0.01 ? value : null,
+    );
   };
   const derived = [
     ["edit", Wand2, "Editar componente"],
@@ -5655,7 +5788,13 @@ function AssetLightbox({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="relative" onClick={placePin}>
+        <div
+          className="relative"
+          onClick={placePin}
+          onPointerDown={startRegion}
+          onPointerMove={moveRegion}
+          onPointerUp={finishRegion}
+        >
         {asset.url && /video|cut/i.test(String(asset.type)) ? (
           // Un vídeo se reproduce, no se enseña como imagen rota.
           <video
@@ -5677,8 +5816,19 @@ function AssetLightbox({
             <Volume2 className="size-10 text-muted-foreground" />
           </div>
         )}
-          {reviewMode === "comment" && (
+          {["comment", "text", "region"].includes(reviewMode) && (
             <div className="pointer-events-none absolute inset-0 cursor-crosshair ring-1 ring-inset ring-blue-500/70" />
+          )}
+          {region && (
+            <span
+              className="pointer-events-none absolute border-2 border-blue-500 bg-blue-500/15"
+              style={{
+                left: `${region.x * 100}%`,
+                top: `${region.y * 100}%`,
+                width: `${region.width * 100}%`,
+                height: `${region.height * 100}%`,
+              }}
+            />
           )}
           {pin && (
             <span
@@ -5687,17 +5837,17 @@ function AssetLightbox({
             >1</span>
           )}
           <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center rounded-full border border-white/10 bg-neutral-950/90 p-1 text-white shadow-xl backdrop-blur">
-            <button title="Seleccionar" className="flex size-8 items-center justify-center rounded-full hover:bg-white/10"><Crosshair className="size-3.5" /></button>
-            <button title="Texto" className="flex size-8 items-center justify-center rounded-full hover:bg-white/10"><Type className="size-3.5" /></button>
-            <button title="Anotar" onClick={(e) => { e.stopPropagation(); setReviewMode(reviewMode === "comment" ? null : "comment"); }} className={cn("flex size-8 items-center justify-center rounded-full hover:bg-white/10", reviewMode === "comment" && "bg-blue-600 hover:bg-blue-600")}><Pencil className="size-3.5" /></button>
+            <button title="Seleccionar" onClick={(e) => { e.stopPropagation(); setReviewMode(null); setPin(null); setRegion(null); }} className="flex size-8 items-center justify-center rounded-full hover:bg-white/10"><Crosshair className="size-3.5" /></button>
+            <button title="Texto" onClick={(e) => { e.stopPropagation(); setReviewMode("text"); setRegion(null); }} className={cn("flex size-8 items-center justify-center rounded-full hover:bg-white/10", reviewMode === "text" && "bg-blue-600 hover:bg-blue-600")}><Type className="size-3.5" /></button>
+            <button title="Seleccionar región editable" onClick={(e) => { e.stopPropagation(); setReviewMode("region"); setPin(null); setRegion(null); }} className={cn("flex size-8 items-center justify-center rounded-full hover:bg-white/10", reviewMode === "region" && "bg-blue-600 hover:bg-blue-600")}><Pencil className="size-3.5" /></button>
             <button title="Comentar" onClick={(e) => { e.stopPropagation(); setReviewMode("comment"); }} className="flex size-8 items-center justify-center rounded-full hover:bg-white/10"><MessageCircle className="size-3.5" /></button>
           </div>
         </div>
 
-        {pin && (
+        {(pin || region) && (
           <div className="rounded-xl border bg-background p-3 shadow-sm">
             <Textarea autoFocus value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Describe el cambio exacto en este punto…" className="min-h-20 resize-none border-0 p-0 shadow-none focus-visible:ring-0" />
-            <div className="mt-2 flex justify-end gap-2"><UIButton variant="ghost" size="sm" onClick={() => setPin(null)}>Cancelar</UIButton><UIButton size="sm" disabled={!comment.trim()} onClick={saveComment}>Guardar comentario</UIButton></div>
+            <div className="mt-2 flex justify-end gap-2"><UIButton variant="ghost" size="sm" onClick={() => { setPin(null); setRegion(null); }}>Cancelar</UIButton><UIButton size="sm" disabled={!comment.trim()} onClick={saveComment}>{region ? "Guardar región" : "Guardar comentario"}</UIButton></div>
           </div>
         )}
 
@@ -5707,6 +5857,63 @@ function AssetLightbox({
               <Icon className="size-4 text-muted-foreground" />{label}
             </button>
           ))}
+        </div>
+
+        <div className="rounded-xl border p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold">Control de calidad</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                La aprobación queda registrada con criterio, autor y evidencia; el director no puede inventarla.
+              </p>
+            </div>
+            <Badge variant="outline" className="shrink-0 text-[10px]">
+              {qualityReports.length} revisiones
+            </Badge>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-[190px_1fr]">
+            <Select value={qualityType} onValueChange={setQualityType}>
+              <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="render">Integridad visual</SelectItem>
+                <SelectItem value="prompt_adherence">Fidelidad al prompt</SelectItem>
+                <SelectItem value="identity">Identidad/personaje</SelectItem>
+                <SelectItem value="continuity">Continuidad</SelectItem>
+                <SelectItem value="product_fidelity">Producto</SelectItem>
+                <SelectItem value="text_logo">Texto y logotipo</SelectItem>
+                <SelectItem value="audio">Audio y mezcla</SelectItem>
+                <SelectItem value="transition">Transición</SelectItem>
+                <SelectItem value="final_cut">Corte final</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              value={qualityNote}
+              onChange={(event) => setQualityNote(event.target.value)}
+              placeholder="Qué has comprobado y por qué pasa o falla…"
+              className="h-9 text-xs"
+            />
+          </div>
+          <div className="mt-2 flex gap-2">
+            <UIButton size="sm" disabled={!qualityNote.trim() || qualitySaving} onClick={() => saveQuality(true)}>
+              <ThumbsUp /> Aprobar criterio
+            </UIButton>
+            <UIButton variant="outline" size="sm" disabled={!qualityNote.trim() || qualitySaving} onClick={() => saveQuality(false)}>
+              <ThumbsDown /> Registrar fallo
+            </UIButton>
+          </div>
+          {!!qualityReports.length && (
+            <div className="mt-3 space-y-1 border-t pt-2">
+              {qualityReports.slice(0, 4).map((report) => (
+                <div key={report.id} className="flex items-center gap-2 text-[10px]">
+                  <span className={cn("size-1.5 rounded-full", report.passed ? "bg-emerald-500" : "bg-red-500")} />
+                  <span className="font-medium">{report.check_type}</span>
+                  <span className="truncate text-muted-foreground">
+                    {report.review_source || "automated"} · {report.review_evidence?.note || report.issues?.[0]?.message || "sin nota"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -5730,6 +5937,11 @@ function AssetLightbox({
             </a>
           </UIButton>
           <div className="flex-1" />
+          {/cut/i.test(String(asset.type)) && (
+            <UIButton size="sm" onClick={() => onAction?.(asset, "delivery")}>
+              <Check /> Aprobar entrega
+            </UIButton>
+          )}
           {elementRoles.map((role) => (
             <UIButton
               key={role}
@@ -6013,6 +6225,8 @@ function EditorAssets({
   onRegenerate,
   onUpload,
   onAction,
+  selectedIds = [],
+  onSelectionChange,
 }) {
   const fileRef = useRef(null);
   const [filter, setFilter] = useState("Todos");
@@ -6021,6 +6235,18 @@ function EditorAssets({
   const [customId, setCustomId] = useState(null);
   const openAsset = assets.find((a) => a.id === openId);
   const customAsset = assets.find((a) => a.id === customId);
+  const selected = useMemo(
+    () => new Set(selectedIds.map(String)),
+    [selectedIds],
+  );
+  const toggleSelected = (id) => {
+    const key = String(id);
+    onSelectionChange?.(
+      selected.has(key)
+        ? selectedIds.filter((item) => String(item) !== key)
+        : [...selectedIds, id],
+    );
+  };
   const list = assets.filter(
     (a) =>
       (filter === "Todos" || a.type === filter) &&
@@ -6057,7 +6283,17 @@ function EditorAssets({
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-muted-foreground">
             {list.length} elementos
+            {selected.size ? ` · ${selected.size} seleccionados` : ""}
           </span>
+          {selected.size > 0 && (
+            <UIButton
+              variant="outline"
+              size="sm"
+              onClick={() => onSelectionChange?.([])}
+            >
+              Limpiar selección
+            </UIButton>
+          )}
           <input
             ref={fileRef}
             type="file"
@@ -6085,6 +6321,8 @@ function EditorAssets({
                 a.role &&
                   "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 a.status === "generating" && "cursor-default",
+                selected.has(String(a.id)) &&
+                  "ring-2 ring-blue-500 ring-offset-2 ring-offset-background",
               )}
             >
               {a.status === "generating" ? (
@@ -6149,6 +6387,28 @@ function EditorAssets({
                 onOpen={setOpenId}
                 onCustomRole={setCustomId}
               />
+            )}
+            {a.status === "ready" && (
+              <button
+                type="button"
+                title={
+                  selected.has(String(a.id))
+                    ? "Quitar de la selección del agente"
+                    : "Seleccionar para usarlo en el chat"
+                }
+                aria-pressed={selected.has(String(a.id))}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleSelected(a.id);
+                }}
+                className={cn(
+                  "absolute bottom-2 right-2 z-10 flex size-6 items-center justify-center rounded-full border bg-background/90 shadow-sm backdrop-blur transition-colors",
+                  selected.has(String(a.id)) &&
+                    "border-blue-600 bg-blue-600 text-white",
+                )}
+              >
+                <Check className="size-3.5" />
+              </button>
             )}
           </div>
         ))}
@@ -6252,6 +6512,7 @@ function BriefBlock({
   onBackspace,
   onRemove,
   dragProps,
+  onUpload,
 }) {
   const [menu, setMenu] = useState(false);
   const q = block.text.startsWith("/") ? block.text.slice(1).toLowerCase() : "";
@@ -6387,9 +6648,16 @@ function BriefBlock({
                 type="file"
                 accept="image/*"
                 className="hidden"
-                onChange={(e) => {
+                onChange={async (e) => {
                   const f = e.target.files?.[0];
-                  if (f) update({ src: URL.createObjectURL(f) });
+                  if (!f) return;
+                  const asset = await onUpload?.(f);
+                  if (asset)
+                    update({
+                      src: asset.url,
+                      asset_path: asset.path || asset.url,
+                      asset_id: asset.id,
+                    });
                 }}
               />
             </label>
@@ -6414,7 +6682,7 @@ function BriefBlock({
   );
 }
 
-function EditorBrief({ data, title = "", onRename }) {
+function EditorBrief({ data, title = "", onRename, onUpload }) {
   const [blocks, setBlocksLocal] = useState(() =>
     (data.brief ?? initialBrief()).map(normalizeBlock),
   );
@@ -6446,15 +6714,25 @@ function EditorBrief({ data, title = "", onRename }) {
       return next;
     });
 
-  const onDrop = (e) => {
+  const onDrop = async (e) => {
     e.preventDefault();
     const files = [...(e.dataTransfer?.files || [])].filter((f) =>
       f.type.startsWith("image/"),
     );
     if (!files.length) return;
+    const uploaded = (await Promise.all(files.map((file) => onUpload?.(file)))).filter(
+      Boolean,
+    );
+    if (!uploaded.length) return;
     setBlocks((bs) => [
       ...bs,
-      ...files.map((f) => newBlock("image", { src: URL.createObjectURL(f) })),
+      ...uploaded.map((asset) =>
+        newBlock("image", {
+          src: asset.url,
+          asset_path: asset.path || asset.url,
+          asset_id: asset.id,
+        }),
+      ),
     ]);
   };
 
@@ -6502,6 +6780,7 @@ function EditorBrief({ data, title = "", onRename }) {
                   onDragStart: () => setDragIdx(i),
                   onDragEnd: () => setDragIdx(null),
                 }}
+                onUpload={onUpload}
               />
             </div>
           ))}
@@ -6612,8 +6891,8 @@ function EditorElements({ assets, onGoToAssets }) {
   );
 }
 
-const NODE_W = { concept: 250, shot: 190 };
-const NODE_H = { concept: 118, shot: 178 };
+const NODE_W = { concept: 250, reference: 250, shot: 190 };
+const NODE_H = { concept: 118, reference: 118, shot: 178 };
 const PICKER_W = 288;
 const PICKER_H = 380;
 /**
@@ -6624,18 +6903,22 @@ const mediaSourcesFor = (assets) => [
   [
     "elements",
     "Elements",
-    assets.filter((a) => a.role && a.url).map((a) => [a.name, a.role, a.url]),
+    assets
+      .filter((a) => a.role && a.url)
+      .map((a) => [a.name, a.role, a.url, a]),
   ],
   [
     "assets",
     "Assets",
-    assets.filter((a) => !a.role && a.url).map((a) => [a.name, a.type, a.url]),
+    assets
+      .filter((a) => !a.role && a.url)
+      .map((a) => [a.name, a.type, a.url, a]),
   ],
   // El grupo "Planos" de demo se retiró: ofrecer material de ejemplo en un proyecto
   // real invitaba a colar el astronauta de muestra en un montaje de verdad.
 ];
 
-function CanvasMediaPicker({ onPick, onClose, at, assets = [] }) {
+function CanvasMediaPicker({ onPick, onClose, onUpload, at, assets = [] }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const sources = mediaSourcesFor(assets);
@@ -6702,9 +6985,11 @@ function CanvasMediaPicker({ onPick, onClose, at, assets = [] }) {
           type="file"
           accept="image/*"
           className="hidden"
-          onChange={(e) => {
+          onChange={async (e) => {
             const f = e.target.files?.[0];
-            if (f) onPick(URL.createObjectURL(f), f.name);
+            if (!f) return;
+            const asset = await onUpload?.(f);
+            if (asset) onPick(asset.url, asset.name, asset);
           }}
         />
       </label>
@@ -6715,10 +7000,10 @@ function CanvasMediaPicker({ onPick, onClose, at, assets = [] }) {
             <p className="sticky top-0 z-10 bg-background px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               {title}
             </p>
-            {items.map(([name, meta, thumb]) => (
+            {items.map(([name, meta, thumb, asset]) => (
               <button
                 key={title + name}
-                onClick={() => onPick(thumb, name)}
+                onClick={() => onPick(thumb, name, asset)}
                 className="flex w-full items-center gap-2 rounded-md p-1 text-left transition-colors hover:bg-accent"
               >
                 <div
@@ -6745,7 +7030,7 @@ function CanvasMediaPicker({ onPick, onClose, at, assets = [] }) {
   );
 }
 
-function EditorCanvas({ data, assets = [] }) {
+function EditorCanvas({ data, assets = [], onUpload }) {
   // Nunca el demo: un proyecto sin planos muestra un lienzo vacío, no el guion del
   // astronauta de ejemplo. Peor que enseñarlo era que cualquier edición lo PERSISTÍA
   // como si fuera contenido del usuario.
@@ -6897,6 +7182,7 @@ function EditorCanvas({ data, assets = [] }) {
       if (e.key === "Escape") setPicking(null);
       if ((e.key === "Delete" || e.key === "Backspace") && selected) {
         if (/INPUT|TEXTAREA/.test(document.activeElement?.tagName)) return;
+        data?.deleteCanvasNode?.(selected);
         setNodes((ns) => ns.filter((n) => n.id !== selected));
         setEdges((es) =>
           es.filter((x) => x.from !== selected && x.to !== selected),
@@ -6957,24 +7243,30 @@ function EditorCanvas({ data, assets = [] }) {
     setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, ...patch } : n)));
     setPicking(null);
   };
-  const dropFiles = (e) => {
+  const dropFiles = async (e) => {
     e.preventDefault();
     const files = [...(e.dataTransfer?.files || [])].filter((f) =>
       f.type.startsWith("image/"),
     );
     if (!files.length) return;
     const p = toCanvas(e.clientX, e.clientY);
+    const uploaded = (await Promise.all(files.map((file) => onUpload?.(file)))).filter(
+      Boolean,
+    );
+    if (!uploaded.length) return;
     setNodes((ns) => [
       ...ns,
-      ...files.map((f, i) => ({
+      ...uploaded.map((asset, i) => ({
         id: `n${Date.now()}${i}`,
         type: "concept",
         x: p.x + i * 30,
         y: p.y + i * 30,
         title: "Referencia",
-        text: f.name,
-        thumb: URL.createObjectURL(f),
-        media: f.name,
+        text: asset.name,
+        thumb: asset.url,
+        asset_path: asset.path || asset.url,
+        asset_id: asset.id,
+        media: asset.name,
       })),
     ]);
   };
@@ -7053,14 +7345,21 @@ function EditorCanvas({ data, assets = [] }) {
             data-node-id={n.id}
             onPointerDown={(e) => startNodeDrag(e, n.id)}
             onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
+            onDrop={async (e) => {
               e.preventDefault();
               e.stopPropagation();
               const f = [...(e.dataTransfer?.files || [])].find((x) =>
                 x.type.startsWith("image/"),
               );
-              if (f)
-                attach(n.id, { thumb: URL.createObjectURL(f), media: f.name });
+              if (!f) return;
+              const asset = await onUpload?.(f);
+              if (asset)
+                attach(n.id, {
+                  thumb: asset.url,
+                  asset_path: asset.path || asset.url,
+                  asset_id: asset.id,
+                  media: asset.name,
+                });
             }}
             style={{ left: n.x, top: n.y, width: NODE_W[n.type] }}
             className={cn(
@@ -7080,7 +7379,14 @@ function EditorCanvas({ data, assets = [] }) {
                 />
                 <button
                   onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => attach(n.id, { thumb: null, media: null })}
+                  onClick={() =>
+                    attach(n.id, {
+                      thumb: null,
+                      asset_path: null,
+                      asset_id: null,
+                      media: null,
+                    })
+                  }
                   title="Quitar media"
                   className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-md bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100"
                 >
@@ -7169,6 +7475,7 @@ function EditorCanvas({ data, assets = [] }) {
           onClick={() => {
             // Vaciar es vaciar: antes "restablecer" rellenaba el lienzo con el guion
             // de ejemplo del astronauta y lo guardaba como si fuera del usuario.
+            data?.clearCanvas?.();
             setNodes([]);
             setEdges([]);
             setSelected(null);
@@ -7190,6 +7497,7 @@ function EditorCanvas({ data, assets = [] }) {
             variant="outline"
             size="sm"
             onClick={() => {
+              data?.deleteCanvasNode?.(selected);
               setNodes((ns) => ns.filter((n) => n.id !== selected));
               setEdges((es) =>
                 es.filter((x) => x.from !== selected && x.to !== selected),
@@ -7211,7 +7519,15 @@ function EditorCanvas({ data, assets = [] }) {
           assets={assets}
           at={pickerPos(picking)}
           onClose={() => setPicking(null)}
-          onPick={(thumb, media) => attach(picking, { thumb, media })}
+          onUpload={onUpload}
+          onPick={(thumb, media, asset) =>
+            attach(picking, {
+              thumb,
+              media,
+              asset_id: asset?.id || null,
+              asset_path: asset?.path || asset?.url || thumb,
+            })
+          }
         />
       )}
 
@@ -7608,6 +7924,46 @@ function Editor({ projectId }) {
     reload,
   } = data;
 
+  const [selectedAssetIds, setSelectedAssetIds] = useState([]);
+  const [mentionProduction, setMentionProduction] = useState({});
+  const refreshMentionProduction = useCallback(async () => {
+    try {
+      setMentionProduction(await db.getProduction(projectId));
+    } catch {
+      // El catálogo degrada a assets/canvas; el backend seguirá cargando el proyecto.
+    }
+  }, [projectId]);
+  useEffect(() => {
+    setSelectedAssetIds([]);
+    refreshMentionProduction();
+  }, [projectId, refreshMentionProduction]);
+  const mentionResources = useMemo(
+    () =>
+      buildResourceCatalog({
+        assets,
+        brief: data.brief,
+        canvas: data.canvas,
+        production: mentionProduction,
+      }),
+    [assets, data.brief, data.canvas, mentionProduction],
+  );
+  const referenceForAsset = useCallback(
+    (asset) =>
+      mentionResources.find(
+        (ref) =>
+          ["asset", "element"].includes(ref.type) &&
+          String(ref.id) === String(asset?.id),
+      ) ?? null,
+    [mentionResources],
+  );
+  const mentionForAsset = useCallback(
+    (asset) => {
+      const ref = referenceForAsset(asset);
+      return ref ? `@${ref.mention}` : `asset ${asset?.id}`;
+    },
+    [referenceForAsset],
+  );
+
   const [tab, setTab] = useState("preview");
   // Ancho por defecto calibrado para que el Director Panel renderice entero en UNA
   // fila CON margen (slots de frame + movimiento + curva + ramp + duración ≈ 640px,
@@ -7722,27 +8078,35 @@ function Editor({ projectId }) {
    * Sube archivos del usuario al bucket `assets` de Supabase y los registra
    * como assets del proyecto. Sin backend cae a una URL local temporal.
    */
+  const uploadProjectFile = async (file) => {
+    if (!file || !/^(image|video|audio)\//.test(file.type)) return null;
+    const url = await uploadAsset({ userId: profile.id, projectId, file });
+    const [saved] = await addAssets([
+      {
+        name: file.name.replace(/\.[^.]+$/, ""),
+        // Canonical machine-readable kinds. Labels are translated only when painted;
+        // provider tools and manifests must never depend on the UI locale.
+        type: file.type.startsWith("video")
+          ? "video"
+          : file.type.startsWith("audio")
+            ? "audio"
+            : "image",
+        meta: `${Math.round(file.size / 1024)} KB`,
+        url,
+        status: "ready",
+      },
+    ]);
+    return saved || null;
+  };
+
   const uploadFiles = async (files) => {
     const accepted = [...files].filter((f) =>
       /^(image|video|audio)\//.test(f.type),
     );
     if (!accepted.length) return 0;
 
-    const rows = await Promise.all(
-      accepted.map(async (file) => ({
-        name: file.name.replace(/\.[^.]+$/, ""),
-        type: file.type.startsWith("video")
-          ? "Vídeos"
-          : file.type.startsWith("audio")
-            ? "Audio"
-            : "Imágenes",
-        meta: `${Math.round(file.size / 1024)} KB`,
-        url: await uploadAsset({ userId: profile.id, projectId, file }),
-        status: "ready",
-      })),
-    );
-    await addAssets(rows);
-    return rows.length;
+    const rows = await Promise.all(accepted.map(uploadProjectFile));
+    return rows.filter(Boolean).length;
   };
 
   /**
@@ -7758,7 +8122,7 @@ function Editor({ projectId }) {
    * Solo al terminar se vuelca a `messages` con `addMessage`, porque lo que se
    * persiste es el mensaje final, no cada fragmento.
    */
-  const runTurn = async (text) => {
+  const runTurn = async (text, resourceRefs = []) => {
     if (!profile) return;
 
     turn.current?.cancel();
@@ -7789,12 +8153,6 @@ function Editor({ projectId }) {
 
     let full = "";
 
-    // Ids que ya existen como fila. Se lleva aparte y no se consulta `assets`
-    // porque dentro del turno ese array es la foto de cuando arrancó: un asset
-    // insertado hace dos eventos todavía no está ahí, y buscarlo allí acabaría
-    // insertándolo por segunda vez al llegar su `asset_ready`.
-    const known = new Set(assets.map((a) => String(a.id)));
-
     const uiContext = buildUIContext({
       project,
       tab,
@@ -7803,7 +8161,8 @@ function Editor({ projectId }) {
       assets,
       // La selección de assets todavía vive dentro de EditorAssets; hasta que
       // se levante aquí, el agente recibe la lista vacía.
-      selectedIds: [],
+      selectedIds: selectedAssetIds,
+      resourceRefs,
       genSettings,
       credits: profile.credits,
     });
@@ -7835,52 +8194,46 @@ function Editor({ projectId }) {
 
       onToolResult: () => {
         setStream((s) => (s ? { ...s, tool: null } : s));
+        // Tools can mutate brief, canvas, screenplay, voices and bindings. Reload the
+        // structured project, not just assets, so the visible UI is the same truth the
+        // next agent step reads.
+        reload();
+        refreshMentionProduction();
       },
 
-      // Una generación encolada devuelve una referencia en `generating`, no un
-      // render. Se inserta ya como asset para que aparezca en All assets con su
-      // placeholder; el worker es quien lo completará.
-      onJobStatus: async (e) => {
-        if (e.status !== "queued" || !e.asset) return;
-        const [row] = await addAssets([
-          {
-            ...e.asset,
-            status: "generating",
-            meta: e.asset.meta ?? "Generando",
-          },
-        ]);
-        if (!row) return;
-        known.add(String(row.id));
-        // La retirada del fantasma correspondiente la hace la reconciliación contra
-        // `assets` (ver ghostInfo): restar también aquí retiraría dos por una misma fila.
-        setStream((s) => (s ? { ...s, assets: [...s.assets, row] } : s));
-      },
+      // Los estados del job son informativos. La fila definitiva pertenece al worker;
+      // crear otra desde el navegador produciría un UUID distinto y un placeholder
+      // eterno. Los fantasmas de UI cubren la espera sin duplicar la fuente de verdad.
+      onJobStatus: () => {},
 
       // El render ha aterrizado. Si el asset ya existía como placeholder se
       // parchea; si no (el worker lo creó entero), se añade.
       onAssetReady: async (e) => {
         const incoming = e.asset ?? e;
+        const assetId = incoming.id ?? incoming.asset_id;
 
         // El evento trae dos cosas distintas y mezclarlas rompe el proyecto a los
         // días: `path` es la ruta del objeto (duradera, la que va a la base de
         // datos) y `url` es una firma de cortesía para pintar la tarjeta ya
         // mismo (caduca, no se guarda jamás). Todo lo que se persiste usa la
         // ruta; solo el estado en memoria se queda con la URL.
-        const stored = { ...incoming, url: incoming.path ?? incoming.url };
+        const stored = { ...incoming, id: assetId, url: incoming.path ?? incoming.url };
 
-        if (known.has(String(incoming.id))) {
-          patchAsset(incoming.id, { ...stored, status: "ready" });
-        } else {
-          known.add(String(incoming.id));
-          await addAssets([{ ...stored, status: "ready" }]);
-        }
+        // `asset_ready` se emite después del commit que crea/actualiza `assets` y usa
+        // `asset_id` (no `id`). Releer evita fabricar una segunda fila incompleta y
+        // obtiene nombre, tipo, linaje, params y estado canónicos de una sola vez.
+        await refreshAssets();
+        // El worker puede crear también el cue, la operación, el informe QA o el
+        // vínculo de línea asociado al asset. Refrescarlos junto al archivo evita que
+        // Audio/Guion se queden una generación por detrás hasta pulsar Actualizar.
+        refreshMentionProduction();
 
         setStream((s) =>
           s
             ? {
                 ...s,
                 assets: s.assets.map((a) =>
-                  a.id === incoming.id ? { ...a, ...incoming } : a,
+                  String(a.id) === String(assetId) ? { ...a, ...stored } : a,
                 ),
               }
             : s,
@@ -7944,9 +8297,12 @@ function Editor({ projectId }) {
   const regenerateAsset = (id) => {
     const asset = assets.find((a) => a.id === id);
     if (!asset || busy) return;
-    patchAsset(id, { status: "generating", url: null });
+    const ref = referenceForAsset(asset);
+    const mention = mentionForAsset(asset);
     runTurn(
-      `Regenera el asset "${asset.name}" manteniendo su intención original.`,
+      `Crea una nueva variante derivada de ${mention} manteniendo su intención original. ` +
+        `No modifiques ni reemplaces el asset fuente ${asset.id}; conserva su linaje como parent/source y genera un output nuevo.`,
+      ref ? [ref] : [],
     );
   };
 
@@ -7954,14 +8310,20 @@ function Editor({ projectId }) {
     const source = assets.find((a) => a.id === id);
     if (!source) return;
     const { id: _id, project_id, created_at, ...rest } = source;
-    addAssets([{ ...rest, name: `${source.name} (copia)`, role: null }]);
+    addAssets([{
+      ...rest,
+      name: `${source.name} (copia)`,
+      role: null,
+      parent_id: source.id,
+      path: source.path || null,
+    }]);
   };
 
-  const handleSend = (text) => {
+  const handleSend = (text, resourceRefs = []) => {
     // El hilo muestra lo que el usuario escribió (con sus pills @Clip-N); lo que viaja
     // al agente lleva además el pie de contexto con los asset ids de esos clips.
     addMessage("user", text);
-    runTurn(expandClipMentions(text));
+    runTurn(expandClipMentions(text), resourceRefs);
   };
 
   // ?run=1 → el prompt con el que se creó el proyecto se ejecuta al entrar.
@@ -7978,11 +8340,7 @@ function Editor({ projectId }) {
   }, [loaded, project]);
 
   if (!ready || !loaded) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-muted/30 text-sm text-muted-foreground">
-        Cargando proyecto…
-      </div>
-    );
+    return <ProjectEditorSkeleton />;
   }
 
   if (!project) {
@@ -8082,11 +8440,12 @@ function Editor({ projectId }) {
               stream={stream}
               onSend={handleSend}
               onStop={stopTurn}
-              elements={elements}
+              resources={mentionResources}
               assets={assets}
               onUpload={(files) => uploadFiles(files)}
               insert={chatInsert}
               onInsertDone={() => setChatInsert(null)}
+              onMentionOpen={refreshMentionProduction}
             />
           </div>
         )}
@@ -8128,25 +8487,36 @@ function Editor({ projectId }) {
               onRegenerate={regenerateAsset}
               onUpload={uploadFiles}
               onAction={(asset, action) => {
+                const mention = mentionForAsset(asset);
                 const instructions = {
-                  edit: `Edita únicamente el componente que señalaré del asset @${asset.name} (id ${asset.id}), conservando composición, identidad y el resto de píxeles. Pregúntame por la máscara o usa sus anotaciones existentes.`,
-                  extend: `Extiende el clip @${asset.name} (id ${asset.id}) con continuidad exacta desde su último frame. Conserva personaje, cámara, iluminación y sonido; estima coste antes de generar.`,
-                  remix: `Crea un remix derivado de @${asset.name} (id ${asset.id}). Conserva su linaje y pregúntame qué dimensión quiero cambiar antes de generar.`,
-                  variations: `Propón variaciones controladas de @${asset.name} (id ${asset.id}), cambiando una sola variable cada vez y preservando semilla, personajes y composición cuando el modelo lo permita. Estima el lote antes de generarlo.`,
-                  character: `Convierte o reutiliza el personaje visible en @${asset.name} (id ${asset.id}) como Element persistente, con ficha de continuidad y referencias aprobadas.`,
+                  edit: `Edita únicamente el componente que señalaré de ${mention} (id ${asset.id}), conservando composición, identidad y el resto de píxeles. Pregúntame por la máscara o usa sus anotaciones existentes.`,
+                  extend: `Extiende el clip ${mention} (id ${asset.id}) con continuidad exacta desde su último frame. Conserva personaje, cámara, iluminación y sonido; estima coste antes de generar.`,
+                  remix: `Crea un remix derivado de ${mention} (id ${asset.id}). Conserva su linaje y pregúntame qué dimensión quiero cambiar antes de generar.`,
+                  variations: `Propón variaciones controladas de ${mention} (id ${asset.id}), cambiando una sola variable cada vez y preservando semilla, personajes y composición cuando el modelo lo permita. Estima el lote antes de generarlo.`,
+                  character: `Convierte o reutiliza el personaje visible en ${mention} (id ${asset.id}) como Element persistente, con ficha de continuidad y referencias aprobadas.`,
+                  delivery: `Apruebo la entrega del corte ${mention} (id ${asset.id}). Verifica antes que proceda de un manifiesto completo y que sus controles técnico, de corte final y de audio tengan revisiones aprobadas con evidencia. Si falta alguno, no apruebes la entrega: dime exactamente cuál y cómo revisarlo.`,
                 };
                 setChatHidden(false);
                 setChatInsert({ text: instructions[action], at: Date.now() });
               }}
+              selectedIds={selectedAssetIds}
+              onSelectionChange={setSelectedAssetIds}
             />
           )}
           {tab === "script" && (
             <ScreenplayStudio
               projectId={projectId}
               assets={assets}
+              productionData={mentionProduction}
+              onProductionChange={setMentionProduction}
               onSeedChat={(text) => {
                 setChatHidden(false);
                 setChatInsert({ text, at: Date.now() });
+              }}
+              onSendAgent={(text) => {
+                if (busy) return;
+                setChatHidden(false);
+                handleSend(text, resolveResourceMentions(text, mentionResources));
               }}
             />
           )}
@@ -8154,9 +8524,17 @@ function Editor({ projectId }) {
             <AudioStudio
               projectId={projectId}
               assets={assets}
+              resources={mentionResources}
+              productionData={mentionProduction}
+              onProductionChange={setMentionProduction}
               onSeedChat={(text) => {
                 setChatHidden(false);
                 setChatInsert({ text, at: Date.now() });
+              }}
+              onSendAgent={(text) => {
+                if (busy) return;
+                setChatHidden(false);
+                handleSend(text, resolveResourceMentions(text, mentionResources));
               }}
             />
           )}
@@ -8165,6 +8543,7 @@ function Editor({ projectId }) {
               data={data}
               title={project.title}
               onRename={(t) => updateProject(projectId, { title: t })}
+              onUpload={uploadProjectFile}
             />
           )}
           {tab === "elements" && (
@@ -8173,7 +8552,13 @@ function Editor({ projectId }) {
               onGoToAssets={() => setTab("assets")}
             />
           )}
-          {tab === "canvas" && <EditorCanvas data={data} assets={assets} />}
+          {tab === "canvas" && (
+            <EditorCanvas
+              data={data}
+              assets={assets}
+              onUpload={uploadProjectFile}
+            />
+          )}
           {tab === "chat" && <EditorTeamChat projectId={projectId} />}
         </main>
       </div>
@@ -8648,14 +9033,17 @@ function AccountSettings() {
     useStudio();
   const { setLanguage } = useI18n();
   const [identities, setIdentities] = useState([]);
+  const [identitiesLoading, setIdentitiesLoading] = useState(true);
   const [dialog, setDialog] = useState(null);
   const [toast, setToast] = useState(null);
   const avatarRef = useRef(null);
 
   useEffect(() => {
+    setIdentitiesLoading(true);
     db.listIdentities()
       .then(setIdentities)
-      .catch(() => setIdentities([]));
+      .catch(() => setIdentities([]))
+      .finally(() => setIdentitiesLoading(false));
   }, [profile?.id]);
 
   const notify = (text, kind = "ok") => {
@@ -8683,11 +9071,7 @@ function AccountSettings() {
   // estado de carga, y con la carga de perfil ya arreglada (getSession) esto solo se ve
   // un instante al abrir.
   if (!profile) {
-    return (
-      <div className="mx-auto max-w-3xl px-8 py-10 text-muted-foreground">
-        Cargando tu cuenta…
-      </div>
-    );
+    return <SettingsSkeleton />;
   }
   const initial = (profile.name ?? "?").charAt(0).toUpperCase();
 
@@ -8926,12 +9310,16 @@ function AccountSettings() {
         title="Cuentas vinculadas"
         desc="Proveedores con los que puedes iniciar sesión."
       >
-        {identities.length === 0 && (
+        {identitiesLoading ? (
+          <div className="space-y-3 px-5 py-4" aria-busy="true" aria-label="Cargando cuentas vinculadas">
+            {[0, 1].map((item) => <div key={item} className="flex items-center gap-3"><Skeleton className="size-9" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-28" /><Skeleton className="h-3 w-44" /></div></div>)}
+          </div>
+        ) : identities.length === 0 && (
           <div className="px-5 py-4 text-sm text-muted-foreground">
             Solo inicias sesión con correo y contraseña.
           </div>
         )}
-        {identities.map((identity) => (
+        {!identitiesLoading && identities.map((identity) => (
           <div
             key={identity.identity_id}
             className="flex items-center gap-3 px-5 py-4"
@@ -8968,7 +9356,7 @@ function AccountSettings() {
           </div>
         ))}
 
-        {isRemote &&
+        {!identitiesLoading && isRemote &&
           ["google", "github", "apple"]
             .filter((p) => !identities.some((i) => i.provider === p))
             .map((provider) => (
@@ -10284,7 +10672,7 @@ function UsageDetails({ onBack }) {
             </p>
           </div>
         ) : (
-          <Suspense fallback={<div className="mt-6 h-[260px] animate-pulse rounded-lg bg-muted" />}>
+          <Suspense fallback={<UsageChartSkeleton />}>
             <UsageChart config={usageChartConfig} series={series} />
           </Suspense>
         )}
@@ -12132,6 +12520,21 @@ function GitSettings() {
 }
 
 const mcpClients = ["Claude", "Claude Code", "Cursor", "VS Code"];
+function McpServerCardSkeleton() {
+  return (
+    <Card className="mt-3 space-y-5 p-5" aria-busy="true" aria-label="Cargando servidor MCP">
+      <div className="flex items-center justify-between"><Skeleton className="h-4 w-32" /><Skeleton className="h-5 w-20 rounded-full" /></div>
+      <Skeleton className="h-3 w-80 max-w-full" />
+      <Skeleton className="h-10 w-full" />
+      <Separator />
+      <div className="flex items-center justify-between"><div className="space-y-2"><Skeleton className="h-4 w-36" /><Skeleton className="h-3 w-72 max-w-full" /></div><Skeleton className="h-9 w-24" /></div>
+    </Card>
+  );
+}
+
+function McpCredentialsSkeleton() {
+  return <div className="mt-4 space-y-3 rounded-md border p-3" aria-busy="true" aria-label="Cargando tokens MCP">{[0, 1].map((item) => <div key={item} className="flex items-center gap-3"><div className="flex-1 space-y-2"><Skeleton className="h-4 w-32" /><Skeleton className="h-3 w-56 max-w-full" /></div><Skeleton className="h-8 w-20" /></div>)}</div>;
+}
 function McpServerSettings() {
   const [client, setClient] = useState("Claude");
   const [server, setServer] = useState(null);
@@ -12203,7 +12606,7 @@ function McpServerSettings() {
       </div>
 
       <h2 className="mt-8 text-lg font-semibold">Servidor</h2>
-      <Card className="mt-3 p-5">
+      {loading ? <McpServerCardSkeleton /> : <Card className="mt-3 p-5">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm font-medium">URL del servidor</p>
           <Badge variant={server?.status === "ready" ? "secondary" : "outline"}>
@@ -12235,7 +12638,7 @@ function McpServerSettings() {
             <RefreshCw className={cn(loading && "animate-spin")} /> Actualizar
           </UIButton>
         </div>
-      </Card>
+      </Card>}
 
       <h2 className="mt-8 text-lg font-semibold">Token de acceso</h2>
       <Card className="mt-3 p-5">
@@ -12266,7 +12669,7 @@ function McpServerSettings() {
             }}
           >{creating ? <RefreshCw className="animate-spin" /> : <Plus />} Crear token</UIButton>
         </div>
-        <div className="mt-4 divide-y rounded-md border">
+        {loading ? <McpCredentialsSkeleton /> : <div className="mt-4 divide-y rounded-md border">
           {credentials.filter((key) => !key.revoked_at).map((key) => (
             <div key={key.id} className="flex items-center gap-3 px-3 py-3 text-sm">
               <div className="min-w-0 flex-1"><p className="font-medium">{key.name}</p><p className="truncate font-mono text-xs text-muted-foreground">{key.prefix}… · {(key.scopes || []).join(", ")}</p></div>
@@ -12274,8 +12677,8 @@ function McpServerSettings() {
               <UIButton variant="outline" size="sm" onClick={async () => { try { await mcpApi(`/credentials/${key.id}/revoke`, { method: "POST" }); await reload(); } catch { setError("No se ha podido revocar la credencial."); } }}>Revocar</UIButton>
             </div>
           ))}
-          {!loading && !credentials.filter((key) => !key.revoked_at).length && <p className="px-3 py-4 text-sm text-muted-foreground">Todavía no hay tokens MCP.</p>}
-        </div>
+          {!credentials.filter((key) => !key.revoked_at).length && <p className="px-3 py-4 text-sm text-muted-foreground">Todavía no hay tokens MCP.</p>}
+        </div>}
       </Card>
 
       <h2 className="mt-8 text-lg font-semibold">Conecta tu cliente</h2>
@@ -12704,11 +13107,7 @@ function App() {
 
   if (isRemote && isPrivate && !profile) {
     if (!ready) {
-      return (
-        <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">
-          Cargando…
-        </div>
-      );
+      return <AppShellSkeleton />;
     }
     return (
       <>

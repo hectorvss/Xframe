@@ -1,5 +1,8 @@
 # Auditoría completa del agente — 20 julio 2026
 
+> Documento histórico anterior a las correcciones. Para el estado operativo actual,
+> ver `AUDITORIA-END-TO-END-2026-07-21.md`.
+
 Seis auditorías independientes (empalmes, dinero, seguridad, concurrencia,
 comportamiento, proveedores) sobre ~15.000 líneas de backend escritas por seis
 agentes en paralelo.

@@ -25,7 +25,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app import db
-from app.config import get_settings
 from app.memory.prompts import MEMORY_ONBOARDING_PROMPT, ONBOARDING_INTRO
 from app.memory.store import MemoryKind, ProjectMemoryStore
 
@@ -259,7 +258,6 @@ class MemoryOnboarding:
             return self._model
         from app import llm
 
-        settings = get_settings()
         self._model = llm.chat_model(
             "fast",
             max_tokens=4_096,

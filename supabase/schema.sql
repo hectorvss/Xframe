@@ -96,14 +96,17 @@ create index if not exists assets_project_idx on public.assets (project_id, crea
 create table if not exists public.brief_blocks (
   id          uuid primary key default gen_random_uuid(),
   project_id  uuid    not null references public.projects on delete cascade,
+  block_key   text    not null default gen_random_uuid()::text,
   position    integer not null,
   type        text    not null default 'text',
   text        text    not null default '',
   checked     boolean not null default false,
-  src         text
+  src         text,
+  asset_id    uuid references public.assets(id) on delete set null
 );
 
 create index if not exists brief_project_idx on public.brief_blocks (project_id, position);
+create unique index if not exists brief_blocks_project_key_uidx on public.brief_blocks(project_id, block_key);
 
 -- ----------------------------------------------------------------- canvas
 
@@ -121,7 +124,8 @@ create table if not exists public.canvas_nodes (
   title       text    not null default '',
   text        text    not null default '',
   thumb       text,
-  media       text
+  media       text,
+  asset_id    uuid references public.assets(id) on delete set null
 );
 
 create table if not exists public.canvas_edges (

@@ -30,6 +30,7 @@ es inocuo.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -357,7 +358,8 @@ def _format_brief(blocks: Sequence[BriefBlock], detail: ContextDetail) -> tuple[
     truncated = False
     for block in ordered:
         if block.type == "image" and block.src:
-            lines.append(f'<block type="image" src="{_attr(block.src)}"/>')
+            asset_attr = f' asset_id="{_attr(block.asset_id)}"' if block.asset_id else ""
+            lines.append(f'<block type="image"{asset_attr} src="{_attr(block.src)}"/>')
             continue
         text = block.text.strip()
         if not text:
@@ -470,7 +472,10 @@ def _format_production(ctx: XframeUIContext, detail: ContextDetail) -> str:
         or ctx.character_voices
         or ctx.audio_cues
         or ctx.audio_templates
+        or ctx.annotations
         or ctx.transitions
+        or ctx.resource_bindings
+        or ctx.production_manifests
     ):
         return ""
     lines: list[str] = []
@@ -492,6 +497,9 @@ def _format_production(ctx: XframeUIContext, detail: ContextDetail) -> str:
         for scene in ctx.screenplay[:30]:
             lines.append(
                 f'<scene id="{_attr(scene.get("id", ""))}" position="{scene.get("position", 0)}" '
+                f'timeline_start_ms="{scene.get("timeline_start_ms", 0)}" '
+                f'target_duration_ms="{_attr(scene.get("target_duration_ms", ""))}" '
+                f'shots="{_attr(",".join(scene.get("shot_ids", [])))}" '
                 f'title="{_attr(scene.get("title", ""))}">'
             )
             for item in scene.get("lines", []):
@@ -532,8 +540,20 @@ def _format_production(ctx: XframeUIContext, detail: ContextDetail) -> str:
             lines.append(
                 f'<cue id="{_attr(cue.get("id", ""))}" asset="{_attr(cue.get("asset_id", ""))}" '
                 f'kind="{_attr(cue.get("track_kind", ""))}" '
+                f'scene="{_attr(cue.get("scene_id", ""))}" '
+                f'shot="{_attr(cue.get("shot_id", ""))}" '
+                f'line="{_attr(cue.get("script_line_id", ""))}" '
                 f'range_ms="{cue.get("start_ms", 0)}-{cue.get("end_ms", 0)}" '
-                f'gain_db="{cue.get("gain_db", 0)}" role="{_attr(cue.get("narrative_role", ""))}"/>'
+                f'source_range_ms="{cue.get("source_in_ms", 0)}-'
+                f'{_attr(cue.get("source_out_ms", ""))}" '
+                f'gain_db="{cue.get("gain_db", 0)}" '
+                f'fade_ms="{cue.get("fade_in_ms", 0)}-{cue.get("fade_out_ms", 0)}" '
+                f'pan="{cue.get("pan", 0)}" loop="{str(bool(cue.get("loop", False))).lower()}" '
+                f'locked="{str(bool(cue.get("locked", False))).lower()}" '
+                f'approved="{str(bool(cue.get("approved", False))).lower()}" '
+                f'ducking_group="{_attr(cue.get("ducking_group", ""))}" '
+                f'ducking_db="{_attr(cue.get("ducking_db", ""))}" '
+                f'role="{_attr(cue.get("narrative_role", ""))}"/>'
             )
         lines.append("</audio_cues>")
     if ctx.audio_templates:
@@ -550,6 +570,19 @@ def _format_production(ctx: XframeUIContext, detail: ContextDetail) -> str:
                 f"{_body(_clip(str(template.get('prompt', '')), 700))}</sound_template>"
             )
         lines.append("</sound_templates>")
+    if ctx.annotations:
+        lines.append("<asset_annotations>")
+        for annotation in ctx.annotations[:120]:
+            lines.append(
+                f'<annotation id="{_attr(annotation.get("id", ""))}" '
+                f'asset_id="{_attr(annotation.get("asset_id", ""))}" '
+                f'kind="{_attr(annotation.get("kind", ""))}" '
+                f'time_ms="{_attr(annotation.get("time_ms", ""))}" '
+                f'status="{_attr(annotation.get("status", "open"))}" '
+                f'geometry="{_attr(json.dumps(annotation.get("geometry") or {}, separators=(",", ":")))}">'
+                f'{_body(_clip(str(annotation.get("body", "")), 500))}</annotation>'
+            )
+        lines.append("</asset_annotations>")
     if ctx.transitions:
         lines.append("<transitions>")
         for transition in ctx.transitions[:80]:
@@ -562,6 +595,37 @@ def _format_production(ctx: XframeUIContext, detail: ContextDetail) -> str:
                 f'status="{_attr(transition.get("status", ""))}"/>'
             )
         lines.append("</transitions>")
+    if ctx.resource_bindings:
+        lines.append("<resource_bindings>")
+        for binding in ctx.resource_bindings[:160]:
+            lines.append(
+                f'<binding id="{_attr(binding.get("id", ""))}" '
+                f'resource_type="{_attr(binding.get("resource_type", ""))}" '
+                f'resource_id="{_attr(binding.get("resource_id", ""))}" '
+                f'scope_type="{_attr(binding.get("scope_type", ""))}" '
+                f'scope_id="{_attr(binding.get("scope_id", ""))}" '
+                f'role="{_attr(binding.get("role", "reference"))}" '
+                f'range_ms="{_attr(binding.get("start_ms", ""))}-'
+                f'{_attr(binding.get("end_ms", ""))}" '
+                f'locked="{str(bool(binding.get("locked", True))).lower()}">'
+                f'{_body(_clip(str(binding.get("instructions", "")), 500))}</binding>'
+            )
+        lines.append("</resource_bindings>")
+    if ctx.production_manifests:
+        lines.append("<production_manifests>")
+        for manifest in ctx.production_manifests[:30]:
+            validation = manifest.get("validation") or {}
+            lines.append(
+                f'<manifest id="{_attr(manifest.get("id", ""))}" '
+                f'scene_id="{_attr(manifest.get("scene_id", ""))}" '
+                f'version="{manifest.get("version", 0)}" '
+                f'status="{_attr(manifest.get("status", ""))}" '
+                f'valid="{str(bool(validation.get("valid"))).lower()}" '
+                f'fingerprint="{_attr(manifest.get("fingerprint", ""))}" '
+                f'execution_fingerprint="{_attr(manifest.get("execution_fingerprint", ""))}" '
+                f'completed_at="{_attr(manifest.get("completed_at", ""))}"/>'
+            )
+        lines.append("</production_manifests>")
     return P.PRODUCTION_TEMPLATE.format(body="\n".join(lines))
 
 
@@ -954,7 +1018,10 @@ class XframeContextManager:
             character_voices=production.get("character_voices", []),
             audio_cues=production.get("audio_cues", []),
             audio_templates=production.get("audio_templates", []),
+            annotations=production.get("annotations", []),
             transitions=production.get("transitions", []),
+            resource_bindings=production.get("resource_bindings", []),
+            production_manifests=production.get("production_manifests", []),
             gen_settings=self._build_gen_settings(project, profile),
             credits=int(profile.get("credits", 0) or 0),
             total_assets=total_assets,
@@ -979,15 +1046,19 @@ class XframeContextManager:
         (
             scene_rows,
             line_rows,
+            scene_shot_rows,
             voice_rows,
             cue_rows,
             transition_rows,
             asset_link_rows,
             audio_template_rows,
+            resource_binding_rows,
+            annotation_rows,
+            production_manifest_rows,
         ) = await asyncio.gather(
             db.fetch(
                 """select id, position, title, setting, time_of_day, summary,
-                          dramatic_intent, target_duration_ms, status
+                          dramatic_intent, timeline_start_ms, target_duration_ms, status
                      from public.script_scenes where project_id=$1::uuid
                     order by position""",
                 self._project_id,
@@ -1004,6 +1075,12 @@ class XframeContextManager:
                 self._project_id,
             ),
             db.fetch(
+                """select scene_id, shot_id, position
+                     from public.scene_shots where project_id=$1::uuid
+                    order by scene_id, position""",
+                self._project_id,
+            ),
+            db.fetch(
                 """select cv.element_id, element.name as character_name,
                           cv.voice_profile_id, vp.name as voice_name, vp.provider,
                           vp.provider_voice_id, vp.language, vp.accent, vp.description,
@@ -1015,7 +1092,7 @@ class XframeContextManager:
                 self._project_id,
             ),
             db.fetch(
-                """select id, asset_id, shot_id, script_line_id, track_kind, start_ms,
+                """select id, asset_id, scene_id, shot_id, script_line_id, track_kind, start_ms,
                           end_ms, source_in_ms, source_out_ms, gain_db, fade_in_ms,
                           fade_out_ms, pan, loop, locked, approved, ducking_group,
                           ducking_db, priority, narrative_role, context_tags
@@ -1048,6 +1125,26 @@ class XframeContextManager:
                     order by updated_at desc""",
                 self._project_id,
             ),
+            db.fetch(
+                """select id, resource_type, resource_id, scope_type, scope_id, role,
+                          start_ms, end_ms, instructions, locked, priority, metadata
+                     from public.resource_bindings where project_id=$1::uuid
+                    order by priority desc, created_at""",
+                self._project_id,
+            ),
+            db.fetch(
+                """select id,asset_id,kind,body,time_ms,geometry,color,status,created_at
+                     from public.asset_annotations where project_id=$1::uuid
+                    order by created_at desc limit 200""",
+                self._project_id,
+            ),
+            db.fetch(
+                """select id, scene_id, version, title, status, validation, fingerprint,
+                          execution_fingerprint,approved_at,completed_at,updated_at
+                     from public.production_manifests
+                     where project_id=$1::uuid order by scene_id,version desc""",
+                self._project_id,
+            ),
         )
         lines_by_scene: dict[str, list[dict[str, Any]]] = {}
         for row in line_rows:
@@ -1064,10 +1161,14 @@ class XframeContextManager:
                     data[key] = str(data[key])
             lines_by_scene.setdefault(data["scene_id"], []).append(data)
         screenplay: list[dict[str, Any]] = []
+        shots_by_scene: dict[str, list[str]] = {}
+        for row in scene_shot_rows:
+            shots_by_scene.setdefault(str(row["scene_id"]), []).append(str(row["shot_id"]))
         for row in scene_rows:
             data = dict(row)
             data["id"] = str(data["id"])
             data["lines"] = lines_by_scene.get(data["id"], [])
+            data["shot_ids"] = shots_by_scene.get(data["id"], [])
             screenplay.append(data)
 
         def stringify(rows: Any, uuid_fields: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -1086,11 +1187,20 @@ class XframeContextManager:
                 asset_link_rows, ("id", "scene_id", "script_line_id", "asset_id")
             ),
             "character_voices": stringify(voice_rows, ("element_id", "voice_profile_id")),
-            "audio_cues": stringify(cue_rows, ("id", "asset_id", "shot_id", "script_line_id")),
+            "audio_cues": stringify(
+                cue_rows, ("id", "asset_id", "scene_id", "shot_id", "script_line_id")
+            ),
             "audio_templates": stringify(audio_template_rows, ("id",)),
+            "annotations": stringify(annotation_rows, ("id", "asset_id")),
             "transitions": stringify(
                 transition_rows,
                 ("id", "from_asset_id", "to_asset_id", "generated_asset_id"),
+            ),
+            "resource_bindings": stringify(
+                resource_binding_rows, ("id", "resource_id", "scope_id")
+            ),
+            "production_manifests": stringify(
+                production_manifest_rows, ("id", "scene_id")
             ),
         }
 
@@ -1184,7 +1294,7 @@ class XframeContextManager:
     async def _load_brief(self) -> list[BriefBlock]:
         rows = await db.fetch(
             """
-            select id, position, type, text, checked, src
+            select id, position, type, text, checked, src, asset_id
               from public.brief_blocks
              where project_id = $1::uuid
              order by position
@@ -1199,6 +1309,7 @@ class XframeContextManager:
                 text=r["text"] or "",
                 checked=bool(r["checked"]),
                 src=r["src"],
+                asset_id=str(r["asset_id"]) if r["asset_id"] else None,
             )
             for r in rows
         ]
@@ -1212,9 +1323,9 @@ class XframeContextManager:
         """
         rows = await db.fetch(
             """
-            select id, type, x, y, title, text, position, spec, shot_status
+            select id, type, x, y, title, text, position, spec, shot_status, asset_id
               from public.canvas_nodes
-             where project_id = $1::uuid
+             where project_id = $1::uuid and type = 'shot'
              order by position nulls last, y, x
             """,
             self._project_id,
@@ -1222,6 +1333,8 @@ class XframeContextManager:
         shots: list[ShotContext] = []
         for r in rows:
             spec = dict(r["spec"] or {})
+            if r["asset_id"] and "asset_id" not in spec:
+                spec["asset_id"] = str(r["asset_id"])
             camera_raw = spec.get("camera") or {}
             shots.append(
                 ShotContext(
@@ -1422,6 +1535,7 @@ class XframeContextManager:
         *,
         open_tab: OpenTab | str = OpenTab.ASSETS,
         selected_asset_ids: Sequence[str] | None = None,
+        resource_refs: Sequence[dict[str, Any]] | None = None,
         include_memory: bool = True,
     ) -> list[HumanMessage]:
         """
@@ -1436,6 +1550,16 @@ class XframeContextManager:
 
         candidates = [context_message(text, kind="ui")]
 
+        if explicit := await self._resolve_resource_refs(resource_refs or []):
+            candidates.append(
+                context_message(
+                    "<explicit_resources>\n"
+                    + json.dumps(explicit, ensure_ascii=False, separators=(",", ":"))
+                    + "\n</explicit_resources>",
+                    kind="resources",
+                )
+            )
+
         if include_memory:
             from app.memory.store import ProjectMemoryStore
 
@@ -1443,6 +1567,59 @@ class XframeContextManager:
                 candidates.append(context_message(memory_text, kind="memory"))
 
         return deduplicate_context_messages(existing_messages, candidates)
+
+    async def _resolve_resource_refs(
+        self, refs: Sequence[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Valida cada referencia @ contra el proyecto antes de mostrársela al LLM."""
+        tables = {
+            "asset": ("assets", "name"),
+            "element": ("assets", "name"),
+            "scene": ("script_scenes", "title"),
+            "line": ("script_lines", "text"),
+            "shot": ("canvas_nodes", "title"),
+            "canvas": ("canvas_nodes", "title"),
+            "voice": ("voice_profiles", "name"),
+            "cue": ("audio_cues", "track_kind"),
+            "sound_template": ("audio_templates", "name"),
+            "transition": ("timeline_transitions", "signature"),
+            "manifest": ("production_manifests", "title"),
+            "annotation": ("asset_annotations", "body"),
+            "operation": ("asset_operations", "operation"),
+            "report": ("quality_reports", "check_type"),
+            "brief": ("brief_blocks", "text"),
+        }
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for ref in refs[:100]:
+            kind = str(ref.get("type", ""))
+            if kind in tables and ref.get("id"):
+                grouped.setdefault(kind, []).append(dict(ref))
+
+        output: list[dict[str, Any]] = []
+        for kind, items in grouped.items():
+            table, label_column = tables[kind]
+            ids = list(dict.fromkeys(str(item["id"]) for item in items))
+            rows = await db.fetch(
+                f"select id, {label_column} as label from public.{table} "
+                "where project_id=$1::uuid and id=any($2::uuid[])",
+                self._project_id,
+                ids,
+            )
+            valid = {str(row["id"]): str(row["label"] or "") for row in rows}
+            for item in items:
+                item_id = str(item["id"])
+                if item_id not in valid:
+                    continue
+                output.append(
+                    {
+                        "type": kind,
+                        "id": item_id,
+                        "label": valid[item_id],
+                        "mention": item.get("mention"),
+                        "scope": item.get("scope") or {},
+                    }
+                )
+        return output
 
 
 def deduplicate_context_messages(

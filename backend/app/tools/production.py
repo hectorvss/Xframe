@@ -73,10 +73,11 @@ class CreateVoiceProfileTool(SnapshotTool):
     args_schema: type[BaseModel] = ReusableVoiceProfileArgs
     description: str = (
         "Create or update a reusable project voice in the Audio > Voices library. "
-        "Use it when the user asks for a narrator, character or brand voice before "
+        "USE THIS when the user asks for a narrator, character or brand voice before "
         "assigning it to a screenplay character. A provider voice ID makes the profile "
         "ready for synthesis; without one it remains an explicit draft, never pretend it "
-        "can already speak. Cloned or uploaded voices require verified consent."
+        "can already speak. DO NOT claim a draft can synthesize or invent a provider "
+        "voice ID. Cloned or uploaded voices require verified consent."
     )
 
     async def _arun_impl(
@@ -180,6 +181,7 @@ class AssignCharacterVoiceTool(SnapshotTool):
                 "Cloned or uploaded voices require consent_status='verified' before they "
                 "can be assigned. Ask the user to provide/confirm consent evidence."
             )
+        status = "ready" if provider_voice_id else "draft"
 
         async with db.transaction() as conn:
             row = await conn.fetchrow(
@@ -187,7 +189,7 @@ class AssignCharacterVoiceTool(SnapshotTool):
                 insert into public.voice_profiles
                   (project_id, name, provider, provider_voice_id, source, language,
                    accent, description, settings, pronunciation_rules, consent_status, status)
-                values ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,'ready')
+                values ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12)
                 on conflict (project_id, name) do update set
                   provider=excluded.provider,
                   provider_voice_id=excluded.provider_voice_id,
@@ -198,8 +200,8 @@ class AssignCharacterVoiceTool(SnapshotTool):
                   settings=excluded.settings,
                   pronunciation_rules=excluded.pronunciation_rules,
                   consent_status=excluded.consent_status,
-                  status='ready'
-                returning id
+                  status=excluded.status
+                returning id,status
                 """,
                 self.ctx.project_id,
                 profile_name,
@@ -212,6 +214,7 @@ class AssignCharacterVoiceTool(SnapshotTool):
                 performance_defaults or {},
                 pronunciation_rules or [],
                 consent_status,
+                status,
             )
             voice_id = str(row["id"])
             await conn.execute(
@@ -236,12 +239,14 @@ class AssignCharacterVoiceTool(SnapshotTool):
                 performance_defaults or {},
             )
         return (
-            f"Voice '{profile_name}' is now the default for @{character_name}.",
+            f"Voice '{profile_name}' is now the default for @{character_name} "
+            f"and is {row['status']}.",
             {
                 "kind": "voice_profile",
                 "voice_profile_id": voice_id,
                 "element_id": element.id,
                 "character_name": character_name,
+                "status": row["status"],
             },
         )
 
@@ -269,6 +274,11 @@ class ScreenplaySceneInput(BaseModel):
     time_of_day: str = ""
     summary: str = ""
     dramatic_intent: str = ""
+    timeline_start_ms: int | None = Field(
+        None,
+        ge=0,
+        description="Absolute project offset. Omit to follow the preceding scene.",
+    )
     target_duration_ms: int | None = Field(None, gt=0)
     lines: list[ScreenplayLineInput] = Field(default_factory=list)
 
@@ -304,6 +314,86 @@ class CreateScreenplayTool(SnapshotTool):
             scene if isinstance(scene, ScreenplaySceneInput) else ScreenplaySceneInput.model_validate(scene)
             for scene in scenes
         ]
+        shot_scene_indexes: dict[str, int] = {}
+        for scene_index, scene in enumerate(parsed):
+            for line in scene.lines:
+                if not line.shot_id:
+                    continue
+                previous = shot_scene_indexes.setdefault(line.shot_id, scene_index)
+                if previous != scene_index:
+                    raise XframeToolRetryableError(
+                        f"Shot {line.shot_id} is linked to more than one scene. A production "
+                        "shot has one canonical scene; duplicate it or choose one scene."
+                    )
+        element_ids = list(
+            dict.fromkeys(
+                line.speaker_element_id
+                for scene in parsed
+                for line in scene.lines
+                if line.speaker_element_id
+            )
+        )
+        voice_ids = list(
+            dict.fromkeys(
+                line.voice_profile_id
+                for scene in parsed
+                for line in scene.lines
+                if line.voice_profile_id
+            )
+        )
+        referenced_shot_ids = list(shot_scene_indexes)
+        if element_ids:
+            rows = await db.fetch(
+                """select id from public.assets where project_id=$1::uuid
+                    and id=any($2::uuid[]) and role is not null""",
+                self.ctx.project_id,
+                element_ids,
+            )
+            valid = {str(row["id"]) for row in rows}
+            missing = [item for item in element_ids if item not in valid]
+            if missing:
+                raise XframeToolRetryableError(
+                    "Unknown character Element ids: " + ", ".join(missing)
+                )
+        if voice_ids:
+            rows = await db.fetch(
+                """select id from public.voice_profiles where project_id=$1::uuid
+                    and id=any($2::uuid[])""",
+                self.ctx.project_id,
+                voice_ids,
+            )
+            valid = {str(row["id"]) for row in rows}
+            missing = [item for item in voice_ids if item not in valid]
+            if missing:
+                raise XframeToolRetryableError(
+                    "Unknown voice profile ids: " + ", ".join(missing)
+                )
+        if referenced_shot_ids:
+            rows = await db.fetch(
+                """select id from public.canvas_nodes where project_id=$1::uuid
+                    and id=any($2::uuid[]) and type='shot'""",
+                self.ctx.project_id,
+                referenced_shot_ids,
+            )
+            valid = {str(row["id"]) for row in rows}
+            missing = [item for item in referenced_shot_ids if item not in valid]
+            if missing:
+                raise XframeToolRetryableError(
+                    "Unknown production shot ids: " + ", ".join(missing)
+                )
+            if not replace_current:
+                memberships = await db.fetch(
+                    """select shot_id from public.scene_shots where project_id=$1::uuid
+                        and shot_id=any($2::uuid[])""",
+                    self.ctx.project_id,
+                    referenced_shot_ids,
+                )
+                if memberships:
+                    raise XframeToolRetryableError(
+                        "Appending a screenplay cannot silently move shots already assigned "
+                        "to another scene. Unassign or duplicate these shots first: "
+                        + ", ".join(str(row["shot_id"]) for row in memberships)
+                    )
         snapshot: list[dict[str, Any]] = []
         scene_ids: list[str] = []
         cast_ids: set[str] = set()
@@ -312,16 +402,55 @@ class CreateScreenplayTool(SnapshotTool):
         async with db.transaction() as conn:
             if replace_current:
                 await conn.execute(
+                    """delete from public.resource_bindings where project_id=$1::uuid
+                        and scope_type in ('scene','line')""",
+                    self.ctx.project_id,
+                )
+                await conn.execute(
                     "delete from public.script_scenes where project_id=$1::uuid",
                     self.ctx.project_id,
                 )
-            for scene_position, scene in enumerate(parsed):
+                base_position = 0
+                next_timeline_start_ms = 0
+            else:
+                base_position = int(
+                    await conn.fetchval(
+                        """select coalesce(max(position),-1)+1 from public.script_scenes
+                            where project_id=$1::uuid""",
+                        self.ctx.project_id,
+                    )
+                )
+                next_timeline_start_ms = int(
+                    await conn.fetchval(
+                        """select coalesce(max(timeline_start_ms+
+                                   coalesce(target_duration_ms,0)),0)
+                             from public.script_scenes where project_id=$1::uuid""",
+                        self.ctx.project_id,
+                    )
+                )
+            for scene_offset, scene in enumerate(parsed):
+                scene_position = base_position + scene_offset
+                timeline_start_ms = (
+                    scene.timeline_start_ms
+                    if scene.timeline_start_ms is not None
+                    else next_timeline_start_ms
+                )
+                inferred_duration_ms = scene.target_duration_ms or sum(
+                    (line.target_duration_ms or 0)
+                    + line.pause_before_ms
+                    + line.pause_after_ms
+                    for line in scene.lines
+                )
+                next_timeline_start_ms = max(
+                    next_timeline_start_ms,
+                    timeline_start_ms + inferred_duration_ms,
+                )
                 scene_row = await conn.fetchrow(
                     """
                     insert into public.script_scenes
                       (project_id, position, title, setting, time_of_day, summary,
-                       dramatic_intent, target_duration_ms)
-                    values ($1::uuid,$2,$3,$4,$5,$6,$7,$8)
+                       dramatic_intent, timeline_start_ms, target_duration_ms)
+                    values ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9)
                     returning id
                     """,
                     self.ctx.project_id,
@@ -331,6 +460,7 @@ class CreateScreenplayTool(SnapshotTool):
                     scene.time_of_day,
                     scene.summary,
                     scene.dramatic_intent,
+                    timeline_start_ms,
                     scene.target_duration_ms,
                 )
                 scene_id = str(scene_row["id"])
@@ -396,8 +526,25 @@ class CreateScreenplayTool(SnapshotTool):
                         shot_ids.append(line.shot_id)
                 snapshot.append(
                     scene.model_dump(mode="json", exclude={"lines"})
-                    | {"id": scene_id, "position": scene_position, "lines": lines_snapshot}
+                    | {
+                        "id": scene_id,
+                        "position": scene_position,
+                        "timeline_start_ms": timeline_start_ms,
+                        "lines": lines_snapshot,
+                    }
                 )
+                canonical_shots = list(
+                    dict.fromkeys(line.shot_id for line in scene.lines if line.shot_id)
+                )
+                if canonical_shots:
+                    await conn.executemany(
+                        """insert into public.scene_shots(project_id,scene_id,shot_id,position)
+                            values ($1::uuid,$2::uuid,$3::uuid,$4)""",
+                        [
+                            (self.ctx.project_id, scene_id, shot_id, position)
+                            for position, shot_id in enumerate(canonical_shots)
+                        ],
+                    )
 
         blocks: list[Any] = [TextBlock(text=scene.title, heading=True) for scene in parsed]
         blocks.extend(ShotRefBlock(shot_id=shot_id) for shot_id in dict.fromkeys(shot_ids))
@@ -457,6 +604,18 @@ class CreateAudioPlanTool(SnapshotTool):
         **_: Any,
     ) -> tuple[str, Any]:
         parsed = [cue if isinstance(cue, AudioCueSpec) else AudioCueSpec.model_validate(cue) for cue in cues]
+        from app.tools.production_crud import _validated_audio_scope
+
+        scoped: list[AudioCueSpec] = []
+        for cue in parsed:
+            scene_id = await _validated_audio_scope(
+                self.ctx.project_id,
+                scene_id=cue.scene_id,
+                shot_id=cue.shot_id,
+                script_line_id=cue.script_line_id,
+            )
+            scoped.append(cue.model_copy(update={"scene_id": scene_id}))
+        parsed = scoped
         spec = AudioMixSpec(
             duration_ms=duration_ms,
             target_lufs=target_lufs,
@@ -475,11 +634,21 @@ class CreateAudioPlanTool(SnapshotTool):
                 self.ctx.project_id,
                 asset_ids,
             )
-            valid = {str(row["id"]) for row in rows if "audio" in str(row["type"]).lower()}
+            # MP4 templates are valid timeline sources when they carry a useful audio
+            # stream; the deterministic assembler extracts that stream.  Accept them
+            # here and let the media probe reject a file that is genuinely silent.
+            valid = {
+                str(row["id"])
+                for row in rows
+                if any(
+                    token in str(row["type"] or "").lower()
+                    for token in ("audio", "sound", "sonido", "music", "música", "video", "vídeo", "mp4")
+                )
+            }
             missing = [asset_id for asset_id in asset_ids if asset_id not in valid]
             if missing:
                 raise XframeToolRetryableError(
-                    "These cues do not reference ready audio assets in this project: "
+                    "These cues do not reference ready audio or audiovisual assets in this project: "
                     + ", ".join(missing)
                 )
 
@@ -495,16 +664,17 @@ class CreateAudioPlanTool(SnapshotTool):
                 row = await conn.fetchrow(
                     """
                     insert into public.audio_cues
-                      (project_id, asset_id, shot_id, script_line_id, track_kind, start_ms,
+                      (project_id, asset_id, scene_id, shot_id, script_line_id, track_kind, start_ms,
                        end_ms, source_in_ms, source_out_ms, gain_db, fade_in_ms, fade_out_ms,
                        pan, loop, locked, approved, ducking_group, ducking_db, priority,
                        narrative_role, context_tags)
-                    values ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,
-                            $12,$13,$14,$15,$16,$17,$18,$19,$20,$21::text[])
+                    values ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,$11,$12,
+                            $13,$14,$15,$16,$17,$18,$19,$20,$21,$22::text[])
                     returning id
                     """,
                     self.ctx.project_id,
                     cue.asset_id,
+                    cue.scene_id,
                     cue.shot_id,
                     cue.script_line_id,
                     cue.track_kind.value,
@@ -577,7 +747,9 @@ class ProfileAudioAssetTool(SnapshotTool):
         profile = MusicProfile.model_validate(kwargs)
         exists = await db.fetchval(
             """select 1 from public.assets where id=$1::uuid and project_id=$2::uuid
-                  and type='audio' and status='ready'""",
+                  and (lower(type) like '%audio%' or lower(type) like '%sound%'
+                       or lower(type) like '%sonido%' or lower(type) like '%music%')
+                  and status='ready'""",
             profile.asset_id,
             self.ctx.project_id,
         )

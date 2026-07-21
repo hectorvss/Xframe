@@ -71,6 +71,7 @@ create table if not exists public.script_scenes (
   time_of_day     text not null default '',
   summary         text not null default '',
   dramatic_intent text not null default '',
+  timeline_start_ms integer not null default 0 check (timeline_start_ms >= 0),
   target_duration_ms integer,
   status          text not null default 'draft'
                   check (status in ('draft','approved','locked')),

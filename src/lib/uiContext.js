@@ -96,7 +96,7 @@ function toShotContext(node, assetsByShot) {
   const camera = spec.camera ?? {};
 
   return {
-    id: String(node.id),
+    id: String(node.db_id ?? node.id),
     position: node.position ?? null,
     type: node.type ?? "shot",
     title: node.title ?? "",
@@ -110,7 +110,10 @@ function toShotContext(node, assetsByShot) {
       aperture: camera.aperture ?? null,
     },
     element_names: node.element_names ?? [],
-    asset: toAssetContext(assetsByShot.get(String(node.id))),
+    asset: toAssetContext(
+      assetsByShot.get(String(node.db_id ?? node.id)) ||
+        assetsByShot.get(String(node.id)),
+    ),
     x: Number(node.x) || 0,
     y: Number(node.y) || 0,
   };
@@ -155,10 +158,12 @@ export function buildUIContext({
   canvas,
   assets = [],
   selectedIds = [],
+  resourceRefs = [],
   genSettings,
   credits = 0,
 }) {
   const nodes = (canvas?.nodes ?? []).slice();
+  const shots = nodes.filter((node) => node.type === "shot");
 
   // Índice plano → asset, para colgar el render de cada plano sin recorrer la
   // lista entera por nodo.
@@ -178,15 +183,17 @@ export function buildUIContext({
     open_tab: OPEN_TABS.includes(tab) ? tab : "assets",
 
     brief: (brief ?? []).map((block, position) => ({
-      id: String(block.id ?? position),
+      // The UI key is intentionally distinct from the immutable DB UUID.
+      id: String(block.db_id ?? block.id ?? position),
       position: block.position ?? position,
       type: block.type ?? "text",
       text: block.text ?? "",
       checked: Boolean(block.checked),
       src: block.src ?? null,
+      asset_id: block.asset_id ?? null,
     })),
 
-    timeline: nodes.sort(byNarrativeOrder).map((node) => toShotContext(node, assetsByShot)),
+    timeline: shots.sort(byNarrativeOrder).map((node) => toShotContext(node, assetsByShot)),
 
     elements: assets.filter((a) => a.role).map(toElementContext),
 
@@ -194,6 +201,16 @@ export function buildUIContext({
     selected_assets: assets
       .filter((a) => selected.has(String(a.id)))
       .map(toAssetContext),
+    // El backend reconstruye el contexto desde BD y necesita IDs, no la copia
+    // semiserializada. Se mantienen ambos campos para clientes antiguos.
+    selected_asset_ids: [...selected],
+    resource_refs: resourceRefs.map(({ type, id, label, mention, ...scope }) => ({
+      type,
+      id: String(id),
+      label,
+      mention,
+      scope,
+    })),
 
     gen_settings: toGenSettings(genSettings),
     credits,

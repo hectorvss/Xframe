@@ -229,7 +229,19 @@ def _tool_classes() -> list[type[SnapshotTool]]:
     Importación perezosa: los módulos de tools importan de aquí (`SnapshotTool`,
     `literal_of`), así que importarlos arriba sería un ciclo.
     """
-    from app.tools import brief, elements, generation, meta, production, project, shots
+    from app.tools import (
+        brief,
+        canvas,
+        elements,
+        generation,
+        manifests,
+        meta,
+        production,
+        production_crud,
+        project,
+        quality,
+        shots,
+    )
 
     return [
         # Lectura y planificación
@@ -239,6 +251,9 @@ def _tool_classes() -> list[type[SnapshotTool]]:
         project.EstimateCostTool,
         brief.WriteBriefTool,
         brief.UpdateBriefBlockTool,
+        brief.AppendBriefBlockTool,
+        brief.DeleteBriefBlockTool,
+        *canvas.CANVAS_TOOL_CLASSES,
         shots.CreateShotTool,
         shots.UpdateShotTool,
         shots.ReorderShotsTool,
@@ -246,11 +261,15 @@ def _tool_classes() -> list[type[SnapshotTool]]:
         elements.DefineElementTool,
         # Structured screenplay, cast, sound and edit intent
         *production.PRODUCTION_TOOL_CLASSES,
+        *production_crud.PRODUCTION_CRUD_TOOL_CLASSES,
+        *manifests.MANIFEST_TOOL_CLASSES,
+        *quality.QUALITY_TOOL_CLASSES,
         # Generación
         generation.GenerateImageTool,
         generation.GenerateVideoTool,
         generation.GenerateShotBatchTool,
         generation.GenerateAudioTool,
+        generation.ExecuteAssetOperationTool,
         generation.GenerateLipsyncTool,
         generation.GenerateTransitionTool,
         # `UpscaleAssetTool` retirada: no hay modelo de upscale en `gen_models` ni

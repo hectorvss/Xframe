@@ -11,6 +11,7 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -352,6 +353,8 @@ export function useProjectData(projectId) {
   const [brief, setBrief] = useState(null);
   const [canvas, setCanvas] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const briefWriteChain = useRef(Promise.resolve());
+  const canvasWriteChain = useRef(Promise.resolve());
 
   // `reloadNonce` fuerza una recarga completa bajo demanda (el botón de refrescar del
   // editor): mismo camino que la carga inicial, así que trae TODO — assets, mensajes,
@@ -478,7 +481,11 @@ export function useProjectData(projectId) {
   const saveBrief = useCallback(
     (blocks) => {
       setBrief(blocks);
-      db.saveBrief(projectId, blocks);
+      // Text inputs emit writes quickly. Preserve order so an older network
+      // response cannot overwrite the latest document state.
+      briefWriteChain.current = briefWriteChain.current
+        .catch(() => undefined)
+        .then(() => db.saveBrief(projectId, blocks));
     },
     [projectId],
   );
@@ -486,10 +493,31 @@ export function useProjectData(projectId) {
   const saveCanvas = useCallback(
     (next) => {
       setCanvas(next);
-      db.saveCanvas(projectId, next);
+      // Los eventos de pointermove pueden producir decenas de escrituras. Se ejecutan
+      // en orden para que una respuesta lenta con coordenadas antiguas no gane a la
+      // última posición que ve el usuario.
+      canvasWriteChain.current = canvasWriteChain.current
+        .catch(() => undefined)
+        .then(() => db.saveCanvas(projectId, next));
     },
     [projectId],
   );
+
+  const deleteCanvasNode = useCallback(
+    (nodeKey) => {
+      canvasWriteChain.current = canvasWriteChain.current
+        .catch(() => undefined)
+        .then(() => db.deleteCanvasNode(projectId, nodeKey));
+    },
+    [projectId],
+  );
+
+  const clearCanvas = useCallback(() => {
+    setCanvas({ nodes: [], edges: [] });
+    canvasWriteChain.current = canvasWriteChain.current
+      .catch(() => undefined)
+      .then(() => db.clearCanvas(projectId));
+  }, [projectId]);
 
   return {
     loaded,
@@ -505,5 +533,7 @@ export function useProjectData(projectId) {
     saveBrief,
     canvas,
     saveCanvas,
+    deleteCanvasNode,
+    clearCanvas,
   };
 }

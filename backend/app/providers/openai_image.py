@@ -59,6 +59,7 @@ se toca el worker desde aquí.
 from __future__ import annotations
 
 import base64
+import io
 from decimal import Decimal
 from typing import Any
 
@@ -233,14 +234,51 @@ class OpenAIImageAdapter(HttpAdapter):
         red— y se deshace el base64 porque aquí hacen falta los bytes.
         """
         files: list[tuple[str, tuple[str, bytes, str]]] = []
+        source_bytes: bytes | None = None
         for index, url in enumerate(references):
             mime, encoded = await self.fetch_image_inline(url)
+            decoded = base64.b64decode(encoded)
+            if index == 0:
+                source_bytes = decoded
             extension = mime.split("/")[-1] or "png"
             files.append(
                 # `image[]` y no `image`: con varias referencias el nombre en singular
                 # solo transporta la primera, y las demás se pierden sin ningún error.
-                ("image[]", (f"reference_{index}.{extension}", base64.b64decode(encoded), mime))
+                ("image[]", (f"reference_{index}.{extension}", decoded, mime))
             )
+
+        geometries = req.extra.get("mask_geometry")
+        if source_bytes and isinstance(geometries, list) and geometries:
+            from PIL import Image, ImageDraw
+
+            with Image.open(io.BytesIO(source_bytes)) as source_image:
+                width, height = source_image.size
+            # Opaque pixels are preserved; transparent pixels are regenerated.
+            mask = Image.new("RGBA", (width, height), (255, 255, 255, 255))
+            draw = ImageDraw.Draw(mask)
+            for geometry in geometries:
+                if not isinstance(geometry, dict):
+                    continue
+                if geometry.get("type") == "rect":
+                    x = max(0.0, min(1.0, float(geometry.get("x", 0))))
+                    y = max(0.0, min(1.0, float(geometry.get("y", 0))))
+                    w = max(0.0, min(1.0 - x, float(geometry.get("width", 0))))
+                    h = max(0.0, min(1.0 - y, float(geometry.get("height", 0))))
+                    draw.rectangle(
+                        (int(x * width), int(y * height), int((x + w) * width), int((y + h) * height)),
+                        fill=(0, 0, 0, 0),
+                    )
+                elif geometry.get("type") == "drawing":
+                    points = [
+                        (int(float(point["x"]) * width), int(float(point["y"]) * height))
+                        for point in geometry.get("points", [])
+                        if isinstance(point, dict) and "x" in point and "y" in point
+                    ]
+                    if len(points) > 1:
+                        draw.line(points, fill=(0, 0, 0, 0), width=max(8, int(width * 0.02)))
+            buffer = io.BytesIO()
+            mask.save(buffer, format="PNG")
+            files.append(("mask", ("mask.png", buffer.getvalue(), "image/png")))
 
         # En multipart todo valor es texto. Los booleanos y enteros del JSON se
         # convierten aquí; mandarlos como tal produce un 400 poco descriptivo.

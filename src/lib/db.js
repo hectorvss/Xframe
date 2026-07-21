@@ -75,11 +75,14 @@ const emptyState = () => ({
   messages: [],
   script_scenes: [],
   script_lines: [],
+  scene_shots: [],
   script_asset_links: [],
   voice_profiles: [],
   character_voices: [],
   audio_cues: [],
   audio_templates: [],
+  resource_bindings: [],
+  production_manifests: [],
   asset_annotations: [],
   asset_operations: [],
   timeline_transitions: [],
@@ -244,6 +247,120 @@ function createSupabaseDriver() {
 // Con credenciales configuradas manda Supabase; si no, el driver local
 // mantiene la app usable sin backend.
 const DRIVER = hasSupabase ? createSupabaseDriver() : createLocalDriver();
+
+const AUDIO_TRACK_KINDS = new Set([
+  "dialogue",
+  "voiceover",
+  "music",
+  "sfx",
+  "ambience",
+  "native",
+]);
+
+function validateAudioCueValues(cue) {
+  const integerFields = [
+    "start_ms",
+    "end_ms",
+    "source_in_ms",
+    "fade_in_ms",
+    "fade_out_ms",
+  ];
+  for (const field of integerFields) {
+    if (!Number.isInteger(Number(cue[field])) || Number(cue[field]) < 0) {
+      throw new Error(`${field} debe ser un número entero no negativo.`);
+    }
+  }
+  if (!AUDIO_TRACK_KINDS.has(cue.track_kind))
+    throw new Error("La pista de audio no es válida.");
+  if (Number(cue.end_ms) <= Number(cue.start_ms))
+    throw new Error("El final del clip debe estar después de su inicio.");
+  if (
+    cue.source_out_ms !== null &&
+    cue.source_out_ms !== undefined &&
+    (!Number.isInteger(Number(cue.source_out_ms)) ||
+      Number(cue.source_out_ms) <= Number(cue.source_in_ms))
+  )
+    throw new Error("La salida de fuente debe estar después de su entrada.");
+  if (Number(cue.pan) < -1 || Number(cue.pan) > 1)
+    throw new Error("El paneo debe estar entre -1 y 1.");
+  if (Number(cue.gain_db) < -60 || Number(cue.gain_db) > 24)
+    throw new Error("La ganancia debe estar entre -60 y 24 dB.");
+  if (
+    cue.ducking_db !== null &&
+    cue.ducking_db !== undefined &&
+    (Number(cue.ducking_db) < -60 || Number(cue.ducking_db) > 0)
+  )
+    throw new Error("La reducción de ducking debe estar entre -60 y 0 dB.");
+  return cue;
+}
+
+async function validateAudioCueRelations(projectId, cue) {
+  let sceneId = cue.scene_id || null;
+  if (cue.script_line_id) {
+    const [line] = await DRIVER.select("script_lines", {
+      project_id: projectId,
+      id: cue.script_line_id,
+    });
+    if (!line) throw new Error("La línea de guion seleccionada no pertenece al proyecto.");
+    if (sceneId && String(sceneId) !== String(line.scene_id))
+      throw new Error("La línea de guion pertenece a otra escena.");
+    sceneId ||= line.scene_id;
+    if (
+      cue.shot_id &&
+      line.shot_id &&
+      String(cue.shot_id) !== String(line.shot_id)
+    )
+      throw new Error("La línea de guion está vinculada a otro plano.");
+  }
+  if (cue.shot_id) {
+    const [membership] = await DRIVER.select("scene_shots", {
+      project_id: projectId,
+      shot_id: cue.shot_id,
+    });
+    if (!membership)
+      throw new Error("El plano seleccionado no está asignado a ninguna escena.");
+    if (sceneId && String(sceneId) !== String(membership.scene_id))
+      throw new Error("El plano seleccionado pertenece a otra escena.");
+    sceneId ||= membership.scene_id;
+  }
+  if (sceneId) {
+    const [scene] = await DRIVER.select("script_scenes", {
+      project_id: projectId,
+      id: sceneId,
+    });
+    if (!scene) throw new Error("La escena seleccionada no pertenece al proyecto.");
+  }
+  return { ...cue, scene_id: sceneId };
+}
+
+async function validateScriptLineRelations(projectId, sceneId, line) {
+  if (line.speaker_element_id) {
+    const [speaker] = await DRIVER.select("assets", {
+      project_id: projectId,
+      id: line.speaker_element_id,
+    });
+    if (!speaker?.role)
+      throw new Error("El personaje seleccionado no es un Element del proyecto.");
+  }
+  if (line.voice_profile_id) {
+    const [voice] = await DRIVER.select("voice_profiles", {
+      project_id: projectId,
+      id: line.voice_profile_id,
+    });
+    if (!voice) throw new Error("La voz seleccionada no pertenece al proyecto.");
+  }
+  if (line.shot_id) {
+    const [membership] = await DRIVER.select("scene_shots", {
+      project_id: projectId,
+      shot_id: line.shot_id,
+    });
+    if (!membership)
+      throw new Error("Asigna el plano a la escena antes de vincularlo a una línea.");
+    if (String(membership.scene_id) !== String(sceneId))
+      throw new Error("El plano seleccionado pertenece a otra escena.");
+  }
+  return line;
+}
 
 async function movePositionedRow(table, where, id, direction) {
   const rows = (await DRIVER.select(table, where)).sort(
@@ -1037,12 +1154,21 @@ export const db = {
       name: asset.name,
       type: asset.type,
       meta: asset.meta ?? "",
-      url: asset.url ?? null,
+      // `url` can be an expiring signed URL after hydration. Prefer the stable
+      // private-storage path whenever the caller is duplicating/reusing an asset.
+      url: asset.path ?? asset.url ?? null,
       status: asset.status ?? "ready",
       role: asset.role ?? null,
+      shot_id: asset.shot_id ?? null,
+      job_id: asset.job_id ?? null,
+      model_id: asset.model_id ?? null,
+      prompt: asset.prompt ?? null,
+      params: asset.params ?? {},
+      parent_id: asset.parent_id ?? null,
+      credits_spent: asset.credits_spent ?? 0,
     }));
     const saved = await DRIVER.insertMany("assets", rows);
-    return saved?.length ? saved : rows;
+    return this.withSignedUrls(saved?.length ? saved : rows);
   },
 
   async updateAsset(id, patch) {
@@ -1059,6 +1185,8 @@ export const db = {
     const tables = [
       "script_scenes",
       "script_lines",
+      "scene_shots",
+      "canvas_nodes",
       "voice_profiles",
       "character_voices",
       "audio_cues",
@@ -1067,10 +1195,42 @@ export const db = {
       "timeline_transitions",
       "script_asset_links",
       "audio_templates",
+      "resource_bindings",
+      "production_manifests",
+      "quality_reports",
     ];
+    const results = await Promise.allSettled(
+      tables.map((table) => DRIVER.select(table, { project_id: projectId })),
+    );
+    const requiredTables = new Set([
+      "script_scenes",
+      "script_lines",
+      "scene_shots",
+      "voice_profiles",
+      "character_voices",
+      "audio_cues",
+      "audio_templates",
+      "resource_bindings",
+    ]);
+    const failures = results
+      .map((result, index) => ({ result, table: tables[index] }))
+      .filter(
+        ({ result, table }) =>
+          result.status === "rejected" && requiredTables.has(table),
+      );
+    if (failures.length) {
+      const detail = failures
+        .map(({ result, table }) => `${table}: ${result.reason?.message || "error desconocido"}`)
+        .join("; ");
+      throw new Error(
+        `El estudio de producción no está disponible. Comprueba las migraciones de Supabase (${detail}).`,
+      );
+    }
     const [
       scenes,
       lines,
+      sceneShots,
+      canvasNodes,
       voices,
       characterVoices,
       cues,
@@ -1079,22 +1239,51 @@ export const db = {
       transitions,
       assetLinks,
       audioTemplates,
-    ] = (
-      await Promise.allSettled(
-        tables.map((table) => DRIVER.select(table, { project_id: projectId })),
+      resourceBindings,
+      productionManifests,
+      qualityReports,
+    ] = results.map((result) =>
+      result.status === "fulfilled" ? result.value : [],
+    );
+    const sceneForLine = new Map(lines.map((line) => [String(line.id), line.scene_id]));
+    const bindingLinks = resourceBindings
+      .filter((binding) =>
+        ["asset", "element"].includes(binding.resource_type) &&
+        ["scene", "line"].includes(binding.scope_type),
       )
-    ).map((result) => (result.status === "fulfilled" ? result.value : []));
+      .map((binding) => ({
+        id: `binding:${binding.id}`,
+        binding_id: binding.id,
+        project_id: binding.project_id,
+        scene_id:
+          binding.scope_type === "scene"
+            ? binding.scope_id
+            : sceneForLine.get(String(binding.scope_id)),
+        script_line_id: binding.scope_type === "line" ? binding.scope_id : null,
+        asset_id: binding.resource_id,
+        role: binding.role || "reference",
+        instructions: binding.instructions || "",
+        start_offset_ms: binding.start_ms,
+        end_offset_ms: binding.end_ms,
+        locked: binding.locked,
+        source: "resource_binding",
+      }));
     return {
       scenes: scenes.sort((a, b) => a.position - b.position),
       lines: lines.sort((a, b) => a.position - b.position),
+      sceneShots: sceneShots.sort((a, b) => a.position - b.position),
+      shots: canvasNodes.filter((node) => node.type === "shot"),
       voices,
       characterVoices,
       cues: cues.sort((a, b) => a.start_ms - b.start_ms),
       annotations,
       operations,
       transitions,
-      assetLinks,
+      assetLinks: [...assetLinks, ...bindingLinks],
       audioTemplates,
+      resourceBindings,
+      productionManifests,
+      qualityReports,
     };
   },
 
@@ -1105,6 +1294,16 @@ export const db = {
     const position =
       input.position ??
       Math.max(-1, ...scenes.map((scene) => scene.position ?? -1)) + 1;
+    const timelineStart =
+      input.timeline_start_ms ??
+      Math.max(
+        0,
+        ...scenes.map(
+          (scene) =>
+            Number(scene.timeline_start_ms || 0) +
+            Number(scene.target_duration_ms || 0),
+        ),
+      );
     return DRIVER.insert("script_scenes", {
       ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
       project_id: projectId,
@@ -1114,6 +1313,7 @@ export const db = {
       time_of_day: "",
       summary: "",
       dramatic_intent: "",
+      timeline_start_ms: timelineStart,
       target_duration_ms: null,
       status: "draft",
       ...input,
@@ -1129,6 +1329,20 @@ export const db = {
   },
 
   async deleteScriptScene(id) {
+    const lines = await DRIVER.select("script_lines", { scene_id: id });
+    const bindings = await DRIVER.select("resource_bindings", {});
+    const lineIds = new Set(lines.map((line) => String(line.id)));
+    await Promise.all(
+      bindings
+        .filter(
+          (binding) =>
+            (binding.scope_type === "scene" && String(binding.scope_id) === String(id)) ||
+            (binding.scope_type === "line" && lineIds.has(String(binding.scope_id))),
+        )
+        .map((binding) => DRIVER.remove("resource_bindings", { id: binding.id })),
+    );
+    await DRIVER.remove("scene_shots", { scene_id: id });
+    await DRIVER.remove("script_asset_links", { scene_id: id });
     await DRIVER.remove("script_lines", { scene_id: id });
     return DRIVER.remove("script_scenes", { id });
   },
@@ -1147,7 +1361,7 @@ export const db = {
     const position =
       input.position ??
       Math.max(-1, ...lines.map((line) => line.position ?? -1)) + 1;
-    return DRIVER.insert("script_lines", {
+    const row = {
       ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
       project_id: projectId,
       scene_id: sceneId,
@@ -1172,10 +1386,16 @@ export const db = {
       metadata: {},
       ...input,
       updated_at: nowISO(),
-    });
+    };
+    await validateScriptLineRelations(projectId, sceneId, row);
+    return DRIVER.insert("script_lines", row);
   },
 
   async updateScriptLine(id, patch) {
+    const [current] = await DRIVER.select("script_lines", { id });
+    if (!current) throw new Error("La línea de guion ya no existe.");
+    const merged = { ...current, ...patch };
+    await validateScriptLineRelations(current.project_id, current.scene_id, merged);
     return DRIVER.update("script_lines", id, {
       ...patch,
       updated_at: nowISO(),
@@ -1183,7 +1403,79 @@ export const db = {
   },
 
   async deleteScriptLine(id) {
+    const bindings = await DRIVER.select("resource_bindings", {});
+    await Promise.all(
+      bindings
+        .filter(
+          (binding) =>
+            binding.scope_type === "line" && String(binding.scope_id) === String(id),
+        )
+        .map((binding) => DRIVER.remove("resource_bindings", { id: binding.id })),
+    );
+    await DRIVER.remove("script_asset_links", { script_line_id: id });
     return DRIVER.remove("script_lines", { id });
+  },
+
+  async assignShotToScene(projectId, sceneId, shotId) {
+    const [[scene], [shot]] = await Promise.all([
+      DRIVER.select("script_scenes", { project_id: projectId, id: sceneId }),
+      DRIVER.select("canvas_nodes", { project_id: projectId, id: shotId }),
+    ]);
+    if (!scene) throw new Error("La escena ya no existe en este proyecto.");
+    if (!shot || shot.type !== "shot")
+      throw new Error("El nodo seleccionado no es un plano de producción del proyecto.");
+    const current = await DRIVER.select("scene_shots", { project_id: projectId });
+    const existing = current.find((row) => String(row.shot_id) === String(shotId));
+    if (existing && String(existing.scene_id) === String(sceneId)) return existing;
+    const lines = await DRIVER.select("script_lines", { project_id: projectId });
+    const conflicts = lines.filter(
+      (line) =>
+        String(line.shot_id) === String(shotId) &&
+        String(line.scene_id) !== String(sceneId),
+    );
+    if (conflicts.length)
+      throw new Error(
+        `El plano sigue vinculado a ${conflicts.length} línea(s) de otra escena. Desvincúlas antes de moverlo.`,
+      );
+    // `scene_shots` uses the composite key (scene_id, shot_id), not an `id`
+    // column. Delete by the stable project/shot uniqueness so this works in
+    // both the local driver and Supabase when moving a shot between scenes.
+    if (existing)
+      await DRIVER.remove("scene_shots", {
+        project_id: projectId,
+        shot_id: shotId,
+      });
+    const siblings = current.filter((row) => String(row.scene_id) === String(sceneId));
+    return DRIVER.insert("scene_shots", {
+      ...(hasSupabase ? {} : { id: uid() }),
+      project_id: projectId,
+      scene_id: sceneId,
+      shot_id: shotId,
+      position: Math.max(-1, ...siblings.map((row) => row.position ?? -1)) + 1,
+      created_at: nowISO(),
+      updated_at: nowISO(),
+    });
+  },
+
+  async removeShotFromScene(projectId, sceneId, shotId) {
+    const rows = await DRIVER.select("scene_shots", { project_id: projectId });
+    const match = rows.find(
+      (row) =>
+        String(row.scene_id) === String(sceneId) && String(row.shot_id) === String(shotId),
+    );
+    if (match) {
+      const lines = await DRIVER.select("script_lines", { project_id: projectId });
+      const linked = lines.filter((line) => String(line.shot_id) === String(shotId));
+      if (linked.length)
+        throw new Error(
+          `El plano sigue vinculado a ${linked.length} línea(s). Desvincúlas antes de quitarlo de la escena.`,
+        );
+      await DRIVER.remove("scene_shots", {
+        project_id: projectId,
+        scene_id: sceneId,
+        shot_id: shotId,
+      });
+    }
   },
 
   async moveScriptLine(sceneId, id, direction) {
@@ -1196,23 +1488,83 @@ export const db = {
   },
 
   async linkScriptAsset(projectId, sceneId, scriptLineId, assetId, input = {}) {
-    return DRIVER.insert("script_asset_links", {
+    const [asset] = await DRIVER.select("assets", { project_id: projectId, id: assetId });
+    if (!asset) throw new Error("El asset seleccionado no pertenece al proyecto.");
+    if (scriptLineId) {
+      const [line] = await DRIVER.select("script_lines", {
+        project_id: projectId,
+        id: scriptLineId,
+      });
+      if (!line || String(line.scene_id) !== String(sceneId))
+        throw new Error("La línea seleccionada no pertenece a esta escena.");
+    } else {
+      const [scene] = await DRIVER.select("script_scenes", {
+        project_id: projectId,
+        id: sceneId,
+      });
+      if (!scene) throw new Error("La escena seleccionada ya no existe.");
+    }
+    const {
+      start_offset_ms: startOffset = null,
+      end_offset_ms: endOffset = null,
+      ...bindingInput
+    } = input;
+    if (startOffset !== null && Number(startOffset) < 0)
+      throw new Error("El inicio de la referencia no puede ser negativo.");
+    if (
+      endOffset !== null &&
+      (Number(endOffset) <= 0 ||
+        (startOffset !== null && Number(endOffset) <= Number(startOffset)))
+    )
+      throw new Error("El final de la referencia debe estar después de su inicio.");
+    return DRIVER.insert("resource_bindings", {
       ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
       project_id: projectId,
-      scene_id: sceneId,
-      script_line_id: scriptLineId || null,
-      asset_id: assetId,
+      resource_type: "asset",
+      resource_id: assetId,
+      scope_type: scriptLineId ? "line" : "scene",
+      scope_id: scriptLineId || sceneId,
       role: "reference",
       instructions: "",
-      start_offset_ms: null,
-      end_offset_ms: null,
+      start_ms: startOffset,
+      end_ms: endOffset,
       locked: true,
-      ...input,
+      priority: 0,
+      metadata: {},
+      ...bindingInput,
       updated_at: nowISO(),
     });
   },
 
   async updateScriptAssetLink(id, patch) {
+    if (String(id).startsWith("binding:")) {
+      const bindingId = String(id).slice(8);
+      const translated = { ...patch };
+      if ("start_offset_ms" in translated) {
+        translated.start_ms = translated.start_offset_ms;
+        delete translated.start_offset_ms;
+      }
+      if ("end_offset_ms" in translated) {
+        translated.end_ms = translated.end_offset_ms;
+        delete translated.end_offset_ms;
+      }
+      const [current] = await DRIVER.select("resource_bindings", { id: bindingId });
+      if (!current) throw new Error("La referencia ya no existe.");
+      const merged = { ...current, ...translated };
+      if (merged.start_ms !== null && Number(merged.start_ms) < 0)
+        throw new Error("El inicio de la referencia no puede ser negativo.");
+      if (
+        merged.end_ms !== null &&
+        (Number(merged.end_ms) <= 0 ||
+          (merged.start_ms !== null &&
+            Number(merged.end_ms) <= Number(merged.start_ms)))
+      )
+        throw new Error("El final de la referencia debe estar después de su inicio.");
+      return DRIVER.update("resource_bindings", bindingId, {
+        ...translated,
+        updated_at: nowISO(),
+      });
+    }
     return DRIVER.update("script_asset_links", id, {
       ...patch,
       updated_at: nowISO(),
@@ -1220,6 +1572,9 @@ export const db = {
   },
 
   async unlinkScriptAsset(id) {
+    if (String(id).startsWith("binding:")) {
+      return DRIVER.remove("resource_bindings", { id: String(id).slice(8) });
+    }
     return DRIVER.remove("script_asset_links", { id });
   },
 
@@ -1257,6 +1612,20 @@ export const db = {
   },
 
   async assignCharacterVoice(projectId, elementId, voiceProfileId) {
+    const [element] = await DRIVER.select("assets", {
+      project_id: projectId,
+      id: elementId,
+    });
+    if (!element?.role)
+      throw new Error("El recurso seleccionado no es un personaje Element del proyecto.");
+    let voice = null;
+    if (voiceProfileId) {
+      [voice] = await DRIVER.select("voice_profiles", {
+        project_id: projectId,
+        id: voiceProfileId,
+      });
+      if (!voice) throw new Error("La voz seleccionada no pertenece al proyecto.");
+    }
     await DRIVER.remove("character_voices", { element_id: elementId });
     if (!voiceProfileId) return null;
     return DRIVER.insert("character_voices", {
@@ -1270,10 +1639,17 @@ export const db = {
   },
 
   async createAudioCue(projectId, input) {
-    return DRIVER.insert("audio_cues", {
+    const [asset] = await DRIVER.select("assets", {
+      project_id: projectId,
+      id: input.asset_id,
+    });
+    if (!asset || asset.status !== "ready")
+      throw new Error("Solo se puede colocar un asset de audio/vídeo listo del proyecto.");
+    const row = validateAudioCueValues({
       ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
       project_id: projectId,
       asset_id: input.asset_id,
+      scene_id: null,
       shot_id: null,
       script_line_id: null,
       track_kind: "music",
@@ -1297,10 +1673,23 @@ export const db = {
       ...input,
       updated_at: nowISO(),
     });
+    return DRIVER.insert(
+      "audio_cues",
+      await validateAudioCueRelations(projectId, row),
+    );
   },
 
   async updateAudioCue(id, patch) {
-    return DRIVER.update("audio_cues", id, { ...patch, updated_at: nowISO() });
+    const rows = await DRIVER.select("audio_cues", { id });
+    const current = rows[0];
+    if (!current) throw new Error("El clip de audio ya no existe.");
+    const merged = validateAudioCueValues({ ...current, ...patch });
+    const checked = await validateAudioCueRelations(current.project_id, merged);
+    const { id: _id, project_id: _projectId, created_at: _createdAt, ...values } = checked;
+    return DRIVER.update("audio_cues", id, {
+      ...values,
+      updated_at: nowISO(),
+    });
   },
 
   async deleteAudioCue(id) {
@@ -1308,6 +1697,16 @@ export const db = {
   },
 
   async createAudioTemplate(projectId, input) {
+    if (input.asset_id) {
+      const [asset] = await DRIVER.select("assets", {
+        project_id: projectId,
+        id: input.asset_id,
+      });
+      if (!asset || asset.status !== "ready")
+        throw new Error("La plantilla necesita un archivo listo del proyecto.");
+    }
+    if (!input.asset_id && !String(input.prompt || "").trim())
+      throw new Error("La plantilla necesita un archivo o un brief sonoro.");
     return DRIVER.insert("audio_templates", {
       ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
       project_id: projectId,
@@ -1351,23 +1750,92 @@ export const db = {
     return DRIVER.remove("asset_annotations", { id });
   },
 
+  async listQualityReports(assetId) {
+    const rows = await DRIVER.select("quality_reports", { asset_id: assetId });
+    return rows.sort((a, b) =>
+      String(b.created_at || "").localeCompare(String(a.created_at || "")),
+    );
+  },
+
+  async createHumanQualityReview(projectId, assetId, input) {
+    return DRIVER.insert("quality_reports", {
+      ...(hasSupabase ? {} : { id: uid(), created_at: nowISO() }),
+      project_id: projectId,
+      asset_id: assetId,
+      operation_id: null,
+      check_type: input.check_type,
+      status: input.passed ? "passed" : "failed",
+      score: input.score,
+      passed: Boolean(input.passed),
+      metrics: {},
+      issues: input.passed
+        ? []
+        : [{ code: "human_review_issue", message: input.note }],
+      review_source: "human",
+      review_evidence: { note: input.note, reviewed_in: "asset_lightbox" },
+    });
+  },
+
   /* --- brief, canvas y mensajes --- */
 
   async getBrief(projectId) {
     const rows = await DRIVER.select("brief_blocks", { project_id: projectId });
-    return rows.sort((a, b) => a.position - b.position);
+    const hydrated = await this.withSignedUrls(rows);
+    return hydrated
+      .map((row) => ({
+        ...row,
+        db_id: row.id,
+        id: row.block_key || String(row.id),
+        block_key: row.block_key || String(row.id),
+        asset_path: row.path || row.src || null,
+        src: row.url || row.src || null,
+      }))
+      .sort((a, b) => a.position - b.position);
   },
 
   async saveBrief(projectId, blocks) {
-    return DRIVER.replaceFor(
-      "brief_blocks",
-      projectId,
-      blocks.map((block, position) => ({
-        ...block,
-        project_id: projectId,
-        position,
-      })),
+    const stored = await DRIVER.select("brief_blocks", { project_id: projectId });
+    const byId = new Map(stored.map((row) => [String(row.id), row]));
+    const byKey = new Map(
+      stored.map((row) => [String(row.block_key || row.id), row]),
     );
+    const keptIds = new Set();
+
+    for (const [position, block] of blocks.entries()) {
+      const key = String(block.block_key || block.id || uid());
+      const existing =
+        (block.db_id && byId.get(String(block.db_id))) || byKey.get(key);
+      const values = {
+        project_id: projectId,
+        block_key: key,
+        position,
+        type: block.type || "text",
+        text: block.text || "",
+        checked: Boolean(block.checked),
+        // Persist the private storage path, never an expiring signed URL.
+        src: block.asset_path || block.path || block.src || null,
+        asset_id: block.asset_id || null,
+      };
+      if (existing) {
+        await DRIVER.update("brief_blocks", existing.id, values);
+        keptIds.add(String(existing.id));
+      } else {
+        const row = await DRIVER.insert("brief_blocks", {
+          ...(!hasSupabase ? { id: uid(), created_at: nowISO() } : {}),
+          ...values,
+        });
+        keptIds.add(String(row.id));
+      }
+    }
+
+    // This method receives the complete editor document, so an absent row is an
+    // intentional user deletion. UUIDs of all retained blocks remain untouched.
+    for (const row of stored) {
+      if (!keptIds.has(String(row.id))) {
+        await DRIVER.remove("brief_blocks", { id: row.id });
+      }
+    }
+    return this.getBrief(projectId);
   },
 
   async getCanvas(projectId) {
@@ -1375,20 +1843,130 @@ export const db = {
       DRIVER.select("canvas_nodes", { project_id: projectId }),
       DRIVER.select("canvas_edges", { project_id: projectId }),
     ]);
-    return { nodes, edges };
+    const hydratedNodes = await this.withSignedUrls(
+      nodes.map((node) => ({ ...node, url: node.thumb })),
+    );
+    return {
+      // El canvas dibuja y conecta mediante `node_key`; el UUID de la fila se conserva
+      // aparte porque es el identificador que usan guion, jobs, assets y el agente.
+      nodes: hydratedNodes.map((node) => ({
+        ...node,
+        db_id: node.id,
+        id: node.node_key || String(node.id),
+        node_key: node.node_key || String(node.id),
+        asset_path: node.path || node.thumb || null,
+        thumb: node.url || node.thumb || null,
+      })),
+      edges: edges.map((edge) => ({
+        ...edge,
+        db_id: edge.id,
+        from: edge.from_node,
+        to: edge.to_node,
+      })),
+    };
   },
 
   async saveCanvas(projectId, { nodes, edges }) {
-    await DRIVER.replaceFor(
-      "canvas_nodes",
-      projectId,
-      nodes.map((node) => ({ ...node, project_id: projectId })),
+    // Nunca se reemplaza el canvas completo. Los UUID de `canvas_nodes` son claves de
+    // producción referenciadas por el guion y los renders; borrarlos y recrearlos al
+    // mover una tarjeta dejaba esas referencias a null o apuntando a planos fantasma.
+    const [storedNodes, storedEdges] = await Promise.all([
+      DRIVER.select("canvas_nodes", { project_id: projectId }),
+      DRIVER.select("canvas_edges", { project_id: projectId }),
+    ]);
+    const nodeById = new Map(storedNodes.map((node) => [String(node.id), node]));
+    const nodeByKey = new Map(
+      storedNodes.map((node) => [String(node.node_key || node.id), node]),
     );
-    await DRIVER.replaceFor(
-      "canvas_edges",
-      projectId,
-      edges.map((edge) => ({ ...edge, project_id: projectId })),
+
+    for (const node of nodes) {
+      const nodeKey = String(node.node_key || node.id);
+      const current =
+        (node.db_id && nodeById.get(String(node.db_id))) || nodeByKey.get(nodeKey);
+      const payload = {
+        project_id: projectId,
+        node_key: nodeKey,
+        type: node.type || "concept",
+        x: Number(node.x) || 0,
+        y: Number(node.y) || 0,
+        title: node.title || "",
+        text: node.text || "",
+        // As in the brief, only a stable bucket path is stored. `getCanvas`
+        // hydrates it into a signed URL for rendering.
+        thumb: node.asset_path || node.path || node.thumb || null,
+        media: node.media || null,
+        asset_id: node.asset_id || null,
+        position: node.position ?? null,
+        spec: node.spec || {},
+        shot_status: node.shot_status || "pending",
+      };
+      if (current) await DRIVER.update("canvas_nodes", current.id, payload);
+      else await DRIVER.insert("canvas_nodes", payload);
+    }
+
+    const edgeKeys = new Set(
+      storedEdges.map((edge) => `${edge.from_node}\u0000${edge.to_node}`),
     );
+    for (const edge of edges) {
+      const from = String(edge.from ?? edge.from_node ?? "");
+      const to = String(edge.to ?? edge.to_node ?? "");
+      if (!from || !to || edgeKeys.has(`${from}\u0000${to}`)) continue;
+      await DRIVER.insert("canvas_edges", {
+        project_id: projectId,
+        from_node: from,
+        to_node: to,
+      });
+      edgeKeys.add(`${from}\u0000${to}`);
+    }
+  },
+
+  async deleteCanvasNode(projectId, nodeKey) {
+    const nodes = await DRIVER.select("canvas_nodes", { project_id: projectId });
+    const node = nodes.find(
+      (item) =>
+        String(item.id) === String(nodeKey) ||
+        String(item.node_key || item.id) === String(nodeKey),
+    );
+    const stableKey = String(node?.node_key || nodeKey);
+    await Promise.all([
+      DRIVER.remove("canvas_edges", { project_id: projectId, from_node: stableKey }),
+      DRIVER.remove("canvas_edges", { project_id: projectId, to_node: stableKey }),
+    ]);
+    if (node) {
+      const bindings = await DRIVER.select("resource_bindings", { project_id: projectId });
+      await Promise.all(
+        bindings
+          .filter(
+            (binding) =>
+              ["shot", "canvas"].includes(binding.scope_type) &&
+              String(binding.scope_id) === String(node.id),
+          )
+          .map((binding) => DRIVER.remove("resource_bindings", { id: binding.id })),
+      );
+      await DRIVER.remove("canvas_nodes", { id: node.id });
+    }
+  },
+
+  async clearCanvas(projectId) {
+    // Es una acción destructiva explícita del usuario, no un efecto secundario de
+    // guardar layout. Las aristas salen primero para respetar cualquier FK futura.
+    const nodeIds = new Set(
+      (await DRIVER.select("canvas_nodes", { project_id: projectId })).map((node) =>
+        String(node.id),
+      ),
+    );
+    const bindings = await DRIVER.select("resource_bindings", { project_id: projectId });
+    await Promise.all(
+      bindings
+        .filter(
+          (binding) =>
+            ["shot", "canvas"].includes(binding.scope_type) &&
+            nodeIds.has(String(binding.scope_id)),
+        )
+        .map((binding) => DRIVER.remove("resource_bindings", { id: binding.id })),
+    );
+    await DRIVER.remove("canvas_edges", { project_id: projectId });
+    await DRIVER.remove("canvas_nodes", { project_id: projectId });
   },
 
   async listMessages(projectId) {

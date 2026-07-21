@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from pydantic import BaseModel, Field
 
 from app import db
-from app.providers.base import GenerationAdapter, GenerationRequest
+from app.providers.base import ElementRef, GenerationAdapter, GenerationRequest
 from app.taxonomy.builder import (
     SnapshotTool,
     build_args,
@@ -527,10 +527,80 @@ class GenerateShotBatchTool(_GenerationTool):
         self,
         shot_ids: list[str],
         model_id: str,
+        manifest_id: str,
         duration_s: float | None = None,
+        seed: int | None = None,
         **_: Any,
     ) -> tuple[str, Any]:
         model = self.require_model(model_id, "video")
+
+        manifest = await db.fetchrow(
+            """select id,status,specification,fingerprint from public.production_manifests
+                where id=$1::uuid and project_id=$2::uuid""",
+            manifest_id,
+            self.ctx.project_id,
+        )
+        if not manifest or manifest["status"] not in {"approved", "executing"}:
+            raise XframeToolRetryableError(
+                "A multi-shot batch requires an approved production manifest. Build it, "
+                "resolve every validation error, show it to the user and approve it first."
+            )
+        manifest_shots = [
+            str(item.get("id"))
+            for item in dict(manifest["specification"] or {}).get("shots", [])
+        ]
+        expected = (
+            manifest_shots
+            if manifest["status"] == "approved"
+            else [shot_id for shot_id in manifest_shots if shot_id in set(shot_ids)]
+        )
+        if not shot_ids or shot_ids != expected:
+            raise XframeToolRetryableError(
+                "For an approved manifest, shot_ids must exactly match its canonical order. "
+                "For an executing manifest, retries may contain only the failed/rejected "
+                "subset, still in canonical order."
+            )
+        if manifest["status"] == "executing":
+            latest_attempts = await db.fetch(
+                """select distinct on (j.shot_id)
+                          j.shot_id,j.status,j.asset_id,
+                          exists(
+                            select 1 from public.quality_reports q
+                             where q.project_id=j.project_id and q.asset_id=j.asset_id
+                               and q.passed is false
+                               and not exists (
+                                 select 1 from public.quality_reports newer
+                                  where newer.asset_id=q.asset_id
+                                    and newer.check_type=q.check_type
+                                    and newer.created_at > q.created_at
+                               )
+                          ) as has_current_rejection
+                     from public.generation_jobs j
+                    where j.project_id=$1::uuid and j.shot_id=any($2::text[])
+                      and j.request #>> '{extra,manifest_id}' = $3
+                    order by j.shot_id,j.created_at desc""",
+                self.ctx.project_id,
+                shot_ids,
+                manifest_id,
+            )
+            blocked: list[dict[str, Any]] = []
+            for attempt in latest_attempts:
+                status = str(attempt["status"])
+                rejected = bool(attempt.get("has_current_rejection"))
+                if status not in {"failed", "cancelled", "nsfw"} and not rejected:
+                    blocked.append(
+                        {
+                            "shot_id": str(attempt["shot_id"]),
+                            "job_status": status,
+                            "asset_id": str(attempt["asset_id"]) if attempt["asset_id"] else None,
+                        }
+                    )
+            if blocked:
+                raise XframeToolRetryableError(
+                    "Retry refused: these shots are active, succeeded without a current QA "
+                    f"rejection, or awaiting review: {blocked}. Retry only failed jobs or "
+                    "outputs whose latest quality report explicitly failed."
+                )
 
         rows = await db.fetch(
             """
@@ -557,6 +627,9 @@ class GenerateShotBatchTool(_GenerationTool):
                 [f"{r['id']} (#{r['position']} {r['title']})" for r in valid],
             )
 
+        row_by_id = {str(row["id"]): row for row in rows}
+        rows = [row_by_id[shot_id] for shot_id in shot_ids]
+
         from app.agent.state import JobResult
         from app.jobs.fanout import ShotSpec, run_fanout
 
@@ -565,6 +638,11 @@ class GenerateShotBatchTool(_GenerationTool):
         requests: dict[str, GenerationRequest] = {}
         for row in rows:
             spec = dict(row["spec"] or {})
+            element_names = [
+                str(item.get("name")) if isinstance(item, dict) else str(item)
+                for item in (spec.get("elements") or [])
+                if (item.get("name") if isinstance(item, dict) else item)
+            ]
             duration = self.check_duration(
                 model, duration_s or spec.get("duration_s") or model.min_duration_s
             )
@@ -575,10 +653,15 @@ class GenerateShotBatchTool(_GenerationTool):
                 duration_s=duration,
                 aspect=self.check_aspect(model, spec.get("aspect")),
                 resolution=spec.get("resolution"),
-                elements=self.resolve_elements(spec.get("elements")),
+                seed=seed,
+                elements=self.resolve_elements(element_names),
                 camera_motion=self.motion_or_none(spec.get("camera_motion")),
                 camera_motion_strength=spec.get("camera_motion_strength"),
                 style=self.style_fragments(spec.get("styles")),
+                extra={
+                    "manifest_id": manifest_id,
+                    "manifest_fingerprint": manifest["fingerprint"],
+                },
             )
 
         # El adaptador es el mismo para todo el lote (un solo modelo), así que se resuelve
@@ -637,11 +720,17 @@ class GenerateShotBatchTool(_GenerationTool):
                 "Report the failures to the user shot by shot. Do not silently retry the "
                 "whole batch: the successful shots would be charged twice."
             )
+        if ok:
+            await db.execute(
+                "update public.production_manifests set status='executing' where id=$1::uuid",
+                manifest_id,
+            )
         return "\n".join(lines), {
             "results": [r.model_dump() for r in report.results],
             "credits_reserved": reserved,
             "credits_quoted": quoted,
             "model_id": model.id,
+            "manifest_id": manifest_id,
         }
 
     @classmethod
@@ -663,10 +752,20 @@ class GenerateShotBatchTool(_GenerationTool):
                     "Video model used for every shot in the batch. Using one model across "
                     "a sequence is itself a continuity decision.",
                 ),
+                manifest_id=described(
+                    str,
+                    "Approved production manifest whose shot snapshot exactly matches shot_ids.",
+                ),
                 duration_s=described(
                     float | None,
                     "Override the duration of every shot. Omit to use each shot's own "
                     "duration from its spec.",
+                    None,
+                ),
+                seed=described(
+                    int | None,
+                    "Optional new seed for a directed variation after quality rejection. "
+                    "Omit it to reopen a genuinely failed identical job idempotently.",
                     None,
                 ),
             ),
@@ -675,14 +774,16 @@ class GenerateShotBatchTool(_GenerationTool):
                 "outcome shot by shot. Partial failure is expected and reported; the "
                 "batch does not abort because one shot failed.\n"
                 "\n"
-                "USE THIS to produce a sequence once the shot list is written and the "
-                "user has approved the plan. Always call estimate_cost first and tell the "
+                "USE THIS to produce a sequence once the shot list is written and its "
+                "production manifest is validated and explicitly approved. Always call "
+                "estimate_cost first and tell the "
                 "user the total: this single call can spend more credits than everything "
                 "else in the conversation combined.\n"
                 "\n"
-                "DO NOT use it to retry a failed batch wholesale — the shots that "
-                "succeeded would be charged again. Retry the failed shots individually "
-                "with generate_video. DO NOT pass shots whose spec is still empty; render "
+                "DO NOT retry a failed batch wholesale. Once the manifest is executing, "
+                "pass only the failed or rejected subset in canonical order; use a new "
+                "seed only for an intentional variation. DO NOT pass shots whose spec is "
+                "still empty; render "
                 "what was planned, not what you improvised.\n"
                 "\n"
                 "Video models available:\n" + enumerate_for_prompt(models)
@@ -710,12 +811,20 @@ class GenerateAudioTool(_GenerationTool):
         prompt: str | None = None,
         duration_s: float | None = None,
         composition_plan: dict[str, Any] | None = None,
+        prompt_influence: float = 0.5,
         loop: bool = False,
         placement_start_ms: int | None = None,
         placement_end_ms: int | None = None,
+        scene_id: str | None = None,
+        shot_id: str | None = None,
+        placement_time_basis: str = "project",
         output_format: str | None = None,
         **_: Any,
     ) -> tuple[str, Any]:
+        if not 0 <= prompt_influence <= 1:
+            raise XframeToolRetryableError(
+                "prompt_influence must be between 0 and 1."
+            )
         model = self.require_model(model_id, "audio")
         duration_s = self.check_duration(model, duration_s)
         capabilities = set(model.capabilities)
@@ -731,8 +840,9 @@ class GenerateAudioTool(_GenerationTool):
         if line_ids:
             rows = await db.fetch(
                 """
-                select l.id, l.text, l.target_duration_ms, l.emotion, l.direction,
-                       l.voice_profile_id, vp.provider_voice_id, vp.settings
+                select l.id, l.scene_id, l.shot_id, l.text, l.target_duration_ms,
+                       l.emotion, l.direction, l.voice_profile_id,
+                       vp.provider_voice_id, vp.settings
                   from public.script_lines l
              left join public.voice_profiles vp on vp.id=coalesce(l.voice_profile_id,$3::uuid)
                  where l.project_id=$1::uuid and l.id=any($2::uuid[])
@@ -774,6 +884,7 @@ class GenerateAudioTool(_GenerationTool):
             "audio_kind": kind,
             "script_line_ids": line_ids,
             "composition_plan": composition_plan,
+            "prompt_influence": prompt_influence,
             "loop": loop,
             "output_format": output_format or "mp3_44100_128",
             "provider_model_id": {
@@ -783,20 +894,81 @@ class GenerateAudioTool(_GenerationTool):
                 "eleven-music-v2": "music_v2",
             }.get(model.id),
         }
+        line_scene_ids = {str(line["scene_id"]) for line in lines}
+        if scene_id and any(value != str(scene_id) for value in line_scene_ids):
+            raise XframeToolRetryableError(
+                "Every referenced screenplay line must belong to the selected scene."
+            )
+        if not scene_id and len(line_scene_ids) == 1:
+            scene_id = next(iter(line_scene_ids))
+
+        if shot_id:
+            shot = await db.fetchrow(
+                """select n.id,ss.scene_id from public.canvas_nodes n
+                left join public.scene_shots ss
+                  on ss.project_id=n.project_id and ss.shot_id=n.id
+                    where n.id=$1::uuid and n.project_id=$2::uuid and n.type='shot'""",
+                shot_id,
+                self.ctx.project_id,
+            )
+            if not shot:
+                raise XframeToolRetryableError(f"Unknown production shot {shot_id}.")
+            if not shot["scene_id"]:
+                raise XframeToolRetryableError(
+                    f"Shot {shot_id} must be assigned to a scene before audio can target it."
+                )
+            shot_scene_id = str(shot["scene_id"])
+            if scene_id and str(scene_id) != shot_scene_id:
+                raise XframeToolRetryableError(
+                    f"Shot {shot_id} belongs to scene {shot_scene_id}, not {scene_id}."
+                )
+            if any(
+                line.get("shot_id") and str(line["shot_id"]) != str(shot_id)
+                for line in lines
+            ):
+                raise XframeToolRetryableError(
+                    "A referenced screenplay line is bound to a different shot."
+                )
+            scene_id = scene_id or shot_scene_id
+
+        if scene_id:
+            scene = await db.fetchrow(
+                """select id,timeline_start_ms from public.script_scenes
+                    where id=$1::uuid and project_id=$2::uuid""",
+                scene_id,
+                self.ctx.project_id,
+            )
+            if not scene:
+                raise XframeToolRetryableError(f"Unknown scene {scene_id} in this project.")
+        else:
+            scene = None
         if placement_start_ms is not None:
             if placement_start_ms < 0:
                 raise XframeToolRetryableError("placement_start_ms cannot be negative.")
-            inferred_end = placement_start_ms + int((duration_s or 0) * 1000)
-            end_ms = placement_end_ms or inferred_end
-            if end_ms <= placement_start_ms:
+            relative_start = placement_start_ms
+            inferred_end = relative_start + int((duration_s or 0) * 1000)
+            relative_end = placement_end_ms or inferred_end
+            if relative_end <= relative_start:
                 raise XframeToolRetryableError(
                     "placement_end_ms must be greater than placement_start_ms."
                 )
+            if placement_time_basis not in {"project", "scene"}:
+                raise XframeToolRetryableError("placement_time_basis must be project or scene.")
+            if placement_time_basis == "scene" and not scene:
+                raise XframeToolRetryableError(
+                    "Scene-relative placement requires an explicit scene_id."
+                )
+            offset = int(scene["timeline_start_ms"] or 0) if placement_time_basis == "scene" else 0
             extra["placement"] = {
-                "start_ms": placement_start_ms,
-                "end_ms": end_ms,
+                "start_ms": relative_start + offset,
+                "end_ms": relative_end + offset,
+                "relative_start_ms": relative_start,
+                "relative_end_ms": relative_end,
+                "time_basis": placement_time_basis,
                 "track_kind": "voiceover" if kind == "voice" else kind,
                 "script_line_id": line_ids[0] if len(line_ids) == 1 else None,
+                "scene_id": scene_id,
+                "shot_id": shot_id,
             }
         if kind == "dialogue":
             extra["dialogue_inputs"] = [
@@ -882,6 +1054,24 @@ class GenerateAudioTool(_GenerationTool):
                     "the generated duration.",
                     None,
                 ),
+                prompt_influence=described(
+                    float,
+                    "How strongly SFX/ambience follows the prompt, from 0 to 1.",
+                    0.5,
+                ),
+                scene_id=described(
+                    str | None,
+                    "Optional scene context and cue link. Required for scene-relative timing.",
+                    None,
+                ),
+                shot_id=described(
+                    str | None, "Optional production shot that this sound belongs to.", None
+                ),
+                placement_time_basis=described(
+                    literal_of(["project", "scene"]),
+                    "Interpret placement milliseconds against the whole project or scene start.",
+                    "project",
+                ),
                 output_format=described(
                     str | None,
                     "Provider output format, for example mp3_44100_128 or pcm_44100.",
@@ -895,6 +1085,211 @@ class GenerateAudioTool(_GenerationTool):
                 "from free-form invented copy; pass screenplay line ids. Generated audio is "
                 "an asset; when exact placement arguments are supplied, it is inserted "
                 "into the audio timeline automatically.\n\nAudio models:\n"
+                + enumerate_for_prompt(models)
+            ),
+        )
+        return tool.bind_context(ctx).bind_snapshot(snap)  # type: ignore[return-value]
+
+
+class ExecuteAssetOperationTool(_GenerationTool):
+    """Execute a previously audited non-destructive asset operation."""
+
+    name: str = "execute_asset_operation"
+
+    async def _arun_impl(
+        self,
+        operation_id: str,
+        model_id: str,
+        duration_s: float | None = None,
+        **_: Any,
+    ) -> tuple[str, Any]:
+        operation = await db.fetchrow(
+            """select * from public.asset_operations
+                where id=$1::uuid and project_id=$2::uuid""",
+            operation_id,
+            self.ctx.project_id,
+        )
+        if not operation:
+            raise XframeToolRetryableError(
+                f"Unknown asset operation {operation_id} in this project."
+            )
+        if operation["status"] not in {"planned", "failed"}:
+            raise XframeToolRetryableError(
+                f"Operation {operation_id} is already {operation['status']}; do not run it twice."
+            )
+        inputs = await db.fetch(
+            """select a.* from public.asset_operation_inputs i
+                join public.assets a on a.id=i.asset_id
+               where i.operation_id=$1::uuid and i.project_id=$2::uuid
+               order by i.position""",
+            operation_id,
+            self.ctx.project_id,
+        )
+        if not inputs or any(row["status"] != "ready" for row in inputs):
+            raise XframeToolRetryableError("Every operation input must be a ready asset.")
+
+        kind = str(operation["operation"])
+        params = dict(operation["params"] or {})
+        prompt = str(operation["prompt"] or "").strip()
+        source = dict(inputs[0])
+        source_kind = str(source.get("type") or "").lower()
+
+        if kind == "upscale":
+            raise XframeToolRetryableError(
+                "No configured provider declares a real upscale capability. Keep this "
+                "operation planned until an upscale model is installed; do not fake it."
+            )
+        if kind == "character":
+            if "image" not in source_kind and "imagen" not in source_kind:
+                raise XframeToolRetryableError("A reusable character needs an image source.")
+            row = await db.fetchrow(
+                """update public.assets set role='Personaje', meta=$3
+                    where id=$1::uuid and project_id=$2::uuid returning id,name,role,meta""",
+                source["id"], self.ctx.project_id, prompt,
+            )
+            await db.execute(
+                """update public.asset_operations set status='succeeded',output_asset_id=$2,
+                   completed_at=now() where id=$1::uuid""",
+                operation_id, source["id"],
+            )
+            return (
+                f"Character Element '{row['name']}' created from the approved source without a paid render.",
+                {"operation_id": operation_id, "asset_id": str(source["id"]), "reused": True},
+            )
+
+        is_image = "image" in source_kind or "imagen" in source_kind
+        modality = "image" if is_image else "video"
+        model = self.require_model(model_id, modality)
+        annotations = await db.fetch(
+            """select kind,body,time_ms,geometry from public.asset_annotations
+                where project_id=$1::uuid and id=any($2::uuid[]) order by created_at""",
+            self.ctx.project_id,
+            list(params.get("annotation_ids") or []),
+        ) if params.get("annotation_ids") else []
+        annotation_note = "\n".join(
+            f"Annotation {row['kind']} at {row['time_ms']}ms: {row['body']} geometry={dict(row['geometry'] or {})}"
+            for row in annotations
+        )
+        preserve = ", ".join(params.get("preserve") or [])
+        full_prompt = prompt
+        if preserve:
+            full_prompt += f"\nPreserve exactly: {preserve}."
+        if annotation_note:
+            full_prompt += f"\nApply these exact annotations:\n{annotation_note}"
+
+        mask_geometry = [
+            dict(row["geometry"] or {})
+            for row in annotations
+            if dict(row["geometry"] or {}).get("type") in {"rect", "drawing"}
+        ]
+        if modality == "image" and kind == "edit" and not mask_geometry:
+            raise XframeToolRetryableError(
+                "Exact component editing requires at least one selected region or drawing "
+                "annotation. Add it on the asset and include its annotation id in the plan; "
+                "a point comment is context, not a pixel mask."
+            )
+
+        if modality == "image":
+            refs = [
+                ElementRef(
+                    element_id=str(row["id"]),
+                    name=str(row["name"]),
+                    role="source",
+                    image_url=str(row["url"]),
+                )
+                for row in inputs
+                if row["url"]
+            ]
+            req = GenerationRequest(
+                modality="image",
+                model_id=model.id,
+                prompt=full_prompt,
+                aspect=params.get("aspect"),
+                seed=params.get("seed"),
+                elements=refs,
+                extra={"operation_id": operation_id, "operation": kind,
+                       "mask_geometry": mask_geometry},
+            )
+        else:
+            if not model.supports_i2v:
+                raise XframeToolRetryableError(
+                    f"Model '{model.id}' cannot derive video from an exact source frame."
+                )
+            if kind == "edit" and "video_edit" not in set(model.capabilities):
+                raise XframeToolRetryableError(
+                    f"Model '{model.id}' does not declare frame-preserving video_edit. "
+                    "Use extend/remix/variation, or configure a video-edit provider."
+                )
+            from app.jobs.worker import SupabaseStorage
+            from app.storage import sign_reference
+
+            signed = str(await sign_reference(str(source["url"])))
+            with tempfile.TemporaryDirectory(prefix="xframe-operation-") as tmp:
+                frame_path = str(Path(tmp) / "boundary.png")
+                await _extract_boundary_frame(signed, frame_path, last=kind == "extend")
+                frame_ref = await SupabaseStorage().put(
+                    project_id=self.ctx.project_id,
+                    job_id=f"operation-{operation_id}",
+                    filename="boundary.png",
+                    data=Path(frame_path).read_bytes(),
+                    content_type="image/png",
+                )
+            duration = self.check_duration(
+                model,
+                duration_s or params.get("duration_s") or (source.get("params") or {}).get("duration_s") or model.min_duration_s,
+            )
+            continuity = (
+                "Continue seamlessly from this exact last frame. "
+                if kind == "extend"
+                else "Use this exact source boundary as the visual anchor. "
+            )
+            req = GenerationRequest(
+                modality="video",
+                model_id=model.id,
+                prompt=continuity + full_prompt,
+                duration_s=duration,
+                aspect=params.get("aspect"),
+                resolution=params.get("resolution"),
+                seed=params.get("seed"),
+                init_image_url=frame_ref,
+                audio=bool(params.get("audio", False)),
+                extra={"operation_id": operation_id, "operation": kind, "source_asset_id": str(source["id"])},
+            )
+
+        adapter, credits = await self.quote(req)
+        self.assert_affordable(credits)
+        job = await self.enqueue(req, adapter=adapter, shot_id=source.get("shot_id"))
+        await db.execute(
+            """update public.asset_operations set status='queued',provider=$2,model_id=$3,
+               job_id=$4::uuid where id=$1::uuid""",
+            operation_id, adapter.provider_id, model.id, job.job_id,
+        )
+        return (
+            f"{kind.capitalize()} operation {operation_id} queued on {model.id}; "
+            f"{job.credits_reserved} credits reserved. Source assets remain unchanged.",
+            {"operation_id": operation_id, "job_id": job.job_id, "credits": job.credits_reserved},
+        )
+
+    @classmethod
+    async def create(
+        cls, ctx: ToolContext, snap: TaxonomySnapshot
+    ) -> ExecuteAssetOperationTool | None:
+        models = (*snap.models_for("image"), *snap.models_for("video"))
+        if not models:
+            return None
+        tool = cls(
+            args_schema=build_args(
+                "ExecuteAssetOperationArgs",
+                operation_id=described(str, "Id returned by plan_asset_operation."),
+                model_id=described(literal_of([model.id for model in models]), "Compatible output model."),
+                duration_s=described(float | None, "Optional duration for video operations.", None),
+            ),
+            description=(
+                "Execute a planned edit, extension, remix, variation or character extraction "
+                "as a non-destructive derived asset. USE THIS after plan_asset_operation has "
+                "captured sources, annotations, seed and preservation rules. DO NOT call it "
+                "twice for the same operation, overwrite a source, or claim exact video editing "
+                "when the chosen model does not declare that capability. Available models:\n"
                 + enumerate_for_prompt(models)
             ),
         )
@@ -1239,11 +1634,18 @@ async def _extract_boundary_frame(source: str, output: str, *, last: bool) -> No
 
 
 class AssembleVideoArgs(BaseModel):
-    shot_ids: list[str] = Field(
+    manifest_id: str = Field(
         ...,
         description=(
-            "Shots to concatenate, in playback order. Each must already have a rendered "
-            "video asset; check with read_project first."
+            "Completed production manifest whose quality-gated shot snapshot exactly "
+            "matches shot_ids."
+        ),
+    )
+    shot_ids: list[str] | None = Field(
+        None,
+        description=(
+            "Optional safety assertion. The completed manifest's frozen output order is "
+            "authoritative and cannot be overridden."
         ),
     )
     audio_asset_id: str | None = Field(
@@ -1271,8 +1673,8 @@ class AssembleVideoTool(_GenerationTool):
         "Concatenate the rendered shots into a single cut, optionally over an audio "
         "track. Runs locally with ffmpeg and does not consume generation credits.\n"
         "\n"
-        "USE THIS when every shot the user wants in the cut has a finished video asset, "
-        "typically as the last step before delivery.\n"
+        "USE THIS when every shot in a completed, quality-gated production manifest has "
+        "a finished video asset, typically as the last step before delivery.\n"
         "\n"
         "DO NOT call it while shots are still rendering — check_job_status must show them "
         "all succeeded, or the cut will be assembled with gaps. DO NOT assemble shots the "
@@ -1281,28 +1683,51 @@ class AssembleVideoTool(_GenerationTool):
 
     async def _arun_impl(
         self,
-        shot_ids: list[str],
+        manifest_id: str,
+        shot_ids: list[str] | None = None,
         audio_asset_id: str | None = None,
         use_audio_plan: bool = True,
         title: str = "Montaje",
         **_: Any,
     ) -> tuple[str, Any]:
+        manifest = await db.fetchrow(
+            """select status,specification,execution_snapshot,execution_fingerprint
+                 from public.production_manifests
+                where id=$1::uuid and project_id=$2::uuid""",
+            manifest_id, self.ctx.project_id,
+        )
+        execution = dict(manifest["execution_snapshot"] or {}) if manifest else {}
+        frozen_outputs = list(execution.get("outputs") or [])
+        manifest_shots = [str(item.get("shot_id")) for item in frozen_outputs]
+        if not manifest or manifest["status"] != "complete" or not frozen_outputs:
+            raise XframeToolRetryableError(
+                "Final assembly requires a completed production manifest with a frozen "
+                "execution snapshot. Finish output review and complete the manifest first."
+            )
+        if shot_ids is not None and shot_ids != manifest_shots:
+            raise XframeToolRetryableError(
+                "shot_ids cannot override the completed manifest's frozen playback order."
+            )
+        shot_ids = manifest_shots
+        frozen_asset_ids = [str(item.get("asset_id")) for item in frozen_outputs]
         rows = await db.fetch(
             """
-            select n.id as shot_id, n.position, n.title, a.id as asset_id, a.url, a.status
-              from public.canvas_nodes n
-              left join lateral (
-                   select id, url, status from public.assets
-                    where shot_id = n.id::text and type = 'video' and status = 'ready'
-                    order by created_at desc limit 1
-              ) a on true
-             where n.project_id = $1::uuid and n.id = any($2::uuid[])
+            select id as asset_id,shot_id,url,status,type
+              from public.assets
+             where project_id=$1::uuid and id=any($2::uuid[])
             """,
             self.ctx.project_id,
-            shot_ids,
+            frozen_asset_ids,
         )
-        by_shot = {str(r["shot_id"]): r for r in rows}
-        pending = [s for s in shot_ids if s not in by_shot or by_shot[s]["asset_id"] is None]
+        by_asset = {str(row["asset_id"]): row for row in rows}
+        by_shot = {
+            str(item["shot_id"]): by_asset.get(str(item["asset_id"]))
+            for item in frozen_outputs
+        }
+        pending = [
+            shot_id for shot_id in shot_ids
+            if not by_shot.get(shot_id) or by_shot[shot_id]["status"] != "ready"
+        ]
         if pending:
             raise XframeToolRetryableError(
                 f"These shots have no finished video asset yet: {', '.join(pending)}. "
@@ -1334,24 +1759,32 @@ class AssembleVideoTool(_GenerationTool):
         target_lufs = -14.0
         true_peak_dbtp = -1.0
         if use_audio_plan:
-            cue_rows = await db.fetch(
-                """
-                select c.asset_id, a.url, c.track_kind, c.start_ms, c.end_ms,
-                       c.source_in_ms, c.source_out_ms, c.gain_db, c.fade_in_ms,
-                       c.fade_out_ms, c.pan, c.loop
-                       , c.ducking_group, c.ducking_db
-                  from public.audio_cues c
-                  join public.assets a on a.id=c.asset_id
-                 where c.project_id=$1::uuid and a.status='ready'
-                 order by c.start_ms, c.priority desc
-                """,
-                self.ctx.project_id,
+            cue_rows = list(execution.get("audio_cues") or [])
+            cue_asset_ids = list(
+                dict.fromkeys(str(cue["asset_id"]) for cue in cue_rows if cue.get("asset_id"))
             )
+            cue_assets = (
+                await db.fetch(
+                    """select id,url,status from public.assets
+                        where project_id=$1::uuid and id=any($2::uuid[])""",
+                    self.ctx.project_id,
+                    cue_asset_ids,
+                )
+                if cue_asset_ids
+                else []
+            )
+            cue_asset_by_id = {str(row["id"]): row for row in cue_assets}
             for cue in cue_rows:
+                cue_asset = cue_asset_by_id.get(str(cue["asset_id"]))
+                if not cue_asset or cue_asset["status"] != "ready":
+                    raise XframeToolRetryableError(
+                        f"Frozen audio asset {cue['asset_id']} is no longer ready. "
+                        "Restore it or complete a new manifest version."
+                    )
                 audio_cues.append(
                     AudioTimelineClip(
                         asset_id=str(cue["asset_id"]),
-                        src=str(await sign_reference(str(cue["url"]))),
+                        src=str(await sign_reference(str(cue_asset["url"]))),
                         track_kind=str(cue["track_kind"]),
                         start_s=float(cue["start_ms"]) / 1000,
                         end_s=float(cue["end_ms"]) / 1000,
@@ -1372,14 +1805,7 @@ class AssembleVideoTool(_GenerationTool):
                         ),
                     )
                 )
-            audio_plan = await db.fetchrow(
-                """
-                select content from public.artifacts
-                 where project_id=$1::uuid and kind='audio_plan'
-                 order by version desc limit 1
-                """,
-                self.ctx.project_id,
-            )
+            audio_plan = execution.get("audio_plan")
             if audio_plan:
                 content = dict(audio_plan["content"] or {})
                 target_lufs = float(content.get("target_lufs", target_lufs))
@@ -1391,21 +1817,29 @@ class AssembleVideoTool(_GenerationTool):
         # montajes concurrentes no se pisen el fichero temporal.
         version = len(await manager.alist("cut")) + 1
 
-        ordered_assets = [str(by_shot[s]["asset_id"]) for s in shot_ids]
-        transition_rows = await db.fetch(
-            """
-            select t.from_asset_id, t.to_asset_id, t.kind, t.duration_ms, t.status,
-                   t.signature, t.generated_asset_id, a.url as generated_url,
-                   a.status as generated_status
-              from public.timeline_transitions t
-         left join public.assets a on a.id=t.generated_asset_id
-             where t.project_id=$1::uuid
-               and t.from_asset_id=any($2::uuid[])
-               and t.to_asset_id=any($2::uuid[])
-            """,
-            self.ctx.project_id,
-            ordered_assets,
+        transition_rows = list(execution.get("transitions") or [])
+        generated_ids = list(
+            dict.fromkeys(
+                str(row["generated_asset_id"])
+                for row in transition_rows
+                if row.get("generated_asset_id")
+            )
         )
+        generated_assets = (
+            await db.fetch(
+                """select id,url,status from public.assets
+                    where project_id=$1::uuid and id=any($2::uuid[])""",
+                self.ctx.project_id,
+                generated_ids,
+            )
+            if generated_ids
+            else []
+        )
+        generated_by_id = {str(row["id"]): row for row in generated_assets}
+        for transition in transition_rows:
+            generated = generated_by_id.get(str(transition.get("generated_asset_id")))
+            transition["generated_url"] = generated["url"] if generated else None
+            transition["generated_status"] = generated["status"] if generated else None
         transition_by_pair = {
             (str(row["from_asset_id"]), str(row["to_asset_id"])): row for row in transition_rows
         }
@@ -1466,7 +1900,9 @@ class AssembleVideoTool(_GenerationTool):
         # normal— no deje ficheros acumulándose en el disco del contenedor, que corre
         # meses sin reiniciarse. La verdad ya está en el storage; el temporal es basura.
         try:
-            asset_id = await _persist_cut(self.ctx.project_id, result, title=title)
+            asset_id = await _persist_cut(
+                self.ctx.project_id, result, title=title, manifest_id=manifest_id
+            )
         finally:
             _discard_temp(result.output_path)
         artifact = await manager.acreate(
@@ -1492,6 +1928,7 @@ class AssembleVideoTool(_GenerationTool):
                 "duration_s": result.duration_s,
                 "warnings": result.warnings,
                 "kind": "cut",
+                "manifest_id": manifest_id,
             },
         )
 
@@ -1522,7 +1959,9 @@ def _discard_temp(path: str | None) -> None:
         )
 
 
-async def _persist_cut(project_id: str, result: AssemblyResult, *, title: str) -> str:
+async def _persist_cut(
+    project_id: str, result: AssemblyResult, *, title: str, manifest_id: str
+) -> str:
     """
     Sube el mp4 montado al storage y escribe su fila en `assets`. Devuelve el id.
 
@@ -1561,7 +2000,7 @@ async def _persist_cut(project_id: str, result: AssemblyResult, *, title: str) -
         project_id,
         title[:80],
         object_path,
-        result.to_artifact_content(),
+        result.to_artifact_content() | {"manifest_id": manifest_id},
     )
     return str(row["id"])
 
@@ -1580,17 +2019,27 @@ async def _asset_or_raise(
         asset_id,
         project_id,
     )
-    if row is None or (kind and row["type"] != kind):
+    def matches(value: Any, expected: str | None) -> bool:
+        if expected is None:
+            return True
+        normalized = str(value or "").strip().lower()
+        aliases = {
+            "image": ("image", "imagen", "imágen"),
+            "video": ("video", "vídeo", "cut"),
+            "audio": ("audio", "sound", "sonido", "music", "música"),
+        }
+        return any(token in normalized for token in aliases.get(expected, (expected,)))
+
+    if row is None or not matches(row["type"], kind):
         valid = await db.fetch(
             """
             select id, name, type from public.assets
              where project_id = $1::uuid and status = 'ready'
-               and ($2::text is null or type = $2)
              order by created_at desc limit 40
             """,
             project_id,
-            kind,
         )
+        valid = [candidate for candidate in valid if matches(candidate["type"], kind)]
         raise UnknownEntityError(
             f"{kind or 'asset'}", asset_id, [f"{r['id']} ({r['name']})" for r in valid]
         )

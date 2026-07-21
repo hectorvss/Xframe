@@ -563,9 +563,9 @@ class JobWorker:
                     adapter.normalize_error(exc) if not isinstance(exc, ProviderError) else exc
                 )
                 if isinstance(normalized, ProviderRejectedError):
-                    raise normalized
+                    raise normalized from exc
                 if not isinstance(normalized, ProviderError):
-                    raise normalized
+                    raise normalized from exc
                 last = normalized
                 if attempt == SUBMIT_ATTEMPTS:
                     break
@@ -609,7 +609,7 @@ class JobWorker:
             except Exception as exc:
                 consecutive_errors += 1
                 if consecutive_errors >= MAX_ATTEMPTS:
-                    raise adapter.normalize_error(exc)
+                    raise adapter.normalize_error(exc) from exc
                 logger.info(
                     "job_poll_error", extra={"job_id": str(job.id), "n": consecutive_errors}
                 )
@@ -703,8 +703,8 @@ class JobWorker:
                     """
                     insert into public.quality_reports
                       (project_id, asset_id, operation_id, check_type, status, score,
-                       passed, metrics, issues)
-                    values ($1,$2,$3,'lipsync',$4,$5,$6,$7::jsonb,$8::jsonb)
+                       passed, metrics, issues, review_source, review_evidence)
+                    values ($1,$2,$3,'lipsync',$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10::jsonb)
                     """,
                     job.project_id,
                     asset_id,
@@ -727,6 +727,11 @@ class JobWorker:
                             "message": "Review mouth timing, speaker identity and occlusions before approval.",
                         }
                     ],
+                    "provider" if metrics else "automated",
+                    {
+                        "source": "provider_completion_metrics" if metrics else "metrics_unavailable",
+                        "provider": job.provider,
+                    },
                 )
             if operation_id is not None and job.request.get("extra", {}).get("transition_id"):
                 await conn.execute(
@@ -746,12 +751,14 @@ class JobWorker:
                     await conn.execute(
                         """
                         insert into public.audio_cues
-                          (project_id, asset_id, script_line_id, track_kind, start_ms,
+                          (project_id, asset_id, scene_id, shot_id, script_line_id, track_kind, start_ms,
                            end_ms, loop, narrative_role)
-                        values ($1,$2,$3::uuid,$4,$5,$6,$7,$8)
+                        values ($1,$2,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8,$9,$10)
                         """,
                         job.project_id,
                         asset_id,
+                        placement.get("scene_id"),
+                        placement.get("shot_id"),
                         placement.get("script_line_id"),
                         placement.get("track_kind", "sfx"),
                         start_ms,

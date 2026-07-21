@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from evals.base import (
     ORDINAL_SCALE,
@@ -539,7 +539,7 @@ class RenderValidity(Scorer):
     name = "render_validity"
 
     #: Estados terminales de `generation_jobs` que significan "ni siquiera se intentó".
-    _REJECTED = {"invalid", "rejected", "unsupported"}
+    _REJECTED: ClassVar[set[str]] = {"invalid", "rejected", "unsupported"}
 
     async def score_case(self, *, input: Any, output: Any, expected: Any = None, **kwargs: Any) -> Score:
         data = _as_dict(output)

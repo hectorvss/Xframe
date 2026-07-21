@@ -223,6 +223,7 @@ class XframeState(BaseModel):
     # ContextManager. Sin esto, el contexto que ve el agente es genérico.
     open_tab: Annotated[str | None, replace_if_not_none] = None
     selected_asset_ids: Annotated[list[str] | None, replace_if_not_none] = None
+    resource_refs: Annotated[list[dict[str, Any]] | None, replace_if_not_none] = None
 
     conversation_id: Annotated[str | None, replace_if_not_none] = None
     """
@@ -252,6 +253,7 @@ class PartialXframeState(BaseModel):
     plan_approved: bool | None = None
     open_tab: str | None = None
     selected_asset_ids: list[str] | None = None
+    resource_refs: list[dict[str, Any]] | None = None
     conversation_id: str | None = None
 
 

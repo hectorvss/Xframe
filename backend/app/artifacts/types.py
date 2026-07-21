@@ -25,7 +25,7 @@ sigue: **un documento no se pierde porque una de sus referencias haya desapareci
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, TypeVar, Union
+from typing import Annotated, Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -204,14 +204,14 @@ class PlanArtifactContent(_BaseContent):
     estimated_credits: int = 0
 
 
-StoredContent = Union[
-    ScriptArtifactContent,
-    ScreenplayArtifactContent,
-    TimelineArtifactContent,
-    AudioPlanArtifactContent,
-    CutArtifactContent,
-    PlanArtifactContent,
-]
+StoredContent = (
+    ScriptArtifactContent
+    | ScreenplayArtifactContent
+    | TimelineArtifactContent
+    | AudioPlanArtifactContent
+    | CutArtifactContent
+    | PlanArtifactContent
+)
 
 CONTENT_BY_KIND: dict[str, type[BaseModel]] = {
     "script": ScriptArtifactContent,
