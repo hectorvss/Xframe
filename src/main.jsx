@@ -3548,11 +3548,21 @@ const fmt = (s) =>
     ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`
     : "0:00";
 
+// Tipos de transición entre dos clips del timeline. "bridge" es la importante: el
+// agente genera un plano corto que CONECTA visualmente el final de un clip con el
+// inicio del siguiente — es lo que convierte fragmentos sueltos en una película.
+const CLIP_TRANSITIONS = [
+  ["cut", "Corte", "Cambio seco de plano"],
+  ["crossfade", "Fundido", "Un plano se disuelve en el siguiente"],
+  ["bridge", "Puente generado", "El agente rueda un plano corto que une ambos"],
+];
+
 function EditorPreview({
   assets = [],
   onAssemble,
   timeline = null,
-  onTimelineChange,
+  transitions = null,
+  onTimelineMeta,
   onClipMention,
   onSeedChat,
 }) {
@@ -3583,16 +3593,30 @@ function EditorPreview({
   const [draftOrder, setDraftOrder] = useState(null);
   const [dragIdx, setDragIdx] = useState(null);
   const shown = draftOrder ?? seq;
-  const commit = (items) => {
+  // Las transiciones son posicionales: trns[i] es la unión entre el clip i y el i+1.
+  const trns = Array.isArray(transitions) ? transitions : [];
+  const transAt = (i) => trns[i] ?? "cut";
+
+  const commit = (items, nextTrns = trns) => {
     // El orden local se mantiene hasta que la persistencia vuelva reflejada en las
     // props (el efecto de abajo lo limpia): soltarlo ya haría parpadear la tira al
-    // orden viejo durante el viaje a la base.
+    // orden viejo durante el viaje a la base. Timeline y transiciones viajan JUNTOS
+    // en una sola escritura para que no se pisen entre sí.
     setDraftOrder(items);
-    onTimelineChange?.(items.map((a) => String(a.id)));
+    onTimelineMeta?.({
+      timeline: items.map((a) => String(a.id)),
+      transitions: nextTrns.slice(0, Math.max(0, items.length - 1)),
+    });
   };
   useEffect(() => {
     setDraftOrder(null);
   }, [timeline]);
+
+  const setTransition = (i, type) => {
+    const next = [...trns];
+    next[i] = type;
+    commit(shown, next);
+  };
   const moveItem = (from, to) =>
     setDraftOrder((prev) => {
       const next = [...(prev ?? seq)];
@@ -3616,6 +3640,9 @@ function EditorPreview({
   const [dur, setDur] = useState(0);
   const [aspect, setAspect] = useState("16:9");
   const [adding, setAdding] = useState(false);
+  // Qué unión entre clips se está editando (índice de la transición) — el editor
+  // aparece como fila encima de la tira, nunca como popover dentro del scroll.
+  const [transEditing, setTransEditing] = useState(null);
 
   const safeIdx = Math.min(idx, Math.max(0, shown.length - 1));
   const item = shown[safeIdx] ?? null;
@@ -3633,6 +3660,32 @@ function EditorPreview({
     } else {
       setPlaying(false);
     }
+  };
+
+  // "Montar vídeo": el timeline entero —orden exacto y transición elegida en cada
+  // unión— viaja al agente como especificación de montaje. Los puentes se generan
+  // primero (un plano corto que conecta el final de un clip con el inicio del
+  // siguiente, mismos elements y estilo) y después se ensambla todo con ffmpeg.
+  const assembleFromTimeline = () => {
+    if (!shown.length || !onAssemble) return;
+    const order = shown.map((a, i) => `clip ${i + 1} = asset ${a.id}`).join("; ");
+    const joins = shown
+      .slice(0, -1)
+      .map((_, i) => {
+        const label = CLIP_TRANSITIONS.find(([id]) => id === transAt(i))?.[1] ?? "Corte";
+        return `unión ${i + 1}→${i + 2}: ${label}`;
+      })
+      .join("; ");
+    onAssemble(
+      `Monta el corte final EXACTAMENTE con este timeline, en este orden: ${order}. ` +
+        `Transiciones: ${joins || "corte limpio en todas"}. ` +
+        `Donde la transición sea "Puente generado", genera ANTES un fragmento corto de ` +
+        `vídeo que conecte visualmente el final del clip anterior con el inicio del ` +
+        `siguiente (mismos elements, mismo estilo y luz, movimiento continuo) e ` +
+        `insértalo entre ambos. Donde sea "Fundido", usa crossfade; donde sea "Corte", ` +
+        `corte limpio. El resultado debe sentirse UNA sola pieza con continuidad ` +
+        `narrativa, no una lista de clips pegados.`,
+    );
   };
 
   const seek = (t) => {
@@ -3863,18 +3916,59 @@ function EditorPreview({
           botón @ de cada tira mete «@Clip-N» en el chat como pill: cuentas ahí el
           cambio y el agente sabe exactamente sobre qué fragmento aplicarlo. Sin
           material aún, huecos punteados marcan dónde aterrizará cada clip. */}
-      <div className="shrink-0 rounded-xl border bg-background p-2">
-          <div className="mb-1.5 flex items-center justify-between px-1">
+      <div className="relative shrink-0 rounded-xl border bg-background p-2">
+          <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Timeline
             </p>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="min-w-0 truncate text-[10px] text-muted-foreground">
               {shown.length
-                ? "Arrastra para reordenar · @ para pedir un cambio de un clip"
+                ? "Arrastra para reordenar · @ pide un cambio · el nodo entre clips elige la transición"
                 : "Los fragmentos de vídeo aterrizan aquí"}
             </p>
+            {shown.length > 0 && (
+              <UIButton size="sm" className="h-7 shrink-0" onClick={assembleFromTimeline}>
+                <Play /> Montar vídeo
+              </UIButton>
+            )}
           </div>
-          <div className="flex items-stretch gap-2 overflow-x-auto">
+
+          {/* Editor de transición: fila encima de la tira, nunca un popover dentro del
+              scroll (se recortaba con overflow y quedaba invisible). */}
+          {transEditing !== null && transEditing < shown.length - 1 && (
+            <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border bg-muted/40 px-2 py-1.5">
+              <span className="mr-1 text-xs text-muted-foreground">
+                Transición <b className="text-foreground">Clip {transEditing + 1} → {transEditing + 2}</b>:
+              </span>
+              {CLIP_TRANSITIONS.map(([id, label, desc]) => (
+                <button
+                  key={id}
+                  title={desc}
+                  onClick={() => {
+                    setTransition(transEditing, id);
+                    setTransEditing(null);
+                  }}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                    transAt(transEditing) === id
+                      ? "border-primary bg-primary/10 font-medium text-primary"
+                      : "hover:bg-accent",
+                  )}
+                >
+                  {id === "bridge" && <Sparkles className="mr-1 inline size-3" />}
+                  {label}
+                </button>
+              ))}
+              <button
+                onClick={() => setTransEditing(null)}
+                className="ml-auto flex size-6 items-center justify-center rounded hover:bg-accent"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-stretch gap-1.5 overflow-x-auto">
             {!shown.length &&
               Array.from({ length: 4 }, (_, i) => (
                 <div
@@ -3886,8 +3980,8 @@ function EditorPreview({
                 </div>
               ))}
             {shown.map((a, i) => (
+              <React.Fragment key={`${a.id}-${i}`}>
               <div
-                key={`${a.id}-${i}`}
                 draggable
                 onDragStart={(e) => {
                   setDragIdx(i);
@@ -3950,57 +4044,90 @@ function EditorPreview({
                   </button>
                 )}
               </div>
+
+              {/* Nodo de transición entre este clip y el siguiente. Su color delata el
+                  tipo: neutro = corte, azul = fundido, violeta = puente generado. */}
+              {i < shown.length - 1 && (
+                <button
+                  onClick={() => setTransEditing(transEditing === i ? null : i)}
+                  title={`Transición clip ${i + 1} → ${i + 2}: ${
+                    CLIP_TRANSITIONS.find(([id]) => id === transAt(i))?.[1] ?? "Corte"
+                  }`}
+                  className={cn(
+                    "flex w-6 shrink-0 flex-col items-center justify-center self-stretch rounded-md border transition-colors",
+                    transAt(i) === "bridge"
+                      ? "border-violet-400 bg-violet-500/10 text-violet-600"
+                      : transAt(i) === "crossfade"
+                        ? "border-blue-400 bg-blue-500/10 text-blue-600"
+                        : "border-dashed text-muted-foreground hover:bg-accent",
+                    transEditing === i && "ring-2 ring-primary",
+                  )}
+                >
+                  {transAt(i) === "bridge" ? (
+                    <Sparkles className="size-3" />
+                  ) : transAt(i) === "crossfade" ? (
+                    <Copy className="size-3" />
+                  ) : (
+                    <Plus className="size-3 rotate-45" />
+                  )}
+                </button>
+              )}
+              </React.Fragment>
             ))}
 
-            {/* Añadir material al timeline: cualquier asset listo que no esté ya. */}
-            <div className="relative shrink-0">
-              <button
-                onClick={() => setAdding((v) => !v)}
-                title="Añadir un asset al timeline"
-                className="flex h-full min-h-[90px] w-16 flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <Plus className="size-4" />
-                <span className="text-[10px]">Añadir</span>
-              </button>
-              {adding && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setAdding(false)} />
-                  <div className="absolute bottom-full right-0 z-50 mb-2 max-h-64 w-64 overflow-y-auto rounded-xl border bg-background p-1 shadow-2xl">
-                    {videos.filter((a) => !shown.some((s) => String(s.id) === String(a.id)))
-                      .length === 0 && (
-                      <p className="p-3 text-xs text-muted-foreground">
-                        No hay fragmentos de vídeo disponibles para añadir. Pídeselos al
-                        agente desde el chat.
-                      </p>
-                    )}
-                    {videos
-                      .filter((a) => !shown.some((s) => String(s.id) === String(a.id)))
-                      .map((a) => (
-                        <button
-                          key={a.id}
-                          onClick={() => {
-                            addToTimeline(a);
-                            setAdding(false);
-                          }}
-                          className="flex w-full items-center gap-2 rounded-md p-1.5 text-left transition-colors hover:bg-accent"
-                        >
-                          <video
-                            src={a.url}
-                            muted
-                            preload="metadata"
-                            className="pointer-events-none aspect-video w-14 shrink-0 rounded bg-muted object-cover"
-                          />
-                          <div className="min-w-0">
-                            <p className="truncate text-xs font-medium">Fragmento</p>
-                            <p className="text-[10px] text-muted-foreground">Vídeo</p>
-                          </div>
-                        </button>
-                      ))}
-                  </div>
-                </>
-              )}
-            </div>
+            {/* Añadir material al timeline. Solo el BOTÓN vive dentro del scroll; el
+                desplegable se pinta fuera (abajo), anclado al bloque del timeline:
+                dentro del overflow-x-auto quedaba recortado e invisible. */}
+            <button
+              onClick={() => setAdding((v) => !v)}
+              title="Añadir un fragmento al timeline"
+              className="flex min-h-[90px] w-16 shrink-0 flex-col items-center justify-center gap-1 self-stretch rounded-lg border border-dashed text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <Plus className="size-4" />
+              <span className="text-[10px]">Añadir</span>
+            </button>
           </div>
+
+          {adding && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setAdding(false)} />
+              <div className="absolute bottom-[calc(100%+8px)] right-2 z-50 max-h-64 w-72 overflow-y-auto rounded-xl border bg-background p-1 shadow-2xl">
+                <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Fragmentos disponibles
+                </p>
+                {videos.filter((a) => !shown.some((s) => String(s.id) === String(a.id)))
+                  .length === 0 && (
+                  <p className="p-3 pt-1 text-xs text-muted-foreground">
+                    No hay fragmentos de vídeo disponibles para añadir. Pídeselos al
+                    agente desde el chat.
+                  </p>
+                )}
+                {videos
+                  .filter((a) => !shown.some((s) => String(s.id) === String(a.id)))
+                  .map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => {
+                        addToTimeline(a);
+                        setAdding(false);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-md p-1.5 text-left transition-colors hover:bg-accent"
+                    >
+                      <video
+                        src={a.url}
+                        muted
+                        preload="metadata"
+                        className="pointer-events-none aspect-video w-14 shrink-0 rounded bg-muted object-cover"
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-medium">Fragmento</p>
+                        <p className="text-[10px] text-muted-foreground">Vídeo</p>
+                      </div>
+                    </button>
+                  ))}
+              </div>
+            </>
+          )}
       </div>
     </div>
   );
@@ -6108,9 +6235,10 @@ function Editor({ projectId }) {
             <EditorPreview
               assets={assets}
               timeline={project.settings?.timeline ?? null}
-              onTimelineChange={(ids) =>
+              transitions={project.settings?.transitions ?? null}
+              onTimelineMeta={({ timeline: tl, transitions: tr }) =>
                 updateProject(projectId, {
-                  settings: { ...(project.settings ?? {}), timeline: ids },
+                  settings: { ...(project.settings ?? {}), timeline: tl, transitions: tr },
                 })
               }
               onClipMention={mentionClip}
@@ -6118,9 +6246,10 @@ function Editor({ projectId }) {
                 setChatHidden(false);
                 setChatInsert({ text, at: Date.now() });
               }}
-              onAssemble={() =>
+              onAssemble={(text) =>
                 handleSend(
-                  "Monta el corte final del proyecto con todos los fragmentos de vídeo listos, en orden narrativo, con transiciones limpias.",
+                  text ??
+                    "Monta el corte final del proyecto con todos los fragmentos de vídeo listos, en orden narrativo, con transiciones limpias.",
                 )
               }
             />
