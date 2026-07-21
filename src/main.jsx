@@ -1225,7 +1225,7 @@ function DirectorPanel({ assets = [] }) {
             )}
           >
             {pop === "move" && (
-              <div className="grid max-h-[340px] grid-cols-4 gap-1.5 overflow-y-auto">
+              <div className="scrollbar-hidden grid max-h-[340px] grid-cols-4 gap-1.5 overflow-y-auto">
                 {CAMERA_MOVES.map(([id, label, purpose]) => (
                   <MoveTile
                     key={id}
