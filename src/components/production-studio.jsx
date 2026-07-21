@@ -16,6 +16,10 @@ import {
   MoreHorizontal,
   Music2,
   Pause,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Play,
   Plus,
   RefreshCw,
@@ -218,6 +222,26 @@ function useProduction(projectId) {
   return { data, loading, saving, error, reload, run };
 }
 
+function useStoredVisibility(key, initial = true) {
+  const [visible, setVisible] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem(key);
+      return stored === null ? initial : stored === "true";
+    } catch {
+      return initial;
+    }
+  });
+  const update = (next) => {
+    setVisible(next);
+    try {
+      window.localStorage.setItem(key, String(next));
+    } catch {
+      // La preferencia es opcional; la UI sigue funcionando sin almacenamiento.
+    }
+  };
+  return [visible, update];
+}
+
 function Field({ label, hint, children, className }) {
   return (
     <div className={cn("space-y-1.5", className)}>
@@ -278,6 +302,64 @@ function SaveState({ saving, error }) {
       )}
       {saving ? "Guardando" : "Cambios guardados"}
     </span>
+  );
+}
+
+function PanelToggles({
+  leftVisible,
+  rightVisible,
+  onLeftChange,
+  onRightChange,
+}) {
+  return (
+    <div className="flex items-center rounded-md border bg-background p-0.5">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={() => onLeftChange(!leftVisible)}
+            aria-label={
+              leftVisible
+                ? "Ocultar panel izquierdo"
+                : "Mostrar panel izquierdo"
+            }
+          >
+            {leftVisible ? (
+              <PanelLeftClose className="size-3.5" />
+            ) : (
+              <PanelLeftOpen className="size-3.5" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {leftVisible ? "Ocultar navegador" : "Mostrar navegador"}
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={() => onRightChange(!rightVisible)}
+            aria-label={
+              rightVisible ? "Ocultar inspector" : "Mostrar inspector"
+            }
+          >
+            {rightVisible ? (
+              <PanelRightClose className="size-3.5" />
+            ) : (
+              <PanelRightOpen className="size-3.5" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {rightVisible ? "Ocultar inspector" : "Mostrar inspector"}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   );
 }
 
@@ -1012,6 +1094,11 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
   const [sceneId, setSceneId] = useState(null);
   const [lineId, setLineId] = useState(null);
   const [draft, setDraft] = useState("");
+  const [scenePanelVisible, setScenePanelVisible] = useStoredVisibility(
+    "xframe.screenplay.scene-panel",
+  );
+  const [scriptInspectorVisible, setScriptInspectorVisible] =
+    useStoredVisibility("xframe.screenplay.inspector");
   const characters = useMemo(
     () => assets.filter((asset) => asset.role),
     [assets],
@@ -1083,6 +1170,12 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
               {(totalDuration / 1000).toFixed(1)} s
             </Badge>
             <SaveState saving={saving} error={error} />
+            <PanelToggles
+              leftVisible={scenePanelVisible}
+              rightVisible={scriptInspectorVisible}
+              onLeftChange={setScenePanelVisible}
+              onRightChange={setScriptInspectorVisible}
+            />
             <Button variant="outline" size="sm" onClick={() => reload()}>
               <RefreshCw
                 className={cn("size-3.5", loading && "animate-spin")}
@@ -1091,100 +1184,107 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
             </Button>
           </div>
         </header>
-        <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(420px,1fr)_310px]">
-          <aside className="flex min-h-0 flex-col border-r bg-muted/10">
-            <div className="flex items-center justify-between px-3 py-3">
-              <div>
-                <p className="text-xs font-semibold">ESCENAS</p>
-                <p className="text-[10px] text-muted-foreground">
-                  Orden narrativo
-                </p>
-              </div>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="outline" size="icon" onClick={addScene}>
-                    <Plus className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Nueva escena</TooltipContent>
-              </Tooltip>
-            </div>
-            <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
-              <div className="space-y-1">
-                {data.scenes.map((item, index) => {
-                  const count = data.lines.filter(
-                    (line) => String(line.scene_id) === String(item.id),
-                  ).length;
-                  const referenceCount = data.assetLinks.filter(
-                    (link) =>
-                      String(link.scene_id) === String(item.id) &&
-                      !link.script_line_id,
-                  ).length;
-                  return (
-                    <Button
-                      key={item.id}
-                      variant="ghost"
-                      className={cn(
-                        "h-auto w-full justify-start gap-2.5 px-2.5 py-2.5 text-left",
-                        String(scene?.id) === String(item.id) && "bg-accent",
-                      )}
-                      onClick={() => setSceneId(item.id)}
-                    >
-                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-semibold">
-                        {index + 1}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-xs font-medium">
-                          {item.title || `Escena ${index + 1}`}
-                        </span>
-                        <span className="mt-0.5 block truncate text-[10px] font-normal text-muted-foreground">
-                          {count} líneas ·{" "}
-                          {item.target_duration_ms
-                            ? `${item.target_duration_ms / 1000}s`
-                            : "sin duración"}
-                          {referenceCount ? ` · ${referenceCount} refs` : ""}
-                        </span>
-                      </span>
-                      <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+        <div
+          className="grid min-h-0 flex-1"
+          style={{
+            gridTemplateColumns: `${scenePanelVisible ? "220px " : ""}minmax(420px, 1fr)${scriptInspectorVisible ? " 310px" : ""}`,
+          }}
+        >
+          {scenePanelVisible && (
+            <aside className="flex min-h-0 flex-col border-r bg-muted/10">
+              <div className="flex items-center justify-between px-3 py-3">
+                <div>
+                  <p className="text-xs font-semibold">ESCENAS</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Orden narrativo
+                  </p>
+                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="icon" onClick={addScene}>
+                      <Plus className="size-4" />
                     </Button>
-                  );
-                })}
+                  </TooltipTrigger>
+                  <TooltipContent>Nueva escena</TooltipContent>
+                </Tooltip>
               </div>
-            </ScrollArea>
-            <div className="border-t p-3">
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="w-full">
-                    <Sparkles />
-                    Importar con el agente
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Estructurar un guion</DialogTitle>
-                    <DialogDescription>
-                      Pega el texto aprobado. El agente propondrá escenas y
-                      dirección sin generar audio.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <Textarea
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    className="min-h-52"
-                    placeholder={
-                      "ESCENA 1 — Estudio, noche\nMARTA: “La campaña está lista.”\nVOZ EN OFF: “Del concepto al lanzamiento.”"
-                    }
-                  />
-                  <DialogFooter>
-                    <Button disabled={!draft.trim()} onClick={sendBrief}>
-                      <WandSparkles />
-                      Llevar al chat
+              <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+                <div className="space-y-1">
+                  {data.scenes.map((item, index) => {
+                    const count = data.lines.filter(
+                      (line) => String(line.scene_id) === String(item.id),
+                    ).length;
+                    const referenceCount = data.assetLinks.filter(
+                      (link) =>
+                        String(link.scene_id) === String(item.id) &&
+                        !link.script_line_id,
+                    ).length;
+                    return (
+                      <Button
+                        key={item.id}
+                        variant="ghost"
+                        className={cn(
+                          "h-auto w-full justify-start gap-2.5 px-2.5 py-2.5 text-left",
+                          String(scene?.id) === String(item.id) && "bg-accent",
+                        )}
+                        onClick={() => setSceneId(item.id)}
+                      >
+                        <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-semibold">
+                          {index + 1}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-medium">
+                            {item.title || `Escena ${index + 1}`}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[10px] font-normal text-muted-foreground">
+                            {count} líneas ·{" "}
+                            {item.target_duration_ms
+                              ? `${item.target_duration_ms / 1000}s`
+                              : "sin duración"}
+                            {referenceCount ? ` · ${referenceCount} refs` : ""}
+                          </span>
+                        </span>
+                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                      </Button>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+              <div className="border-t p-3">
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" className="w-full">
+                      <Sparkles />
+                      Importar con el agente
                     </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-          </aside>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Estructurar un guion</DialogTitle>
+                      <DialogDescription>
+                        Pega el texto aprobado. El agente propondrá escenas y
+                        dirección sin generar audio.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <Textarea
+                      value={draft}
+                      onChange={(event) => setDraft(event.target.value)}
+                      className="min-h-52"
+                      placeholder={
+                        "ESCENA 1 — Estudio, noche\nMARTA: “La campaña está lista.”\nVOZ EN OFF: “Del concepto al lanzamiento.”"
+                      }
+                    />
+                    <DialogFooter>
+                      <Button disabled={!draft.trim()} onClick={sendBrief}>
+                        <WandSparkles />
+                        Llevar al chat
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </aside>
+          )}
 
           <main className="min-h-0 overflow-y-auto">
             {!scene && !loading ? (
@@ -1398,68 +1498,73 @@ export function ScreenplayStudio({ projectId, assets = [], onSeedChat }) {
             )}
           </main>
 
-          <aside className="min-h-0 border-l bg-muted/10">
-            <Tabs defaultValue="line" className="flex h-full min-h-0 flex-col">
-              <TabsList className="m-3 mb-0 grid grid-cols-2">
-                <TabsTrigger value="line">Línea</TabsTrigger>
-                <TabsTrigger value="scene">Escena</TabsTrigger>
-              </TabsList>
-              <TabsContent value="line" className="min-h-0 flex-1">
-                <ScrollArea className="h-full">
-                  <div className="p-4">
-                    <LineInspector
-                      projectId={projectId}
-                      line={selectedLine}
-                      assets={assets}
-                      links={data.assetLinks}
-                      characters={characters}
-                      voices={data.voices}
-                      run={run}
-                      onSeedChat={onSeedChat}
-                      onDelete={() =>
-                        run(() => db.deleteScriptLine(selectedLine.id))
-                      }
-                      onMoveUp={() =>
-                        run(() =>
-                          db.moveScriptLine(
-                            selectedLine.scene_id,
-                            selectedLine.id,
-                            -1,
-                          ),
-                        )
-                      }
-                      onMoveDown={() =>
-                        run(() =>
-                          db.moveScriptLine(
-                            selectedLine.scene_id,
-                            selectedLine.id,
-                            1,
-                          ),
-                        )
-                      }
-                    />
-                  </div>
-                </ScrollArea>
-              </TabsContent>
-              <TabsContent value="scene" className="min-h-0 flex-1">
-                <ScrollArea className="h-full">
-                  <div className="p-4">
-                    <SceneInspector
-                      projectId={projectId}
-                      scene={scene}
-                      characters={characters}
-                      voices={data.voices}
-                      assignments={data.characterVoices}
-                      assets={assets}
-                      links={data.assetLinks}
-                      run={run}
-                      onSeedChat={onSeedChat}
-                    />
-                  </div>
-                </ScrollArea>
-              </TabsContent>
-            </Tabs>
-          </aside>
+          {scriptInspectorVisible && (
+            <aside className="min-h-0 border-l bg-muted/10">
+              <Tabs
+                defaultValue="line"
+                className="flex h-full min-h-0 flex-col"
+              >
+                <TabsList className="m-3 mb-0 grid grid-cols-2">
+                  <TabsTrigger value="line">Línea</TabsTrigger>
+                  <TabsTrigger value="scene">Escena</TabsTrigger>
+                </TabsList>
+                <TabsContent value="line" className="min-h-0 flex-1">
+                  <ScrollArea className="h-full">
+                    <div className="p-4">
+                      <LineInspector
+                        projectId={projectId}
+                        line={selectedLine}
+                        assets={assets}
+                        links={data.assetLinks}
+                        characters={characters}
+                        voices={data.voices}
+                        run={run}
+                        onSeedChat={onSeedChat}
+                        onDelete={() =>
+                          run(() => db.deleteScriptLine(selectedLine.id))
+                        }
+                        onMoveUp={() =>
+                          run(() =>
+                            db.moveScriptLine(
+                              selectedLine.scene_id,
+                              selectedLine.id,
+                              -1,
+                            ),
+                          )
+                        }
+                        onMoveDown={() =>
+                          run(() =>
+                            db.moveScriptLine(
+                              selectedLine.scene_id,
+                              selectedLine.id,
+                              1,
+                            ),
+                          )
+                        }
+                      />
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+                <TabsContent value="scene" className="min-h-0 flex-1">
+                  <ScrollArea className="h-full">
+                    <div className="p-4">
+                      <SceneInspector
+                        projectId={projectId}
+                        scene={scene}
+                        characters={characters}
+                        voices={data.voices}
+                        assignments={data.characterVoices}
+                        assets={assets}
+                        links={data.assetLinks}
+                        run={run}
+                        onSeedChat={onSeedChat}
+                      />
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+              </Tabs>
+            </aside>
+          )}
         </div>
       </div>
     </TooltipProvider>
@@ -2189,6 +2294,12 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
   const [briefOpen, setBriefOpen] = useState(false);
   const [libraryTab, setLibraryTab] = useState("library");
   const [composerSeed, setComposerSeed] = useState(null);
+  const [audioLibraryVisible, setAudioLibraryVisible] = useStoredVisibility(
+    "xframe.audio.library-panel",
+  );
+  const [audioInspectorVisible, setAudioInspectorVisible] = useStoredVisibility(
+    "xframe.audio.inspector",
+  );
   const audioAssets = useMemo(
     () =>
       assets.filter(
@@ -2276,6 +2387,12 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
               {(totalMs / 1000).toFixed(1)} s
             </Badge>
             <SaveState saving={saving} error={error} />
+            <PanelToggles
+              leftVisible={audioLibraryVisible}
+              rightVisible={audioInspectorVisible}
+              onLeftChange={setAudioLibraryVisible}
+              onRightChange={setAudioInspectorVisible}
+            />
             <Dialog open={briefOpen} onOpenChange={setBriefOpen}>
               <DialogTrigger asChild>
                 <Button size="sm">
@@ -2308,123 +2425,130 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
             </Button>
           </div>
         </header>
-        <div className="grid min-h-0 flex-1 grid-cols-[300px_minmax(500px,1fr)_310px]">
-          <aside className="min-h-0 border-r bg-muted/10">
-            <Tabs
-              value={libraryTab}
-              onValueChange={setLibraryTab}
-              className="flex h-full min-h-0 flex-col"
-            >
-              <TabsList className="m-3 mb-0 grid h-auto grid-cols-2">
-                <TabsTrigger value="library">Biblioteca</TabsTrigger>
-                <TabsTrigger value="create">Crear</TabsTrigger>
-                <TabsTrigger value="templates">Plantillas</TabsTrigger>
-                <TabsTrigger value="voices">Voces</TabsTrigger>
-              </TabsList>
-              <TabsContent value="library" className="min-h-0 flex-1">
-                <ScrollArea className="h-full">
-                  <div className="space-y-2 p-3">
-                    {audioAssets.map((asset) => (
-                      <Card key={asset.id} className="shadow-none">
-                        <CardContent className="p-3">
-                          <div className="flex items-center gap-2">
-                            <FileAudio className="size-4 text-muted-foreground" />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-xs font-medium">
-                                {asset.name}
-                              </p>
-                              <p className="text-[10px] text-muted-foreground">
-                                Listo para usar
-                              </p>
+        <div
+          className="grid min-h-0 flex-1"
+          style={{
+            gridTemplateColumns: `${audioLibraryVisible ? "300px " : ""}minmax(500px, 1fr)${audioInspectorVisible ? " 310px" : ""}`,
+          }}
+        >
+          {audioLibraryVisible && (
+            <aside className="min-h-0 border-r bg-muted/10">
+              <Tabs
+                value={libraryTab}
+                onValueChange={setLibraryTab}
+                className="flex h-full min-h-0 flex-col"
+              >
+                <TabsList className="m-3 mb-0 grid h-auto grid-cols-2">
+                  <TabsTrigger value="library">Biblioteca</TabsTrigger>
+                  <TabsTrigger value="create">Crear</TabsTrigger>
+                  <TabsTrigger value="templates">Plantillas</TabsTrigger>
+                  <TabsTrigger value="voices">Voces</TabsTrigger>
+                </TabsList>
+                <TabsContent value="library" className="min-h-0 flex-1">
+                  <ScrollArea className="h-full">
+                    <div className="space-y-2 p-3">
+                      {audioAssets.map((asset) => (
+                        <Card key={asset.id} className="shadow-none">
+                          <CardContent className="p-3">
+                            <div className="flex items-center gap-2">
+                              <FileAudio className="size-4 text-muted-foreground" />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-xs font-medium">
+                                  {asset.name}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  Listo para usar
+                                </p>
+                              </div>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon">
+                                    <Plus className="size-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  {Object.entries(trackMeta).map(
+                                    ([kind, [, label]]) => (
+                                      <DropdownMenuItem
+                                        key={kind}
+                                        onClick={() => addCue(asset, kind)}
+                                      >
+                                        Añadir a {label.toLowerCase()}
+                                      </DropdownMenuItem>
+                                    ),
+                                  )}
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      onSeedChat?.(
+                                        `Edita o crea una variación del asset de audio @${asset.name} (id ${asset.id}). Conserva su función narrativa y pregúntame qué propiedad sonora quiero cambiar antes de generar. Guarda el resultado como un asset nuevo y mantén el linaje.`,
+                                      )
+                                    }
+                                  >
+                                    <WandSparkles className="mr-2 size-4" />
+                                    Editar o variar
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon">
-                                  <Plus className="size-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                {Object.entries(trackMeta).map(
-                                  ([kind, [, label]]) => (
-                                    <DropdownMenuItem
-                                      key={kind}
-                                      onClick={() => addCue(asset, kind)}
-                                    >
-                                      Añadir a {label.toLowerCase()}
-                                    </DropdownMenuItem>
-                                  ),
-                                )}
-                                <DropdownMenuItem
-                                  onClick={() =>
-                                    onSeedChat?.(
-                                      `Edita o crea una variación del asset de audio @${asset.name} (id ${asset.id}). Conserva su función narrativa y pregúntame qué propiedad sonora quiero cambiar antes de generar. Guarda el resultado como un asset nuevo y mantén el linaje.`,
-                                    )
-                                  }
-                                >
-                                  <WandSparkles className="mr-2 size-4" />
-                                  Editar o variar
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                          {asset.url && (
-                            <audio
-                              src={asset.url}
-                              controls
-                              className="mt-2 h-8 w-full"
-                            />
-                          )}
-                        </CardContent>
-                      </Card>
-                    ))}
-                    {!audioAssets.length && (
-                      <EmptyState
-                        icon={FileAudio}
-                        title="Biblioteca vacía"
-                        description="Genera o sube voces, música y efectos desde Assets. Cuando estén listos aparecerán aquí."
+                            {asset.url && (
+                              <audio
+                                src={asset.url}
+                                controls
+                                className="mt-2 h-8 w-full"
+                              />
+                            )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                      {!audioAssets.length && (
+                        <EmptyState
+                          icon={FileAudio}
+                          title="Biblioteca vacía"
+                          description="Genera o sube voces, música y efectos desde Assets. Cuando estén listos aparecerán aquí."
+                        />
+                      )}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+                <TabsContent value="create" className="min-h-0 flex-1">
+                  <ScrollArea className="h-full">
+                    <div className="p-3">
+                      <SoundComposer
+                        projectId={projectId}
+                        scenes={data.scenes}
+                        lines={data.lines}
+                        seed={composerSeed}
+                        onGenerate={generateSound}
+                        run={run}
                       />
-                    )}
-                  </div>
-                </ScrollArea>
-              </TabsContent>
-              <TabsContent value="create" className="min-h-0 flex-1">
-                <ScrollArea className="h-full">
-                  <div className="p-3">
-                    <SoundComposer
-                      projectId={projectId}
-                      scenes={data.scenes}
-                      lines={data.lines}
-                      seed={composerSeed}
-                      onGenerate={generateSound}
-                      run={run}
-                    />
-                  </div>
-                </ScrollArea>
-              </TabsContent>
-              <TabsContent value="templates" className="min-h-0 flex-1">
-                <ScrollArea className="h-full">
-                  <div className="p-3">
-                    <SoundTemplates
-                      templates={data.audioTemplates}
-                      onUse={useTemplate}
-                      run={run}
-                    />
-                  </div>
-                </ScrollArea>
-              </TabsContent>
-              <TabsContent value="voices" className="min-h-0 flex-1">
-                <ScrollArea className="h-full">
-                  <div className="p-3">
-                    <VoiceLibrary
-                      projectId={projectId}
-                      voices={data.voices}
-                      run={run}
-                    />
-                  </div>
-                </ScrollArea>
-              </TabsContent>
-            </Tabs>
-          </aside>
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+                <TabsContent value="templates" className="min-h-0 flex-1">
+                  <ScrollArea className="h-full">
+                    <div className="p-3">
+                      <SoundTemplates
+                        templates={data.audioTemplates}
+                        onUse={useTemplate}
+                        run={run}
+                      />
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+                <TabsContent value="voices" className="min-h-0 flex-1">
+                  <ScrollArea className="h-full">
+                    <div className="p-3">
+                      <VoiceLibrary
+                        projectId={projectId}
+                        voices={data.voices}
+                        run={run}
+                      />
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+              </Tabs>
+            </aside>
+          )}
 
           <main className="min-h-0 overflow-auto p-5">
             <div className="min-w-[660px]">
@@ -2555,19 +2679,21 @@ export function AudioStudio({ projectId, assets = [], onSeedChat }) {
             </div>
           </main>
 
-          <aside className="min-h-0 border-l bg-muted/10">
-            <ScrollArea className="h-full">
-              <div className="p-4">
-                <CueInspector
-                  cue={cue}
-                  assets={assets}
-                  scenes={data.scenes}
-                  lines={data.lines}
-                  run={run}
-                />
-              </div>
-            </ScrollArea>
-          </aside>
+          {audioInspectorVisible && (
+            <aside className="min-h-0 border-l bg-muted/10">
+              <ScrollArea className="h-full">
+                <div className="p-4">
+                  <CueInspector
+                    cue={cue}
+                    assets={assets}
+                    scenes={data.scenes}
+                    lines={data.lines}
+                    run={run}
+                  />
+                </div>
+              </ScrollArea>
+            </aside>
+          )}
         </div>
       </div>
     </TooltipProvider>
