@@ -39,6 +39,23 @@ export const supabase = hasSupabase
     })
   : null;
 
+/** Operaciones de consentimiento del servidor OAuth 2.1 de Supabase. */
+export async function oauthAuthorizationDetails(authorizationId) {
+  if (!supabase) throw new Error("Supabase no está configurado");
+  const { data, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
+  if (error) throw error;
+  return data;
+}
+
+export async function oauthAuthorizationDecision(authorizationId, approved) {
+  if (!supabase) throw new Error("Supabase no está configurado");
+  const { data, error } = approved
+    ? await supabase.auth.oauth.approveAuthorization(authorizationId)
+    : await supabase.auth.oauth.denyAuthorization(authorizationId);
+  if (error) throw error;
+  return data;
+}
+
 export const ASSETS_BUCKET = "assets";
 
 /**

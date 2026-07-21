@@ -121,7 +121,13 @@ import {
   DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { uploadAsset } from "@/lib/supabase";
+import {
+  hasSupabase,
+  oauthAuthorizationDecision,
+  oauthAuthorizationDetails,
+  supabase,
+  uploadAsset,
+} from "@/lib/supabase";
 import { db } from "@/lib/db";
 import {
   Select,
@@ -1766,7 +1772,7 @@ const authProviders = ["google", "github", "apple"];
  * Alta e inicio de sesión contra Supabase. Al registrarse, el trigger
  * on_auth_user_created crea el perfil con sus 200 créditos de bienvenida.
  */
-function AuthModal() {
+function AuthModal({ redirectTo = "/dashboard" }) {
   const { signUp, signIn, signInWithProvider, isRemote } = useStudio();
   const [mode, setMode] = useState("signin");
   const [form, setForm] = useState({ name: "", email: "", password: "" });
@@ -1795,7 +1801,7 @@ function AuthModal() {
       } else {
         await signIn(form);
       }
-      go("/dashboard");
+      go(redirectTo);
     } catch (error) {
       setStatus({ kind: "error", text: translateAuthError(error) });
     } finally {
@@ -1824,7 +1830,9 @@ function AuthModal() {
               className="w-full"
               disabled={busy}
               onClick={() =>
-                isRemote ? signInWithProvider(provider) : go("/dashboard")
+                isRemote
+                  ? signInWithProvider(provider, `${location.origin}${redirectTo}`)
+                  : go(redirectTo)
               }
             >
               <AuthBrandIcon provider={provider} className="size-4" />
@@ -1903,6 +1911,77 @@ function AuthModal() {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Consentimiento explícito para OAuth 2.1 / MCP. Supabase emite los tokens. */
+function OAuthConsentPage() {
+  const authorizationId = new URLSearchParams(location.search).get("authorization_id");
+  const [details, setDetails] = useState(null);
+  const [error, setError] = useState("");
+  const [hasSession, setHasSession] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (!authorizationId || !hasSupabase || !supabase) {
+        if (active) setError("La solicitud OAuth no es válida.");
+        return;
+      }
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return;
+      try {
+        const next = await oauthAuthorizationDetails(authorizationId);
+        if (!active) return;
+        if (next?.redirect_url) {
+          window.location.assign(next.redirect_url);
+          return;
+        }
+        setDetails(next);
+        setHasSession(true);
+      } catch {
+        if (active) setError("La solicitud ha caducado o no se puede autorizar.");
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [authorizationId]);
+
+  if (!authorizationId || error) {
+    return <div className="flex min-h-dvh items-center justify-center p-6 text-sm text-destructive">{error || "Falta la solicitud OAuth."}</div>;
+  }
+  if (!hasSession) {
+    return <><Landing /><AuthModal redirectTo={`/oauth/consent?authorization_id=${encodeURIComponent(authorizationId)}`} /></>;
+  }
+
+  const client = details?.client ?? {};
+  const scopes = String(details?.scope ?? "").split(" ").filter(Boolean);
+  const decide = async (approved) => {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await oauthAuthorizationDecision(authorizationId, approved);
+      if (!result?.redirect_url) throw new Error("Falta redirect_url");
+      window.location.assign(result.redirect_url);
+    } catch {
+      setError("No se ha podido completar la autorización.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="flex min-h-dvh items-center justify-center bg-muted/30 p-6">
+      <Card className="w-full max-w-lg p-7">
+        <div className="flex items-center gap-3"><XframeHeart size={32} /><div><h1 className="text-xl font-semibold">Conectar aplicación</h1><p className="text-sm text-muted-foreground">Revisa lo que podrá consultar antes de aprobar.</p></div></div>
+        <Separator className="my-6" />
+        <p className="text-sm"><span className="text-muted-foreground">Aplicación: </span><strong>{client.name || "Cliente MCP"}</strong></p>
+        {client?.uri && <p className="mt-1 break-all text-xs text-muted-foreground">{client.uri}</p>}
+        <div className="mt-5 rounded-lg border bg-muted/40 p-4"><p className="text-sm font-medium">Permisos solicitados</p><ul className="mt-2 space-y-1 text-sm text-muted-foreground">{scopes.map((scope) => <li key={scope}>• {scope}</li>)}</ul></div>
+        {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
+        <div className="mt-6 flex justify-end gap-3"><UIButton variant="outline" disabled={busy} onClick={() => decide(false)}>Cancelar</UIButton><UIButton disabled={busy} onClick={() => decide(true)}>{busy ? "Conectando…" : "Permitir acceso"}</UIButton></div>
+      </Card>
+    </main>
   );
 }
 
@@ -12304,6 +12383,8 @@ function App() {
   const params = new URLSearchParams(location.search);
   const showConnectors = params.has("connectors");
   const showSearch = params.has("search");
+
+  if (p === "/oauth/consent") return <OAuthConsentPage />;
 
   // Rutas privadas: sin sesión se muestra la landing con el modal de acceso.
   const isPrivate =

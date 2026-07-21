@@ -313,10 +313,10 @@ export const db = {
     return data;
   },
 
-  async signInWithProvider(provider) {
+  async signInWithProvider(provider, redirectTo = `${location.origin}/dashboard`) {
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: `${location.origin}/dashboard` },
+      options: { redirectTo },
     });
     if (error) throw error;
   },

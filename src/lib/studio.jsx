@@ -122,7 +122,7 @@ export function StudioProvider({ children }) {
   );
 
   const signInWithProvider = useCallback(
-    (provider) => db.signInWithProvider(provider),
+    (provider, redirectTo) => db.signInWithProvider(provider, redirectTo),
     [],
   );
 

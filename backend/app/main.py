@@ -41,6 +41,7 @@ from app.auth._redis import close_redis
 from app.config import get_settings
 from app.db import close_pool, init_pool
 from app.jobs.webhooks import router as webhooks_router
+from app.mcp_api import oauth_router
 from app.mcp_api import router as mcp_router
 from app.mcp_server import asgi_app as mcp_asgi_app
 from app.runtime import configure_event_loop
@@ -108,6 +109,7 @@ app = FastAPI(title="Xframe Agent", lifespan=lifespan)
 # la firma del cuerpo (ver `app/jobs/webhooks.py`). Hasta ahora ese módulo existía y no lo
 # montaba nadie, así que todo dependía del polling.
 app.include_router(webhooks_router)
+app.include_router(oauth_router)
 app.include_router(mcp_router)
 # Se monta después de las rutas REST de administración: /mcp/status y las
 # credenciales usan la sesión de Xframe; sólo el protocolo MCP usa su Bearer.

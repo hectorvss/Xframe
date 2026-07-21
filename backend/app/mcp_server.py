@@ -200,13 +200,28 @@ class McpBearerAuth:
             user = await verify_token(token)
         except AuthError:
             return None
-        # El JWT de la sesión es una credencial de primera parte, no una API key;
-        # mantiene acceso completo pero sigue pasando por ownership por proyecto.
+        # Los JWT OAuth de Supabase conservan aud=authenticated, pero añaden el
+        # client_id de la app que el usuario aprobó. Una sesión ordinaria no se
+        # puede reutilizar como token MCP fuera de Xframe.
+        if not user.claims.get("client_id"):
+            return None
         return McpPrincipal(user_id=user.id, scopes=frozenset(ALL_SCOPES))
 
     @staticmethod
     async def _reject(send: Send, detail: str) -> None:
-        response = JSONResponse({"detail": detail}, status_code=401)
+        from app.mcp_api import protected_resource_metadata_url
+
+        response = JSONResponse(
+            {"detail": detail},
+            status_code=401,
+            headers={
+                "WWW-Authenticate": (
+                    'Bearer resource_metadata="'
+                    + protected_resource_metadata_url()
+                    + '", scope="openid profile email"'
+                )
+            },
+        )
         await send(
             {
                 "type": "http.response.start",

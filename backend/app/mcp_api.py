@@ -6,6 +6,7 @@ import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -15,6 +16,7 @@ from app.config import get_settings
 from app.mcp_server import ALL_SCOPES
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
+oauth_router = APIRouter(tags=["oauth"])
 
 
 class CredentialCreate(BaseModel):
@@ -28,6 +30,37 @@ def _mcp_url() -> str:
     return f"{get_settings().public_base_url.rstrip('/')}/mcp"
 
 
+def oauth_issuer_url() -> str:
+    return f"{get_settings().supabase_url.rstrip('/')}/auth/v1"
+
+
+def protected_resource_metadata_url() -> str:
+    return f"{get_settings().public_base_url.rstrip('/')}/.well-known/oauth-protected-resource/mcp"
+
+
+@oauth_router.get("/.well-known/oauth-protected-resource/mcp")
+async def protected_resource_metadata() -> dict[str, object]:
+    """RFC 9728: descubrimiento del Authorization Server por clientes MCP."""
+    return {
+        "resource": _mcp_url(),
+        "authorization_servers": [oauth_issuer_url()],
+        "scopes_supported": ["openid", "profile", "email"],
+        "bearer_methods_supported": ["header"],
+        "resource_documentation": f"{get_settings().public_base_url.rstrip('/')}/settings/mcp-server",
+    }
+
+
+async def _oauth_server_enabled() -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            response = await client.get(
+                f"{get_settings().supabase_url.rstrip('/')}/.well-known/oauth-authorization-server/auth/v1"
+            )
+        return response.status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
 @router.get("/status")
 async def status(user: AuthUser = Depends(current_user)) -> dict[str, object]:
     """Configuración pública y capacidades que consume Ajustes."""
@@ -36,7 +69,13 @@ async def status(user: AuthUser = Depends(current_user)) -> dict[str, object]:
         "status": "ready",
         "server_url": _mcp_url(),
         "transport": "streamable-http",
-        "authentication": "personal-access-token",
+        "authentication": "oauth-2.1",
+        "oauth": {
+            "enabled": await _oauth_server_enabled(),
+            "issuer": oauth_issuer_url(),
+            "protected_resource_metadata": protected_resource_metadata_url(),
+            "authorization_path": "/oauth/consent",
+        },
         "scopes": sorted(ALL_SCOPES),
         "tools": [
             "list_projects", "get_project_context", "list_assets", "create_project",
