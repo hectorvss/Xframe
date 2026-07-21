@@ -52,8 +52,10 @@ services:
     # El Caddy compartido vive en la red de txlemetry. Mantener la API tambiÃ©n
     # en ella hace resoluble el upstream `xframe-api` tras cada recreaciÃ³n.
     networks:
-      - default
-      - shared-proxy
+      default: {}
+      shared-proxy:
+        aliases:
+          - xframe-api
     healthcheck:
       test:
         - CMD
