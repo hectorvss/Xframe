@@ -5152,7 +5152,7 @@ export function AudioStudio({
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns: `${audioLibraryVisible ? "320px" : "0px"} minmax(500px, 1fr)`,
+            gridTemplateColumns: `${audioLibraryVisible ? "400px" : "0px"} minmax(440px, 1fr)`,
           }}
         >
           <aside
