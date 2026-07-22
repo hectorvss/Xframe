@@ -808,6 +808,7 @@ class GenerateAudioTool(_GenerationTool):
         model_id: str,
         script_line_ids: list[str] | None = None,
         voice_profile_id: str | None = None,
+        reference_asset_id: str | None = None,
         prompt: str | None = None,
         duration_s: float | None = None,
         composition_plan: dict[str, Any] | None = None,
@@ -874,10 +875,34 @@ class GenerateAudioTool(_GenerationTool):
                 f"{kind} generation needs a precise prompt or composition plan."
             )
 
+        # Referencia de audio (speech-to-speech): coge una grabación existente y la
+        # re-interpreta con la voz asignada, conservando entonación y ritmo. Solo tiene
+        # sentido para voz de un locutor; música/SFX/ambiente se generan desde texto.
+        reference_audio: dict[str, Any] | None = None
+        if reference_asset_id:
+            if kind != "voice":
+                raise XframeToolRetryableError(
+                    "reference_asset_id only applies to kind='voice' (speech-to-speech): "
+                    "it transforms an existing recording into the assigned voice. Music, "
+                    "SFX and ambience are generated from a text prompt, not from audio."
+                )
+            reference_audio = await _asset_or_raise(
+                self.ctx.project_id, reference_asset_id, kind="audio"
+            )
+            if reference_audio.get("status") != "ready":
+                raise XframeToolRetryableError(
+                    "The reference audio asset is not ready yet; wait until it finishes."
+                )
+            if not reference_audio.get("url"):
+                raise XframeToolRetryableError(
+                    "The reference audio asset has no playable file to transform."
+                )
+
         text = "\n".join(str(line["text"]) for line in lines) if lines else (prompt or "")
         inferred = sum((line["target_duration_ms"] or 0) for line in lines) / 1000
         if not duration_s:
-            duration_s = inferred or max(1.0, len(text) / 14)
+            # Con referencia manda su propia duración: la salida dura lo que la fuente.
+            duration_s = (reference_audio or {}).get("duration_s") or inferred or max(1.0, len(text) / 14)
             duration_s = self.check_duration(model, duration_s)
 
         extra: dict[str, Any] = {
@@ -983,6 +1008,10 @@ class GenerateAudioTool(_GenerationTool):
                 )
             extra["voice_id"] = voices.pop()
             extra["voice_settings"] = lines[0].get("settings") or {}
+            if reference_audio:
+                # El proveedor ignorará el texto: las palabras salen de la grabación.
+                extra["speech_to_speech"] = True
+                extra["source_audio_url"] = reference_audio["url"]
 
         req = GenerationRequest(
             modality="audio",
@@ -1029,6 +1058,15 @@ class GenerateAudioTool(_GenerationTool):
                 ),
                 voice_profile_id=described(
                     str | None, "Optional voice override for otherwise unassigned lines.", None
+                ),
+                reference_asset_id=described(
+                    str | None,
+                    "Optional id of an existing ready audio asset to use as a speech-to-"
+                    "speech reference (voice only). The recording's words, timing and "
+                    "delivery are kept and re-performed in the line's assigned voice. Use "
+                    "it to re-voice a take you already have instead of reading text. Omit "
+                    "for normal text-to-speech and for music/SFX/ambience.",
+                    None,
                 ),
                 prompt=described(
                     str | None,
@@ -1084,7 +1122,9 @@ class GenerateAudioTool(_GenerationTool):
                 "defined, or after the music/SFX brief is explicit. DO NOT generate speech "
                 "from free-form invented copy; pass screenplay line ids. Generated audio is "
                 "an asset; when exact placement arguments are supplied, it is inserted "
-                "into the audio timeline automatically.\n\nAudio models:\n"
+                "into the audio timeline automatically. To re-voice an existing recording "
+                "in an assigned voice (speech-to-speech), pass reference_asset_id with "
+                "kind='voice'.\n\nAudio models:\n"
                 + enumerate_for_prompt(models)
             ),
         )

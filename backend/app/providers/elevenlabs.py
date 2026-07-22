@@ -9,6 +9,7 @@ database.
 from __future__ import annotations
 
 import base64
+import json
 from decimal import Decimal
 from typing import Any
 
@@ -67,6 +68,10 @@ class ElevenLabsAdapter(HttpAdapter):
             voice_id = str(req.extra.get("voice_id") or "").strip()
             if not voice_id:
                 raise ProviderRejectedError(self.provider_id, "voice generation requires voice_id")
+            if req.extra.get("speech_to_speech"):
+                # Audio-a-audio: la fuente aporta las palabras y la interpretación; el
+                # endpoint es multipart (sube el fichero) y no acepta URLs.
+                return await self._speech_to_speech(req, voice_id, params)
             path = f"/v1/text-to-speech/{voice_id}"
             body = {
                 "text": req.prompt,
@@ -82,6 +87,65 @@ class ElevenLabsAdapter(HttpAdapter):
             raise ProviderRejectedError(self.provider_id, "generation returned an empty audio file")
         raw = {"audio_b64": base64.b64encode(response.content).decode(), "mime_type": mime}
         return job_ref(self.provider_id, "synchronous", raw=raw)
+
+    async def _speech_to_speech(
+        self, req: GenerationRequest, voice_id: str, params: dict[str, Any]
+    ) -> ProviderJobRef:
+        """Voice Changer: reinterpreta una grabación existente con la voz elegida."""
+        source_url = str(req.extra.get("source_audio_url") or "").strip()
+        if not source_url:
+            raise ProviderRejectedError(
+                self.provider_id, "speech-to-speech requires source_audio_url"
+            )
+        mime, audio_bytes = await self._download_audio(source_url)
+        if not audio_bytes:
+            raise ProviderRejectedError(
+                self.provider_id, "the speech-to-speech source audio was empty"
+            )
+        extension = "mp3" if ("mpeg" in mime or "mp3" in mime) else (mime.split("/")[-1] or "mp3")
+        # eleven_multilingual_sts_v2 es el modelo de conversión de voz (no el de TTS).
+        data: dict[str, Any] = {"model_id": "eleven_multilingual_sts_v2"}
+        settings = req.extra.get("voice_settings")
+        if settings:
+            data["voice_settings"] = json.dumps(settings)
+        files = {"audio": (f"source.{extension}", audio_bytes, mime)}
+        response = await self.request(
+            "POST",
+            f"/v1/speech-to-speech/{voice_id}",
+            data=data,
+            files=files,
+            params=params,
+            timeout=UPLOAD_TIMEOUT,
+        )
+        out_mime = (response.headers.get("content-type") or "audio/mpeg").split(";")[0]
+        if not response.content:
+            raise ProviderRejectedError(
+                self.provider_id, "speech-to-speech returned an empty audio file"
+            )
+        raw = {"audio_b64": base64.b64encode(response.content).decode(), "mime_type": out_mime}
+        return job_ref(self.provider_id, "synchronous", raw=raw)
+
+    async def _download_audio(self, url: str) -> tuple[str, bytes]:
+        """Bytes del audio de referencia. Acepta URL http(s) y `data:` (nuestros propios
+        assets de audio se guardan como data URI, que httpx no sabe descargar)."""
+        if url.startswith("data:"):
+            header, _, encoded = url.partition(",")
+            mime = header[5:].split(";")[0] or "audio/mpeg"
+            try:
+                return mime, base64.b64decode(encoded)
+            except (ValueError, TypeError) as exc:
+                raise ProviderRejectedError(
+                    self.provider_id, f"the reference audio data URI is malformed: {exc}"
+                ) from exc
+        response = await self.client.get(url, timeout=UPLOAD_TIMEOUT, follow_redirects=True)
+        if response.status_code != 200:
+            raise ProviderRejectedError(
+                self.provider_id,
+                f"reference audio {url} is not reachable (HTTP {response.status_code}). "
+                "The signed URL may have expired; regenerate it and retry.",
+            )
+        mime = (response.headers.get("content-type") or "audio/mpeg").split(";")[0]
+        return mime, response.content
 
     async def poll(self, ref: ProviderJobRef) -> ProviderJobStatus:
         encoded = (ref.raw or {}).get("audio_b64")

@@ -53,6 +53,45 @@ async def test_elevenlabs_dialogue_preserves_exact_text_and_speakers() -> None:
     assert status.output_urls[0].startswith("data:audio/mpeg;base64,")
 
 
+async def test_elevenlabs_speech_to_speech_uploads_reference_and_targets_voice() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["content_type"] = request.headers.get("content-type", "")
+        captured["body"] = request.content
+        return httpx.Response(200, content=b"ID3converted", headers={"content-type": "audio/mpeg"})
+
+    get_settings.cache_clear()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = ElevenLabsAdapter(client)
+    # Fuente como data URI: es exactamente el formato en que se guardan los audios.
+    source = "data:audio/mpeg;base64," + __import__("base64").b64encode(b"take-audio").decode()
+    req = GenerationRequest(
+        modality="audio",
+        model_id="eleven-multilingual-v2",
+        prompt="ignored; the words come from the recording",
+        duration_s=3,
+        extra={
+            "audio_kind": "voice",
+            "voice_id": "voice-target",
+            "voice_settings": {"stability": 0.4},
+            "speech_to_speech": True,
+            "source_audio_url": source,
+        },
+    )
+    ref = await adapter.submit(req)
+    status = await adapter.poll(ref)
+    await client.aclose()
+
+    assert captured["path"] == "/v1/speech-to-speech/voice-target"
+    assert captured["content_type"].startswith("multipart/form-data")
+    assert b"eleven_multilingual_sts_v2" in captured["body"]
+    assert b"take-audio" in captured["body"]
+    assert status.state == "succeeded"
+    assert status.output_urls[0].startswith("data:audio/mpeg;base64,")
+
+
 async def test_sync_labs_sends_explicit_segment_face_mapping() -> None:
     captured: dict = {}
 
