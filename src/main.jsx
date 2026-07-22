@@ -525,7 +525,7 @@ function ResizeHandle({ onResize }) {
 const XframeHeart = ({ size = 24, className = "" }) => (
   <img
     className={`heart-mark ${className}`}
-    src="/lovable-logo.svg"
+    src="/xframe-logo.png"
     width={size}
     height={size}
     alt=""
@@ -1315,7 +1315,7 @@ function ModelPicker({ value, onChange, mode = "video" }) {
                   .map(([n, d, badge]) => (
                     <button key={n} onClick={() => pick(n)} className={rowCls}>
                       <img
-                        src="/lovable-logo.svg"
+                        src="/xframe-logo.png"
                         alt=""
                         className="size-5 shrink-0"
                       />
@@ -8725,7 +8725,7 @@ function ProjectSwitcher({ project, projects }) {
           aria-label={`Cambiar de proyecto. Proyecto actual: ${project.title}`}
           className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-sm font-medium transition-colors hover:bg-accent data-[state=open]:bg-accent"
         >
-          <img src="/lovable-logo.svg" alt="" className="size-6 shrink-0" />
+          <img src="/xframe-logo.png" alt="" className="size-6 shrink-0" />
           <span className="max-w-[240px] truncate">{project.title}</span>
           <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
         </button>
@@ -11724,7 +11724,7 @@ function BillingSettings() {
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <Card className="p-6">
           <div className="flex items-center gap-3">
-            <img src="/lovable-logo.svg" alt="" className="size-7" />
+            <img src="/xframe-logo.png" alt="" className="size-7" />
             <div className="flex flex-1 items-center gap-2">
               <span className="font-semibold capitalize">
                 Xframe {profile?.plan ?? "Free"}
