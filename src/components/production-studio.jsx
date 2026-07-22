@@ -4375,7 +4375,7 @@ function CategoryGrid({ categories, active, onSelect }) {
           type="button"
           onClick={() => onSelect(active === cat.name ? null : cat.name)}
           className={cn(
-            "relative flex h-14 flex-col justify-end overflow-hidden rounded-xl p-1.5 text-left text-white shadow-sm",
+            "relative flex h-14 min-w-0 flex-col justify-end overflow-hidden rounded-xl p-1.5 text-left text-white shadow-sm",
             active === cat.name &&
               "ring-2 ring-foreground ring-offset-1 ring-offset-background",
           )}
