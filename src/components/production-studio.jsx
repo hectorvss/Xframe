@@ -5094,12 +5094,16 @@ export function AudioStudio({
       <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
         <header className="flex h-12 shrink-0 items-center gap-3 px-4">
           {audioLibraryVisible && (
-            <SidebarToggle
-              side="left"
-              expanded={audioLibraryVisible}
-              onChange={setAudioLibraryVisible}
-              label="biblioteca de sonido"
-            />
+            // Desplegado: el toggle va justo fuera del sidebar (que mide 400px), a la
+            // misma altura del encabezado. 384px = 400 del panel menos el padding px-4.
+            <div className="ml-[384px] shrink-0">
+              <SidebarToggle
+                side="left"
+                expanded={audioLibraryVisible}
+                onChange={setAudioLibraryVisible}
+                label="biblioteca de sonido"
+              />
+            </div>
           )}
           <div className="ml-auto flex items-center gap-3">
             {!audioLibraryVisible && (
