@@ -2578,7 +2578,7 @@ export function ScreenplayStudio({
               </div>
             </div>
             {scenePanelVisible && leftTab === "cast" && (
-              <ScrollArea className="min-h-0 flex-1">
+              <div className="min-h-0 flex-1 overflow-y-auto">
                 <CastPanel
                   projectId={projectId}
                   characters={characters}
@@ -2588,7 +2588,7 @@ export function ScreenplayStudio({
                   onSendAgent={onSendAgent}
                   onSeedChat={onSeedChat}
                 />
-              </ScrollArea>
+              </div>
             )}
             {scenePanelVisible && leftTab === "scenes" && (
               <>
@@ -4430,7 +4430,7 @@ function SoundBrowser({ audioAssets, trackMeta, onUseEffect, onAddAsset }) {
         ))}
       </div>
       {tab === "explore" ? (
-        <ScrollArea className="min-h-0 flex-1">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-3 p-3">
             <CategoryGrid
               categories={SFX_CATEGORIES}
@@ -4495,9 +4495,9 @@ function SoundBrowser({ audioAssets, trackMeta, onUseEffect, onAddAsset }) {
               )}
             </div>
           </div>
-        </ScrollArea>
+        </div>
       ) : (
-        <ScrollArea className="min-h-0 flex-1">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-1 p-3">
             {audioAssets.map((asset) => (
               <div
@@ -4538,7 +4538,7 @@ function SoundBrowser({ audioAssets, trackMeta, onUseEffect, onAddAsset }) {
               />
             )}
           </div>
-        </ScrollArea>
+        </div>
       )}
     </div>
   );
@@ -4612,7 +4612,7 @@ function VoicesBrowser({ projectId, voices, run, onAskAgent }) {
           ))}
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="space-y-1 p-3">
           {tab === "explore" ? (
             <div className="space-y-2">
@@ -4737,7 +4737,7 @@ function VoicesBrowser({ projectId, voices, run, onAskAgent }) {
                 </>
               )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -5093,12 +5093,6 @@ export function AudioStudio({
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
         <header className="flex h-12 shrink-0 items-center gap-3 px-4">
-          <SidebarToggle
-            side="left"
-            expanded={audioLibraryVisible}
-            onChange={setAudioLibraryVisible}
-            label="biblioteca de sonido"
-          />
           <div className="ml-auto flex items-center gap-3">
             {providerStatus && (
               <div className="hidden items-center gap-1.5 xl:flex">
@@ -5163,6 +5157,19 @@ export function AudioStudio({
                 : "overflow-visible",
             )}
           >
+            <div
+              className={cn(
+                "flex shrink-0 items-center px-2 pt-2",
+                !audioLibraryVisible && "absolute left-2 top-3 z-20",
+              )}
+            >
+              <SidebarToggle
+                side="left"
+                expanded={audioLibraryVisible}
+                onChange={setAudioLibraryVisible}
+                label="biblioteca de sonido"
+              />
+            </div>
             {audioLibraryVisible && (
               loading ? <ProductionListSkeleton rows={6} /> : <Tabs
                 value={libraryTab}
