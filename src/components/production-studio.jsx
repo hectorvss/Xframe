@@ -2099,56 +2099,6 @@ function MixTimeline({
 
   return (
     <div className="overflow-hidden rounded-xl border bg-background">
-      {/* Transporte */}
-      <div className="flex items-center gap-2 border-b px-3 py-2.5">
-        <div className="flex flex-1 items-center justify-center gap-3">
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-label={playing ? "Detener" : "Reproducir mezcla"}
-            className="flex size-11 items-center justify-center rounded-full bg-foreground text-background transition-transform hover:scale-105"
-          >
-            {playing ? (
-              <Pause className="size-5 fill-current" />
-            ) : (
-              <Play className="size-5 fill-current" />
-            )}
-          </button>
-          <span className="text-sm tabular-nums text-muted-foreground">
-            {fmt(pos)} / {fmt(totalMs)}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            className={iconBtn}
-            onClick={() => setPxPerSec((v) => clampZoom(v * 0.8))}
-            aria-label="Alejar"
-          >
-            <Minus className="size-4" />
-          </button>
-          <div
-            className="relative h-4 w-16 cursor-pointer touch-none"
-            onPointerDown={startZoom}
-            title="Escala de segundos"
-          >
-            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted" />
-            <span
-              className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground"
-              style={{ left: `${zoomPct}%` }}
-            />
-          </div>
-          <button
-            type="button"
-            className={iconBtn}
-            onClick={() => setPxPerSec((v) => clampZoom(v * 1.25))}
-            aria-label="Acercar"
-          >
-            <Plus className="size-4" />
-          </button>
-        </div>
-      </div>
-
       <div className="flex">
         {/* Columna fija de nombres de pista */}
         <div className="shrink-0 border-r" style={{ width: `${NAME_W}px` }}>
@@ -2276,6 +2226,55 @@ function MixTimeline({
               style={{ left: `${at(pos)}px`, top: "20px", bottom: 0 }}
             />
           </div>
+        </div>
+      </div>
+      {/* Transporte, abajo como un reproductor. */}
+      <div className="flex items-center gap-2 border-t px-3 py-2.5">
+        <div className="flex flex-1 items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label={playing ? "Detener" : "Reproducir mezcla"}
+            className="flex size-11 items-center justify-center rounded-full bg-foreground text-background transition-transform hover:scale-105"
+          >
+            {playing ? (
+              <Pause className="size-5 fill-current" />
+            ) : (
+              <Play className="size-5 fill-current" />
+            )}
+          </button>
+          <span className="text-sm tabular-nums text-muted-foreground">
+            {fmt(pos)} / {fmt(totalMs)}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => setPxPerSec((v) => clampZoom(v * 0.8))}
+            aria-label="Alejar"
+          >
+            <Minus className="size-4" />
+          </button>
+          <div
+            className="relative h-4 w-16 cursor-pointer touch-none"
+            onPointerDown={startZoom}
+            title="Escala de segundos"
+          >
+            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted" />
+            <span
+              className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground"
+              style={{ left: `${zoomPct}%` }}
+            />
+          </div>
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => setPxPerSec((v) => clampZoom(v * 1.25))}
+            aria-label="Acercar"
+          >
+            <Plus className="size-4" />
+          </button>
         </div>
       </div>
     </div>
@@ -4994,21 +4993,6 @@ export function AudioStudio({
                       )
                     }
                   />
-                  {!data.cues.length && (
-                    <div className="mt-5">
-                      <EmptyState
-                        icon={Music2}
-                        title="La mezcla aún está vacía"
-                        description="Añade audio desde la biblioteca o pide al agente que proponga un plan contextual a partir del guion."
-                        action={
-                          <Button onClick={() => setBriefOpen(true)}>
-                            <Sparkles />
-                            Diseñar plan
-                          </Button>
-                        }
-                      />
-                    </div>
-                  )}
                   {cue && (
                     <div className="mt-4 rounded-xl border bg-muted/10 p-4">
                       <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -5025,21 +5009,6 @@ export function AudioStudio({
                       />
                     </div>
                   )}
-                  <Card className="mt-4 shadow-none">
-                    <CardContent className="flex items-center gap-3 p-4">
-                      <span className="flex size-9 items-center justify-center rounded-lg bg-muted">
-                        <Lock className="size-4" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium">Mezcla reproducible</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          Los tiempos, fades, ganancias, paneo y ducking se
-                          guardan como parámetros exactos para FFmpeg.
-                        </p>
-                      </div>
-                      <Badge variant="outline">−14 LUFS</Badge>
-                    </CardContent>
-                  </Card>
                 </div>
               )}
             </div>
