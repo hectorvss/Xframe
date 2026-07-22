@@ -1,17 +1,25 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
+import sys
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test/test")
 os.environ.setdefault("ELEVENLABS_API_KEY", "test-eleven")
 os.environ.setdefault("SYNC_API_KEY", "test-sync")
 
 from app.config import get_settings
-from app.providers.base import GenerationRequest
+from app.jobs.queue import EnqueueResult
+from app.providers.base import GenerationRequest, ModelSpec
 from app.providers.elevenlabs import ElevenLabsAdapter
 from app.providers.sync_labs import SyncLabsAdapter
 

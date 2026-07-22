@@ -10340,7 +10340,9 @@ function AppsSettings() {
               : "Las sesiones se muestran al conectar Supabase."}
           </div>
         )}
-        {sessions.map((session) => {
+        {/* La RPC ya colapsa por dispositivo; aquí se muestran solo los 4 más
+            recientes para que la lista no crezca sin fin. */}
+        {sessions.slice(0, 4).map((session) => {
           const device = describeDevice(session.user_agent);
           const isCurrent = session.id === currentId;
           return (

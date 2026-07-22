@@ -337,6 +337,11 @@ create policy "claves propias" on public.api_keys
 
 -- ---------------------------------------------------------- sesiones
 -- auth.sessions no admite RLS, así que se expone acotada al propio usuario.
+--
+-- "Sesiones activas" es POR DISPOSITIVO, no por token: cada login con contraseña crea
+-- una fila nueva en auth.sessions, y un navegador que vuelve a entrar sin reutilizar su
+-- sesión persistida acumulaba una entrada por visita. Se colapsa por (user_agent, ip)
+-- para que un aparato aparezca una sola vez, con su actividad más reciente.
 
 create or replace function public.my_sessions()
 returns table (
@@ -345,23 +350,35 @@ returns table (
 )
 language sql security definer set search_path = auth, public
 as $fn$
-  select s.id, s.created_at, s.refreshed_at, s.user_agent, host(s.ip)
-    from auth.sessions s
-   where s.user_id = auth.uid()
-   order by coalesce(s.refreshed_at, s.created_at::timestamp) desc;
+  select d.id, d.created_at, d.refreshed_at, d.user_agent, d.ip
+  from (
+    select distinct on (s.user_agent, host(s.ip))
+           s.id, s.created_at, s.refreshed_at, s.user_agent, host(s.ip) as ip
+      from auth.sessions s
+     where s.user_id = auth.uid()
+     order by s.user_agent, host(s.ip),
+              coalesce(s.refreshed_at, s.created_at::timestamp) desc
+  ) d
+  order by coalesce(d.refreshed_at, d.created_at::timestamp) desc;
 $fn$;
 
+-- Revocar un dispositivo cierra TODAS sus sesiones-token (también las duplicadas muertas).
 create or replace function public.revoke_session(session_id uuid)
-returns boolean language plpgsql security definer set search_path = auth, public
+returns void language sql security definer set search_path = auth, public
 as $fn$
-begin
-  delete from auth.sessions where id = session_id and user_id = auth.uid();
-  return found;
-end;
+  delete from auth.sessions
+  where user_id = auth.uid()
+    and (coalesce(user_agent, ''), coalesce(host(ip), '')) in (
+      select coalesce(user_agent, ''), coalesce(host(ip), '')
+      from auth.sessions
+      where id = session_id and user_id = auth.uid()
+    );
 $fn$;
 
 revoke all on function public.my_sessions() from public, anon;
+revoke all on function public.revoke_session(uuid) from public, anon;
 grant execute on function public.my_sessions() to authenticated;
+grant execute on function public.revoke_session(uuid) to authenticated;
 revoke all on function public.revoke_session(uuid) from public, anon;
 grant execute on function public.revoke_session(uuid) to authenticated;
 
