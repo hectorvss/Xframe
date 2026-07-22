@@ -594,7 +594,11 @@ function translateDynamic(value) {
     .replace(/\bal mes IVA incl\./gi, "per month VAT incl.")
     .replace(/\ben los (\d+) últimos días\b/gi, "in the last $1 days")
     .replace(/\bde (\d+)\b/gi, "of $1")
-    .replace(/¿Necesitas más créditos\?/g, "Need more credits?");
+    .replace(/¿Necesitas más créditos\?/g, "Need more credits?")
+    // Saludo del chat con el nombre del usuario interpolado: "¿Cuál es la visión,
+    // Marta?". El nombre es dinámico, así que no hay match exacto posible; se traduce
+    // el molde y se conserva el nombre.
+    .replace(/¿Cuál es la visión, ([^?]+)\?/g, "What's the vision, $1?");
 }
 
 export function translateToEnglish(value) {
