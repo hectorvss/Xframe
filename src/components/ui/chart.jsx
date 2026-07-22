@@ -24,9 +24,10 @@ function useChart() {
 const ChartContainer = React.forwardRef(({ id, className, children, config, ...props }, ref) => {
   const uniqueId = React.useId()
   const chartId = `chart-${id || uniqueId.replace(/:/g, "")}`
+  const safeConfig = config && typeof config === "object" ? config : {}
 
   return (
-    <ChartContext.Provider value={{ config }}>
+    <ChartContext.Provider value={{ config: safeConfig }}>
       <div
         data-chart={chartId}
         ref={ref}
@@ -35,7 +36,7 @@ const ChartContainer = React.forwardRef(({ id, className, children, config, ...p
           className
         )}
         {...props}>
-        <ChartStyle id={chartId} config={config} />
+        <ChartStyle id={chartId} config={safeConfig} />
         <RechartsPrimitive.ResponsiveContainer>
           {children}
         </RechartsPrimitive.ResponsiveContainer>
@@ -49,7 +50,8 @@ const ChartStyle = ({
   id,
   config
 }) => {
-  const colorConfig = Object.entries(config).filter(([, config]) => config.theme || config.color)
+  const safeConfig = config && typeof config === "object" ? config : {}
+  const colorConfig = Object.entries(safeConfig).filter(([, item]) => item?.theme || item?.color)
 
   if (!colorConfig.length) {
     return null

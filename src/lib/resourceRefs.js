@@ -39,8 +39,24 @@ function resource(type, id, label, extra = {}) {
 
 /** Catálogo único para el compositor @. Los objetos completos nunca viajan al LLM. */
 export function buildResourceCatalog({ assets = [], brief = [], canvas, production = {} }) {
+  // Los proyectos antiguos y los estados parciales de carga pueden devolver `null`
+  // explícito. Los defaults de desestructuración solo cubren `undefined`, de modo que
+  // llamar a `.entries()` sobre el brief tumbaba todo el editor antes de pintar Guion,
+  // Audio o Assets. Cada colección se normaliza en la frontera del catálogo.
+  const assetList = Array.isArray(assets) ? assets : [];
+  const briefBlocks = Array.isArray(brief) ? brief.filter(Boolean) : [];
+  const canvasNodes = Array.isArray(canvas?.nodes)
+    ? canvas.nodes.filter(Boolean)
+    : [];
+  const productionState =
+    production && typeof production === "object" ? production : {};
+  const collection = (key) =>
+    Array.isArray(productionState[key])
+      ? productionState[key].filter(Boolean)
+      : [];
+
   const refs = [];
-  for (const [index, block] of brief.entries()) {
+  for (const [index, block] of briefBlocks.entries()) {
     const id = block.db_id || block.id;
     if (id) {
       refs.push(
@@ -51,7 +67,7 @@ export function buildResourceCatalog({ assets = [], brief = [], canvas, producti
       );
     }
   }
-  for (const asset of assets.filter((item) => !item.ghost)) {
+  for (const asset of assetList.filter((item) => item && !item.ghost)) {
     refs.push(
       resource(asset.role ? "element" : "asset", asset.id, asset.name, {
         kind: asset.type || "asset",
@@ -60,7 +76,7 @@ export function buildResourceCatalog({ assets = [], brief = [], canvas, producti
       }),
     );
   }
-  for (const [index, node] of (canvas?.nodes || []).entries()) {
+  for (const [index, node] of canvasNodes.entries()) {
     refs.push(
       resource(node.type === "shot" ? "shot" : "canvas", node.db_id || node.id, node.title || `Plano ${index + 1}`, {
         node_key: node.node_key || node.id,
@@ -68,17 +84,17 @@ export function buildResourceCatalog({ assets = [], brief = [], canvas, producti
       }),
     );
   }
-  for (const [index, scene] of (production.scenes || []).entries()) {
+  for (const [index, scene] of collection("scenes").entries()) {
     refs.push(resource("scene", scene.id, scene.title || `Escena ${index + 1}`, { position: scene.position }));
   }
-  for (const line of production.lines || []) {
+  for (const line of collection("lines")) {
     const label = `${line.line_type || "línea"}-${String(line.text || "").slice(0, 42)}`;
     refs.push(resource("line", line.id, label, { scene_id: line.scene_id }));
   }
-  for (const voice of production.voices || []) {
+  for (const voice of collection("voices")) {
     refs.push(resource("voice", voice.id, voice.name, { status: voice.status }));
   }
-  for (const cue of production.cues || []) {
+  for (const cue of collection("cues")) {
     refs.push(
       resource("cue", cue.id, `${cue.track_kind || "audio"}-${cue.start_ms || 0}ms`, {
         start_ms: cue.start_ms,
@@ -87,10 +103,10 @@ export function buildResourceCatalog({ assets = [], brief = [], canvas, producti
       }),
     );
   }
-  for (const template of production.audioTemplates || []) {
+  for (const template of collection("audioTemplates")) {
     refs.push(resource("sound_template", template.id, template.name, { asset_id: template.asset_id }));
   }
-  for (const annotation of production.annotations || []) {
+  for (const annotation of collection("annotations")) {
     refs.push(
       resource(
         "annotation",
@@ -100,7 +116,7 @@ export function buildResourceCatalog({ assets = [], brief = [], canvas, producti
       ),
     );
   }
-  for (const operation of production.operations || []) {
+  for (const operation of collection("operations")) {
     refs.push(
       resource(
         "operation",
@@ -114,7 +130,7 @@ export function buildResourceCatalog({ assets = [], brief = [], canvas, producti
       ),
     );
   }
-  for (const report of production.qualityReports || []) {
+  for (const report of collection("qualityReports")) {
     refs.push(
       resource(
         "report",
@@ -129,10 +145,10 @@ export function buildResourceCatalog({ assets = [], brief = [], canvas, producti
       ),
     );
   }
-  for (const transition of production.transitions || []) {
+  for (const transition of collection("transitions")) {
     refs.push(resource("transition", transition.id, transition.signature || transition.kind || "transición"));
   }
-  for (const manifest of production.productionManifests || []) {
+  for (const manifest of collection("productionManifests")) {
     refs.push(
       resource(
         "manifest",
