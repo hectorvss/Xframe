@@ -51,9 +51,9 @@ ninguna URL que `JobWorker._land_output` pueda descargar con su `httpx.get()`.
 
 Se devuelve un `data:` URI en `output_urls` porque es la única representación que cabe en
 `ProviderJobStatus` sin cambiar el contrato, y los bytes crudos quedan además en
-`raw["images_b64"]` para quien pueda usarlos directamente. **`_land_output` no sabe
-descargar un `data:` URI** (httpx no soporta ese esquema); ver el resumen de la tarea. No
-se toca el worker desde aquí.
+`raw["images_b64"]` para quien pueda usarlos directamente. El `OutputDownloader` del
+worker **sí** sabe decodificar un `data:` URI (`app/jobs/download.py`, rama `data:`), así
+que el camino descarga→bucket cierra el círculo end-to-end sin tocar nada aquí.
 """
 
 from __future__ import annotations

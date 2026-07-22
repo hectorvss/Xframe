@@ -842,10 +842,20 @@ class GenerateAudioTool(_GenerationTool):
             rows = await db.fetch(
                 """
                 select l.id, l.scene_id, l.shot_id, l.text, l.target_duration_ms,
-                       l.emotion, l.direction, l.voice_profile_id,
+                       l.emotion, l.direction,
+                       coalesce(l.voice_profile_id, cv.voice_profile_id, $3::uuid)
+                           as voice_profile_id,
                        vp.provider_voice_id, vp.settings
                   from public.script_lines l
-             left join public.voice_profiles vp on vp.id=coalesce(l.voice_profile_id,$3::uuid)
+                  -- Voz por defecto del personaje que habla. Si la línea no fija voz, se
+                  -- hereda la del hablante (character_voices.is_default). Sin esto, un
+                  -- guion con hablante pero sin voz explícita por línea reventaba al
+                  -- generar ("no ready provider voice"); ahora la voz se auto-resuelve
+                  -- por el orden natural: línea > personaje > parámetro de la tool.
+             left join public.character_voices cv
+                    on cv.element_id = l.speaker_element_id and cv.is_default = true
+             left join public.voice_profiles vp
+                    on vp.id = coalesce(l.voice_profile_id, cv.voice_profile_id, $3::uuid)
                  where l.project_id=$1::uuid and l.id=any($2::uuid[])
                  order by l.scene_id, l.position
                 """,
@@ -1355,11 +1365,23 @@ class GenerateLipsyncTool(_GenerationTool):
         if audio_asset_id:
             audio = await _asset_or_raise(self.ctx.project_id, audio_asset_id, kind="audio")
             audio_url = audio["url"]
-        if not text and not audio_url and not segments:
+        # Lipsync NO sintetiza voz: el proveedor (Sync) dobla un clip contra un audio que
+        # YA existe. `text` por sí solo era una promesa que el proveedor no cumple —
+        # pasaba la validación de la tool y reventaba en el submit. El contrato ahora es
+        # honesto: se exige audio real, y si solo hay texto se guía al flujo correcto.
+        if not audio_url and not segments:
+            if text:
+                raise XframeToolRetryableError(
+                    "Lipsync does not synthesize speech — it dubs a clip against audio that "
+                    "already exists. Generate the voice first with generate_audio "
+                    "(kind='voice' or 'dialogue') from the screenplay lines, then call "
+                    "generate_lipsync again with that clip's audio_asset_id."
+                )
             raise XframeToolRetryableError(
-                "generate_lipsync needs either the line to be spoken (text) or an audio "
-                "track (audio_url). Ask the user for the dialogue if you do not have it — "
-                "do not write lines for their characters on your own."
+                "generate_lipsync needs an audio track to sync to: pass audio_asset_id "
+                "(a voice/dialogue asset already generated), audio_url, or per-speaker "
+                "segments. If you only have the words, generate the audio first with "
+                "generate_audio — do not write lines for the user's characters on your own."
             )
         model = self.require_model(model_id, "lipsync")
         source = await _asset_or_raise(self.ctx.project_id, asset_id, kind="video")

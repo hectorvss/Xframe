@@ -1227,6 +1227,9 @@ _COST_KEYS: tuple[str, ...] = (
     "cost",
     "total_cost",
     "billed_cost",
+    # BFL/Flux publica el importe real facturado bajo este nombre (lo arrastra su poll
+    # terminal desde el submit). Sin la clave aquí, la reconciliación nunca se activaba.
+    "actual_cost_usd",
 )
 """
 Nombres bajo los que un proveedor publica lo que nos ha cobrado por este trabajo.

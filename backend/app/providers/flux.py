@@ -190,8 +190,17 @@ class FluxAdapter(HttpAdapter):
                     state="failed", error="Ready without a sample url", raw=body
                 )
             # La URL caduca en ~10 min: quien reciba esto tiene que copiarla ya.
+            # El coste real de BFL vino en el SUBMIT (no en este poll), así que se
+            # arrastra desde `ref.raw` al `raw` terminal para que el cierre del job
+            # reconcilie contra el importe verdadero. Sin esto, el coste real viajaba
+            # en el submit y el worker —que solo mira el poll— nunca lo veía: el
+            # `actual_cost_usd` era código muerto.
+            terminal = dict(body)
+            for key in ("actual_cost_usd", "actual_megapixels"):
+                if key not in terminal and (ref.raw or {}).get(key) is not None:
+                    terminal[key] = ref.raw[key]
             return ProviderJobStatus(
-                state="succeeded", progress=1.0, output_urls=[url_out], raw=body
+                state="succeeded", progress=1.0, output_urls=[url_out], raw=terminal
             )
         if status in ("Request Moderated", "Content Moderated"):
             return ProviderJobStatus(

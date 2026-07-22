@@ -239,15 +239,17 @@ MODELS: tuple[SeedModel, ...] = (
         modality="video",
         label="OpenAI Sora 2 Pro",
         description_llm=(
-            "Version larga y de mas resolucion de Sora 2: admite hasta 25 segundos, lo "
-            "que lo hace el unico del catalogo capaz de sostener una escena entera sin "
-            "cortar. Comparte la fecha de apagado del 24 de septiembre de 2026, asi que "
-            "vale para entregar ya, no para construir encima."
+            "Version de mas resolucion de Sora 2, con el mismo rango de duracion (hasta "
+            "12 segundos por plano). Comparte la fecha de apagado del 24 de septiembre "
+            "de 2026, asi que vale para entregar ya, no para construir encima."
         ),
         cost_per_second=Decimal("0.30"),
         price_confidence="verified",
-        min_duration_s=10,
-        max_duration_s=25,
+        # El adaptador (sora.py `_ALLOWED_SECONDS`) solo emite 4/8/12s para AMBAS
+        # variantes. Antes la seed anunciaba 10-25s y una peticion de 20s salia como 12
+        # en silencio; ahora la capacidad anunciada = la real.
+        min_duration_s=4,
+        max_duration_s=12,
         resolutions=("720p", "1024p", "1080p"),
         aspects=("16:9", "9:16"),
         supports_i2v=True,
