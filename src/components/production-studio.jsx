@@ -45,6 +45,12 @@ import {
   Zap,
 } from "lucide-react";
 
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1266,6 +1272,217 @@ function LineInspector({
   );
 }
 
+// Cada personaje recibe un color estable derivado de su id, para que la barra lateral de
+// cada línea, su pill de hablante y su clip en el timeline compartan identidad visual.
+const CHARACTER_PALETTE = [
+  { hex: "#f59e0b", text: "text-amber-600", tint: "bg-amber-500/12" },
+  { hex: "#0ea5e9", text: "text-sky-600", tint: "bg-sky-500/12" },
+  { hex: "#10b981", text: "text-emerald-600", tint: "bg-emerald-500/12" },
+  { hex: "#d946ef", text: "text-fuchsia-600", tint: "bg-fuchsia-500/12" },
+  { hex: "#f43f5e", text: "text-rose-600", tint: "bg-rose-500/12" },
+  { hex: "#8b5cf6", text: "text-violet-600", tint: "bg-violet-500/12" },
+  { hex: "#06b6d4", text: "text-cyan-600", tint: "bg-cyan-500/12" },
+  { hex: "#f97316", text: "text-orange-600", tint: "bg-orange-500/12" },
+];
+const NEUTRAL_ACCENT = { hex: "#a1a1aa", text: "text-muted-foreground", tint: "bg-muted" };
+
+function characterColor(id) {
+  const source = String(id ?? "");
+  let hash = 0;
+  for (let i = 0; i < source.length; i += 1)
+    hash = (hash * 31 + source.charCodeAt(i)) >>> 0;
+  return CHARACTER_PALETTE[hash % CHARACTER_PALETTE.length];
+}
+
+function lineAccent(line, speaker) {
+  if (line.line_type === "dialogue" && speaker) return characterColor(speaker.id);
+  if (line.line_type === "voiceover") return CHARACTER_PALETTE[2];
+  if (line.line_type === "caption") return CHARACTER_PALETTE[1];
+  return NEUTRAL_ACCENT;
+}
+
+// Reproduce una lista de tomas de audio una detrás de otra con un único <audio>. Sirve
+// para escuchar solo el guion (las voces) sin música ni efectos.
+function useSequentialPlayback(tracks) {
+  const [playing, setPlaying] = useState(false);
+  const [index, setIndex] = useState(-1);
+  const audioRef = useRef(null);
+  const tracksRef = useRef(tracks);
+  tracksRef.current = tracks;
+
+  const stop = useCallback(() => {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.onended = null;
+      audio.onerror = null;
+    }
+    setPlaying(false);
+    setIndex(-1);
+  }, []);
+
+  const playFrom = useCallback(
+    (start) => {
+      const list = tracksRef.current;
+      if (start >= list.length) {
+        stop();
+        return;
+      }
+      let audio = audioRef.current;
+      if (!audio) {
+        audio = new Audio();
+        audioRef.current = audio;
+      }
+      audio.src = list[start].url;
+      audio.onended = () => playFrom(start + 1);
+      audio.onerror = () => playFrom(start + 1);
+      setIndex(start);
+      setPlaying(true);
+      audio.play().catch(() => stop());
+    },
+    [stop],
+  );
+
+  const toggle = useCallback(() => {
+    if (playing) {
+      audioRef.current?.pause();
+      setPlaying(false);
+    } else if (index >= 0 && audioRef.current) {
+      audioRef.current.play().catch(() => {});
+      setPlaying(true);
+    } else {
+      playFrom(0);
+    }
+  }, [playing, index, playFrom]);
+
+  useEffect(() => stop, [stop]);
+  return { playing, index, toggle };
+}
+
+function ScreenplayPlayBar({ tracks }) {
+  const { playing, index, toggle } = useSequentialPlayback(tracks);
+  const has = tracks.length > 0;
+  const current = index >= 0 ? tracks[index] : null;
+  return (
+    <div className="flex shrink-0 items-center gap-3 border-t bg-muted/20 px-4 py-2.5">
+      <Button
+        size="icon"
+        variant={has ? "default" : "outline"}
+        className="size-9 shrink-0 rounded-full"
+        disabled={!has}
+        onClick={toggle}
+        aria-label={playing ? "Pausar" : "Escuchar el guion"}
+      >
+        {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+      </Button>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium">
+          {current ? current.label : "Escuchar el guion"}
+        </p>
+        <p className="truncate text-[10px] text-muted-foreground">
+          {has
+            ? `${tracks.length} ${tracks.length === 1 ? "toma" : "tomas"} de voz, en orden`
+            : "Genera las tomas de las líneas para reproducir el guion."}
+        </p>
+      </div>
+      <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+        <Volume2 className="size-3.5" /> Solo voces
+      </span>
+    </div>
+  );
+}
+
+// Reparto del proyecto: personajes (Elements con rol) con su color y su voz por defecto.
+function CastPanel({
+  projectId,
+  characters,
+  voices,
+  assignments,
+  run,
+  onSendAgent,
+  onSeedChat,
+}) {
+  return (
+    <div className="space-y-2 p-2.5">
+      {characters.map((character) => {
+        const color = characterColor(character.id);
+        const assignment = assignments.find(
+          (item) =>
+            String(item.element_id) === String(character.id) && item.is_default,
+        );
+        return (
+          <div key={character.id} className="rounded-xl border bg-background p-2.5">
+            <div className="flex items-center gap-2.5">
+              <span
+                className="relative size-8 shrink-0 rounded-lg bg-cover bg-center ring-1 ring-border"
+                style={{
+                  backgroundImage: character.url
+                    ? `url(${character.url})`
+                    : undefined,
+                  backgroundColor: character.url ? undefined : color.hex,
+                }}
+              >
+                <span
+                  className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-background"
+                  style={{ backgroundColor: color.hex }}
+                />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-semibold">{character.name}</p>
+                <p className="truncate text-[10px] text-muted-foreground">
+                  {character.role}
+                </p>
+              </div>
+            </div>
+            <Select
+              value={assignment?.voice_profile_id || "__none__"}
+              onValueChange={(id) =>
+                run(() =>
+                  db.assignCharacterVoice(
+                    projectId,
+                    character.id,
+                    id === "__none__" ? null : id,
+                  ),
+                )
+              }
+            >
+              <SelectTrigger className="mt-2 h-8 text-xs">
+                <SelectValue placeholder="Sin voz asignada" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Sin voz asignada</SelectItem>
+                {voices.map((voice) => (
+                  <SelectItem key={voice.id} value={String(voice.id)}>
+                    {voice.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        );
+      })}
+      {!characters.length && (
+        <EmptyState
+          icon={UserRound}
+          title="Sin personajes"
+          description="Los personajes son Elements con rol. Créalos en Assets o pídeselos al agente."
+        />
+      )}
+      <Button
+        variant="outline"
+        className="w-full"
+        onClick={() =>
+          (onSendAgent || onSeedChat)?.(
+            "Crea un personaje nuevo como Element con rol de Personaje: propón nombre, breve descripción física y una imagen de referencia, y déjalo listo para asignarle voz.",
+          )
+        }
+      >
+        <Plus /> Crear personaje
+      </Button>
+    </div>
+  );
+}
+
 export function ScreenplayStudio({
   projectId,
   assets = [],
@@ -1277,13 +1494,10 @@ export function ScreenplayStudio({
   const { data, loading, saving, error, reload, run } =
     useProduction(projectId, onProductionChange, productionData);
   const [sceneId, setSceneId] = useState(null);
-  const [lineId, setLineId] = useState(null);
   const [draft, setDraft] = useState("");
   const [scenePanelVisible, setScenePanelVisible] = useStoredVisibility(
     "xframe.screenplay.scene-panel",
   );
-  const [scriptInspectorVisible, setScriptInspectorVisible] =
-    useStoredVisibility("xframe.screenplay.inspector");
   const characters = useMemo(
     () => assets.filter((asset) => asset.role),
     [assets],
@@ -1296,23 +1510,48 @@ export function ScreenplayStudio({
   const scene =
     data.scenes.find((item) => String(item.id) === String(sceneId)) ||
     data.scenes[0];
-  const selectedLine =
-    data.lines.find((item) => String(item.id) === String(lineId)) || null;
   const totalDuration = data.scenes.reduce(
     (total, item) => total + (item.target_duration_ms || 0),
     0,
   );
+  const [leftTab, setLeftTab] = useState("scenes");
+  const [openLineId, setOpenLineId] = useState("");
+  // Tomas de voz de la escena actual, en orden de línea: es lo que reproduce la barra de
+  // play del guion (solo voces, sin música ni efectos).
+  const speechTracks = useMemo(() => {
+    const order = new Map(linesByScene.map((line, i) => [String(line.id), i]));
+    return data.cues
+      .filter(
+        (cue) =>
+          ["dialogue", "voiceover"].includes(cue.track_kind) &&
+          order.has(String(cue.script_line_id)),
+      )
+      .sort(
+        (a, b) =>
+          order.get(String(a.script_line_id)) -
+          order.get(String(b.script_line_id)),
+      )
+      .map((cue) => {
+        const asset = assets.find(
+          (item) => String(item.id) === String(cue.asset_id) && item.url,
+        );
+        return asset
+          ? { id: cue.id, url: asset.url, label: asset.name || "Toma de voz" }
+          : null;
+      })
+      .filter(Boolean);
+  }, [data.cues, linesByScene, assets]);
 
   useEffect(() => {
     if (!data.scenes.length) {
       setSceneId(null);
-      setLineId(null);
+      setOpenLineId("");
       return;
     }
     if (!data.scenes.some((item) => String(item.id) === String(sceneId)))
       setSceneId(data.scenes[0].id);
   }, [data.scenes, sceneId]);
-  useEffect(() => setLineId(null), [sceneId]);
+  useEffect(() => setOpenLineId(""), [sceneId]);
 
   const addScene = async () => {
     let created;
@@ -1327,7 +1566,7 @@ export function ScreenplayStudio({
     const ok = await run(async () => {
       created = await db.createScriptLine(projectId, scene.id, { line_type });
     });
-    if (ok && created) setLineId(created.id);
+    if (ok && created) setOpenLineId(String(created.id));
   };
   const sendBrief = () => {
     if (!draft.trim()) return;
@@ -1366,7 +1605,7 @@ export function ScreenplayStudio({
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns: `${scenePanelVisible ? "240px" : "0px"} minmax(420px, 1fr) ${scriptInspectorVisible ? "310px" : "0px"}`,
+            gridTemplateColumns: `${scenePanelVisible ? "272px" : "0px"} minmax(420px, 1fr)`,
           }}
         >
           <aside
@@ -1386,15 +1625,29 @@ export function ScreenplayStudio({
               )}
             >
               {scenePanelVisible && (
-                <div>
-                  <p className="text-xs font-semibold">ESCENAS</p>
-                  <p className="text-[10px] text-muted-foreground">
-                    Orden narrativo
-                  </p>
+                <div className="flex rounded-lg border bg-muted/40 p-0.5">
+                  {[
+                    ["scenes", "Escenas"],
+                    ["cast", "Personajes"],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setLeftTab(value)}
+                      className={cn(
+                        "rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                        leftTab === value
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
               )}
               <div className="flex items-center gap-1">
-                {scenePanelVisible && (
+                {scenePanelVisible && leftTab === "scenes" && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button variant="outline" size="icon" onClick={addScene}>
@@ -1412,7 +1665,20 @@ export function ScreenplayStudio({
                 />
               </div>
             </div>
-            {scenePanelVisible && (
+            {scenePanelVisible && leftTab === "cast" && (
+              <ScrollArea className="min-h-0 flex-1">
+                <CastPanel
+                  projectId={projectId}
+                  characters={characters}
+                  voices={data.voices}
+                  assignments={data.characterVoices}
+                  run={run}
+                  onSendAgent={onSendAgent}
+                  onSeedChat={onSeedChat}
+                />
+              </ScrollArea>
+            )}
+            {scenePanelVisible && leftTab === "scenes" && (
               <>
                 {loading ? <ProductionListSkeleton /> : <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
                   <div className="space-y-1">
@@ -1496,13 +1762,13 @@ export function ScreenplayStudio({
             )}
           </aside>
 
-          <main
-            className={cn(
-              "min-h-0 overflow-y-auto",
-              !scenePanelVisible && "pl-14",
-              !scriptInspectorVisible && "pr-14",
-            )}
-          >
+          <main className="flex min-h-0 flex-col overflow-hidden">
+            <div
+              className={cn(
+                "min-h-0 flex-1 overflow-y-auto",
+                !scenePanelVisible && "pl-14",
+              )}
+            >
             {loading ? <ScreenplayWorkspaceSkeleton /> : !scene ? (
               <div className="p-6">
                 <EmptyState
@@ -1600,77 +1866,168 @@ export function ScreenplayStudio({
                       </DropdownMenu>
                     </div>
                   </div>
-                  <div className="space-y-2 p-5">
-                    {linesByScene.map((line) => {
-                      const [label, tone] =
-                        lineMeta[line.line_type] || lineMeta.dialogue;
-                      const speaker = characters.find(
-                        (item) =>
-                          String(item.id) === String(line.speaker_element_id),
-                      );
-                      const referenceCount = data.assetLinks.filter(
-                        (link) =>
-                          String(link.script_line_id) === String(line.id),
-                      ).length;
-                      return (
-                        <Card
-                          key={line.id}
-                          className={cn(
-                            "cursor-pointer shadow-none transition-colors",
-                            String(lineId) === String(line.id) &&
-                              "border-foreground/35 ring-1 ring-foreground/10",
-                          )}
-                          onClick={() => setLineId(line.id)}
-                        >
-                          <CardContent className="grid grid-cols-[24px_108px_minmax(0,1fr)_74px] gap-3 p-3.5">
-                            <GripVertical className="mt-2 size-4 text-muted-foreground/60" />
-                            <div>
-                              <Badge
-                                variant="outline"
-                                className={cn("text-[10px]", tone)}
-                              >
-                                {label}
-                              </Badge>
-                              <p className="mt-2 truncate text-[11px] font-medium">
-                                {speaker?.name ||
-                                  (line.line_type === "voiceover"
-                                    ? "Narrador"
-                                    : "—")}
-                              </p>
-                            </div>
-                            <DraftInput
-                              multiline
-                              value={line.text}
-                              className="min-h-16 resize-none border-0 bg-transparent p-1 text-sm shadow-none focus-visible:ring-1"
-                              onCommit={(text) =>
-                                run(() =>
-                                  db.updateScriptLine(line.id, { text }),
-                                )
-                              }
-                              placeholder="Escribe la línea…"
-                            />
-                            <div className="pt-1 text-right">
-                              <p className="text-xs font-medium">
-                                {line.target_duration_ms
-                                  ? `${(line.target_duration_ms / 1000).toFixed(1)} s`
-                                  : "Auto"}
-                              </p>
-                              <p className="mt-1 text-[10px] text-muted-foreground">
-                                {line.status}
-                              </p>
-                              {referenceCount > 0 && (
-                                <Badge
-                                  variant="outline"
-                                  className="mt-1 text-[9px]"
-                                >
-                                  {referenceCount} refs
-                                </Badge>
-                              )}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
+                  <div className="space-y-3 p-5">
+                    <Accordion
+                      type="single"
+                      collapsible
+                      value={openLineId}
+                      onValueChange={setOpenLineId}
+                      className="space-y-2"
+                    >
+                      <AccordionItem
+                        value="scene-details"
+                        className="overflow-hidden rounded-xl border data-[state=open]:shadow-lg"
+                      >
+                        <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:no-underline">
+                          Detalles de la escena
+                        </AccordionTrigger>
+                        <AccordionContent className="border-t bg-muted/10 px-4 pb-4 pt-4">
+                          <SceneInspector
+                            projectId={projectId}
+                            scene={scene}
+                            characters={characters}
+                            voices={data.voices}
+                            assignments={data.characterVoices}
+                            assets={assets}
+                            links={data.assetLinks}
+                            manifests={data.productionManifests}
+                            sceneShots={data.sceneShots}
+                            shots={data.shots}
+                            run={run}
+                            onSeedChat={onSeedChat}
+                            onSendAgent={onSendAgent}
+                          />
+                        </AccordionContent>
+                      </AccordionItem>
+                      {linesByScene.map((line) => {
+                        const [label] =
+                          lineMeta[line.line_type] || lineMeta.dialogue;
+                        const speaker = characters.find(
+                          (item) =>
+                            String(item.id) === String(line.speaker_element_id),
+                        );
+                        const accent = lineAccent(line, speaker);
+                        const referenceCount = data.assetLinks.filter(
+                          (link) =>
+                            String(link.script_line_id) === String(line.id),
+                        ).length;
+                        const speakerName =
+                          speaker?.name ||
+                          (line.line_type === "voiceover" ? "Narrador" : null);
+                        return (
+                          <AccordionItem
+                            key={line.id}
+                            value={String(line.id)}
+                            className={cn(
+                              "overflow-hidden rounded-xl border transition-shadow data-[state=open]:bg-card data-[state=open]:shadow-lg",
+                              openLineId === String(line.id)
+                                ? ""
+                                : "border-transparent hover:border-border hover:bg-accent/30",
+                            )}
+                          >
+                            <AccordionTrigger className="gap-3 px-3 py-2.5 hover:no-underline">
+                              <span
+                                className="w-1 shrink-0 self-stretch rounded-full"
+                                style={{ backgroundColor: accent.hex }}
+                              />
+                              <span className="flex min-w-0 flex-1 flex-col gap-1 text-left">
+                                <span className="flex flex-wrap items-center gap-2">
+                                  {speakerName && (
+                                    <span
+                                      className={cn(
+                                        "inline-flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-2 text-xs font-semibold",
+                                        accent.tint,
+                                        accent.text,
+                                      )}
+                                    >
+                                      <span
+                                        className="size-3.5 rounded"
+                                        style={{ backgroundColor: accent.hex }}
+                                      />
+                                      {speakerName}
+                                    </span>
+                                  )}
+                                  <span className="rounded border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    {label}
+                                  </span>
+                                </span>
+                                <span className="truncate text-sm text-foreground">
+                                  {line.text || (
+                                    <span className="italic text-muted-foreground">
+                                      Línea vacía
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                                  {referenceCount > 0 && (
+                                    <span className="inline-flex items-center gap-1">
+                                      <Bookmark className="size-3" />
+                                      {referenceCount}{" "}
+                                      {referenceCount === 1 ? "ref" : "refs"}
+                                    </span>
+                                  )}
+                                  <span>
+                                    {line.target_duration_ms
+                                      ? `${(line.target_duration_ms / 1000).toFixed(1)} s`
+                                      : "Auto"}
+                                  </span>
+                                  <span>{line.status}</span>
+                                </span>
+                              </span>
+                            </AccordionTrigger>
+                            <AccordionContent className="border-t bg-muted/10 px-4 pb-4 pt-4">
+                              <div className="space-y-4">
+                                <Field label="Texto de la línea">
+                                  <DraftInput
+                                    multiline
+                                    className="min-h-16"
+                                    value={line.text}
+                                    onCommit={(text) =>
+                                      run(() =>
+                                        db.updateScriptLine(line.id, { text }),
+                                      )
+                                    }
+                                    placeholder="Escribe la línea…"
+                                  />
+                                </Field>
+                                <LineInspector
+                                  projectId={projectId}
+                                  line={line}
+                                  assets={assets}
+                                  links={data.assetLinks}
+                                  characters={characters}
+                                  voices={data.voices}
+                                  run={run}
+                                  onSeedChat={onSeedChat}
+                                  onSendAgent={onSendAgent}
+                                  onDelete={() =>
+                                    run(() => db.deleteScriptLine(line.id))
+                                  }
+                                  onMoveUp={() =>
+                                    run(() =>
+                                      db.moveScriptLine(
+                                        line.scene_id,
+                                        line.id,
+                                        -1,
+                                      ),
+                                    )
+                                  }
+                                  onMoveDown={() =>
+                                    run(() =>
+                                      db.moveScriptLine(
+                                        line.scene_id,
+                                        line.id,
+                                        1,
+                                      ),
+                                    )
+                                  }
+                                />
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        );
+                      })}
+                    </Accordion>
                     {!linesByScene.length && (
                       <EmptyState
                         icon={MessageSquareText}
@@ -1678,137 +2035,30 @@ export function ScreenplayStudio({
                         description="Añade diálogo, una acción, voz en off o un rótulo. Cada línea tendrá su propia dirección y timing."
                       />
                     )}
-                    <div className="flex flex-wrap gap-2 pt-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => addLine("dialogue")}
-                      >
-                        <Plus />
-                        Diálogo
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <Button variant="outline" onClick={() => addLine("dialogue")}>
+                        <Plus /> Diálogo
                       </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => addLine("action")}
-                      >
-                        <Plus />
-                        Acción
+                      <Button variant="outline" onClick={() => addLine("action")}>
+                        <Plus /> Acción
                       </Button>
                       <Button
                         variant="outline"
                         onClick={() => addLine("voiceover")}
                       >
-                        <Plus />
-                        Voz en off
+                        <Plus /> Voz en off
                       </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => addLine("caption")}
-                      >
-                        <Plus />
-                        Rótulo
+                      <Button variant="outline" onClick={() => addLine("caption")}>
+                        <Plus /> Rótulo
                       </Button>
                     </div>
                   </div>
                 </div>
               )
             )}
-          </main>
-
-          <aside
-            className={cn(
-              "production-sidebar relative flex min-h-0 flex-col",
-              scriptInspectorVisible
-                ? "overflow-hidden border-l bg-muted/10"
-                : "overflow-visible",
-            )}
-          >
-            <div
-              className={cn(
-                "flex shrink-0 items-center",
-                scriptInspectorVisible
-                  ? "h-14 justify-between border-b px-3"
-                  : "absolute right-2 top-5 z-20",
-              )}
-            >
-              {scriptInspectorVisible && (
-                <span className="text-xs font-semibold">INSPECTOR</span>
-              )}
-              <SidebarToggle
-                side="right"
-                expanded={scriptInspectorVisible}
-                onChange={setScriptInspectorVisible}
-                label="inspector"
-              />
             </div>
-            {scriptInspectorVisible && (loading ? <ProductionListSkeleton rows={5} /> : <Tabs
-                defaultValue="line"
-                className="flex min-h-0 flex-1 flex-col"
-              >
-                <TabsList className="m-3 mb-0 grid grid-cols-2">
-                  <TabsTrigger value="line">Línea</TabsTrigger>
-                  <TabsTrigger value="scene">Escena</TabsTrigger>
-                </TabsList>
-                <TabsContent value="line" className="min-h-0 flex-1">
-                  <ScrollArea className="h-full">
-                    <div className="p-4">
-                      <LineInspector
-                        projectId={projectId}
-                        line={selectedLine}
-                        assets={assets}
-                        links={data.assetLinks}
-                        characters={characters}
-                        voices={data.voices}
-                        run={run}
-                        onSeedChat={onSeedChat}
-                        onSendAgent={onSendAgent}
-                        onDelete={() =>
-                          run(() => db.deleteScriptLine(selectedLine.id))
-                        }
-                        onMoveUp={() =>
-                          run(() =>
-                            db.moveScriptLine(
-                              selectedLine.scene_id,
-                              selectedLine.id,
-                              -1,
-                            ),
-                          )
-                        }
-                        onMoveDown={() =>
-                          run(() =>
-                            db.moveScriptLine(
-                              selectedLine.scene_id,
-                              selectedLine.id,
-                              1,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                  </ScrollArea>
-                </TabsContent>
-                <TabsContent value="scene" className="min-h-0 flex-1">
-                  <ScrollArea className="h-full">
-                    <div className="p-4">
-                      <SceneInspector
-                        projectId={projectId}
-                        scene={scene}
-                        characters={characters}
-                        voices={data.voices}
-                        assignments={data.characterVoices}
-                        assets={assets}
-                        links={data.assetLinks}
-                        manifests={data.productionManifests}
-                        sceneShots={data.sceneShots}
-                        shots={data.shots}
-                        run={run}
-                        onSeedChat={onSeedChat}
-                        onSendAgent={onSendAgent}
-                      />
-                    </div>
-                  </ScrollArea>
-                </TabsContent>
-              </Tabs>)}
-          </aside>
+            {scene && <ScreenplayPlayBar tracks={speechTracks} />}
+          </main>
         </div>
       </div>
     </TooltipProvider>
