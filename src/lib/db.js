@@ -1618,9 +1618,8 @@ export const db = {
     });
     if (!element?.role)
       throw new Error("El recurso seleccionado no es un personaje Element del proyecto.");
-    let voice = null;
     if (voiceProfileId) {
-      [voice] = await DRIVER.select("voice_profiles", {
+      const [voice] = await DRIVER.select("voice_profiles", {
         project_id: projectId,
         id: voiceProfileId,
       });

@@ -158,8 +158,6 @@ const EXACT_EN = new Map(
     "Diseño de audio": "Audio design",
     "Biblioteca": "Library",
     "Voces": "Voices",
-    "Plantillas": "Templates",
-    "Crear": "Create",
     "Timeline de mezcla": "Mix timeline",
     "Mezcla reproducible": "Reproducible mix",
     "Diseñar con el agente": "Design with the agent",
