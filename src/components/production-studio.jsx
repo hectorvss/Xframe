@@ -2048,12 +2048,18 @@ function MixTimeline({
   onDropTemplate,
   onDropEffect,
   onMoveCue,
+  onSpeedChange,
+  onVolumeChange,
+  onRestart,
 }) {
   const [pxPerSec, setPxPerSec] = useState(70);
   const clampZoom = (v) => Math.min(220, Math.max(24, v));
   const [pos, setPos] = useState(0);
+  const [speed, setSpeed] = useState(1);
+  const [volume, setVolume] = useState(1);
   const rafRef = useRef(0);
   const startRef = useRef(0);
+  const speedRef = useRef(1);
 
   useEffect(() => {
     if (!playing) {
@@ -2064,7 +2070,8 @@ function MixTimeline({
     startRef.current = performance.now();
     setPos(0);
     const tick = () => {
-      const p = performance.now() - startRef.current;
+      // El cabezal avanza a la velocidad elegida, igual que el audio real.
+      const p = (performance.now() - startRef.current) * speedRef.current;
       if (p >= totalMs) {
         setPos(totalMs);
         return;
@@ -2075,6 +2082,31 @@ function MixTimeline({
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
   }, [playing, totalMs]);
+
+  const cycleSpeed = () => {
+    const steps = [1, 1.25, 1.5, 2, 0.5];
+    const next = steps[(steps.indexOf(speed) + 1) % steps.length];
+    setSpeed(next);
+    speedRef.current = next;
+    onSpeedChange?.(next);
+  };
+  const startVolume = (event) => {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const apply = (clientX) => {
+      const v = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      setVolume(v);
+      onVolumeChange?.(v);
+    };
+    apply(event.clientX);
+    const move = (moveEvent) => apply(moveEvent.clientX);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
 
   const PAD = 12;
   const NAME_W = 140;
@@ -2132,7 +2164,9 @@ function MixTimeline({
     "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40";
 
   return (
-    <div className="overflow-hidden rounded-xl border bg-background">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      {/* Tarjeta 1: la mezcla multipista, ocupando todo el alto disponible. */}
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border bg-background">
       <div className="flex">
         {/* Columna fija de nombres de pista */}
         <div className="shrink-0 border-r" style={{ width: `${NAME_W}px` }}>
@@ -2283,9 +2317,52 @@ function MixTimeline({
           </div>
         </div>
       </div>
-      {/* Transporte, abajo como un reproductor. */}
-      <div className="flex items-center gap-2 border-t px-3 py-2.5">
-        <div className="flex flex-1 items-center justify-center gap-3">
+      </div>
+
+      {/* Tarjeta 2: el reproductor, con todos los controles de transporte. */}
+      <div className="flex shrink-0 items-center gap-3 rounded-xl border bg-background px-4 py-3">
+        {/* Volumen maestro */}
+        <div className="flex w-40 items-center gap-2">
+          <Volume2 className="size-4 shrink-0 text-muted-foreground" />
+          <div
+            className="relative h-4 min-w-0 flex-1 cursor-pointer touch-none"
+            onPointerDown={startVolume}
+            title="Volumen de la mezcla"
+          >
+            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted" />
+            <div
+              className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-foreground/70"
+              style={{ width: `${volume * 100}%` }}
+            />
+            <span
+              className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground"
+              style={{ left: `${volume * 100}%` }}
+            />
+          </div>
+          <span className="w-8 text-right text-[10px] tabular-nums text-muted-foreground">
+            {Math.round(volume * 100)}%
+          </span>
+        </div>
+
+        {/* Transporte central */}
+        <div className="flex flex-1 items-center justify-center gap-2">
+          <button
+            type="button"
+            className={cn(iconBtn, "w-10 text-[11px] font-semibold")}
+            onClick={cycleSpeed}
+            title="Velocidad de reproducción"
+          >
+            {speed}x
+          </button>
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => onRestart?.()}
+            aria-label="Volver al inicio"
+            title="Volver al inicio"
+          >
+            <SkipBack className="size-4" />
+          </button>
           <button
             type="button"
             onClick={onToggle}
@@ -2298,11 +2375,22 @@ function MixTimeline({
               <Play className="size-5 fill-current" />
             )}
           </button>
-          <span className="text-sm tabular-nums text-muted-foreground">
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => playing && onToggle()}
+            aria-label="Ir al final"
+            title="Ir al final"
+          >
+            <SkipForward className="size-4" />
+          </button>
+          <span className="ml-1 text-sm tabular-nums text-muted-foreground">
             {fmt(pos)} / {fmt(totalMs)}
           </span>
         </div>
-        <div className="flex items-center gap-1.5">
+
+        {/* Zoom de la escala */}
+        <div className="flex w-40 items-center justify-end gap-1.5">
           <button
             type="button"
             className={iconBtn}
@@ -4947,6 +5035,11 @@ export function AudioStudio({
   const previewContextRef = useRef(null);
   const previewSourcesRef = useRef([]);
   const previewTimerRef = useRef(null);
+  // Velocidad y volumen del reproductor: la velocidad se aplica al programar las
+  // fuentes (siguiente play); el volumen actúa en vivo sobre la ganancia maestra.
+  const previewSpeedRef = useRef(1);
+  const previewVolumeRef = useRef(1);
+  const masterGainRef = useRef(null);
   const [audioLibraryVisible, setAudioLibraryVisible] = useStoredVisibility(
     "xframe.audio.library-panel",
   );
@@ -5022,6 +5115,7 @@ export function AudioStudio({
       }
     });
     previewSourcesRef.current = [];
+    masterGainRef.current = null;
     const context = previewContextRef.current;
     previewContextRef.current = null;
     if (context && context.state !== "closed") await context.close();
@@ -5041,10 +5135,17 @@ export function AudioStudio({
     previewContextRef.current = context;
     try {
       await context.resume();
+      // Toda la programación se comprime por la velocidad elegida y cada fuente
+      // reproduce con ese playbackRate: la mezcla suena más rápida o lenta entera.
+      const rate = previewSpeedRef.current || 1;
+      const master = context.createGain();
+      master.gain.value = previewVolumeRef.current;
+      master.connect(context.destination);
+      masterGainRef.current = master;
       const baseTime = context.currentTime + 0.08;
       const speechWindows = data.cues
         .filter((item) => ["dialogue", "voiceover"].includes(item.track_kind))
-        .map((item) => [item.start_ms / 1000, item.end_ms / 1000]);
+        .map((item) => [item.start_ms / 1000 / rate, item.end_ms / 1000 / rate]);
       const decoded = await Promise.all(
         data.cues.map(async (item) => {
           const asset = assets.find((candidate) => String(candidate.id) === String(item.asset_id));
@@ -5060,12 +5161,16 @@ export function AudioStudio({
         const panner = context.createStereoPanner?.();
         source.buffer = buffer;
         source.loop = Boolean(item.loop);
-        const cueStart = baseTime + item.start_ms / 1000;
-        const cueEnd = baseTime + item.end_ms / 1000;
-        const duration = Math.max(0.001, (item.end_ms - item.start_ms) / 1000);
+        source.playbackRate.value = rate;
+        const cueStart = baseTime + item.start_ms / 1000 / rate;
+        const cueEnd = baseTime + item.end_ms / 1000 / rate;
+        const duration = Math.max(
+          0.001,
+          (item.end_ms - item.start_ms) / 1000 / rate,
+        );
         const normalGain = Math.pow(10, Number(item.gain_db || 0) / 20);
-        const fadeIn = Math.min(duration, Number(item.fade_in_ms || 0) / 1000);
-        const fadeOut = Math.min(duration, Number(item.fade_out_ms || 0) / 1000);
+        const fadeIn = Math.min(duration, Number(item.fade_in_ms || 0) / 1000 / rate);
+        const fadeOut = Math.min(duration, Number(item.fade_out_ms || 0) / 1000 / rate);
         gain.gain.setValueAtTime(fadeIn ? 0.0001 : normalGain, cueStart);
         if (fadeIn) gain.gain.linearRampToValueAtTime(normalGain, cueStart + fadeIn);
         if (fadeOut) {
@@ -5075,8 +5180,8 @@ export function AudioStudio({
         if (["music", "ambience"].includes(item.track_kind) && item.ducking_db != null) {
           const ducked = normalGain * Math.pow(10, Number(item.ducking_db) / 20);
           speechWindows.forEach(([start, end]) => {
-            const overlapStart = Math.max(item.start_ms / 1000, start);
-            const overlapEnd = Math.min(item.end_ms / 1000, end);
+            const overlapStart = Math.max(item.start_ms / 1000 / rate, start);
+            const overlapEnd = Math.min(item.end_ms / 1000 / rate, end);
             if (overlapEnd > overlapStart) {
               gain.gain.setTargetAtTime(ducked, baseTime + overlapStart, 0.03);
               gain.gain.setTargetAtTime(normalGain, baseTime + overlapEnd, 0.08);
@@ -5086,9 +5191,9 @@ export function AudioStudio({
         source.connect(gain);
         if (panner) {
           panner.pan.value = Number(item.pan || 0);
-          gain.connect(panner).connect(context.destination);
+          gain.connect(panner).connect(master);
         } else {
-          gain.connect(context.destination);
+          gain.connect(master);
         }
         const sourceOffset = Math.max(0, Number(item.source_in_ms || 0) / 1000);
         if (!source.loop && sourceOffset >= buffer.duration) {
@@ -5096,9 +5201,15 @@ export function AudioStudio({
             `La entrada de fuente de ${assets.find((candidate) => String(candidate.id) === String(item.asset_id))?.name || item.id} está fuera del archivo.`,
           );
         }
+        // start() mide su duración en tiempo del buffer: con playbackRate aplicado,
+        // el tramo de contenido sigue siendo el original (duración de pared × rate).
+        const contentDuration = duration * rate;
         const availableDuration = source.loop
-          ? duration
-          : Math.min(duration, Math.max(0.001, buffer.duration - sourceOffset));
+          ? contentDuration
+          : Math.min(
+              contentDuration,
+              Math.max(0.001, buffer.duration - sourceOffset),
+            );
         source.start(
           cueStart,
           source.loop ? sourceOffset % buffer.duration : sourceOffset,
@@ -5107,7 +5218,10 @@ export function AudioStudio({
         previewSourcesRef.current.push(source);
       }
       setPreviewing(true);
-      previewTimerRef.current = setTimeout(() => void stopPreview(), totalMs + 300);
+      previewTimerRef.current = setTimeout(
+        () => void stopPreview(),
+        totalMs / rate + 300,
+      );
     } catch (previewFailure) {
       await stopPreview();
       setPreviewError(previewFailure?.message || "No se pudo previsualizar la mezcla.");
@@ -5428,7 +5542,7 @@ export function AudioStudio({
               {loading ? (
                 <AudioWorkspaceSkeleton />
               ) : (
-                <div className="mx-auto max-w-none">
+                <div className="flex min-h-full flex-col">
                   {previewError && (
                     <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
                       {previewError}
@@ -5467,6 +5581,20 @@ export function AudioStudio({
                     onSelectCue={setCueId}
                     onDropTemplate={dropTemplate}
                     onDropEffect={requestEffect}
+                    onSpeedChange={(v) => {
+                      previewSpeedRef.current = v;
+                      // Con la mezcla sonando, la nueva velocidad rearranca la
+                      // reproducción para reprogramar todas las fuentes.
+                      if (previewing) void playPreview();
+                    }}
+                    onVolumeChange={(v) => {
+                      previewVolumeRef.current = v;
+                      if (masterGainRef.current)
+                        masterGainRef.current.gain.value = v;
+                    }}
+                    onRestart={() => {
+                      if (previewing) void playPreview();
+                    }}
                     onMoveCue={(id, start_ms, end_ms, track_kind) =>
                       run(() =>
                         db.updateAudioCue(id, { start_ms, end_ms, track_kind }),
