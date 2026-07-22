@@ -1752,17 +1752,30 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   };
 
+  const PAD = 10; // margen para que el primer bloque no quede pegado al borde.
   const contentSec = total / 1000;
   const displaySec = Math.max(Math.ceil(contentSec) + 3, 10);
-  const displayMs = displaySec * 1000;
-  const trackWidth = displaySec * pxPerSec;
+  const trackWidth = displaySec * pxPerSec + PAD * 2;
   const px = (ms) => (ms / 1000) * pxPerSec;
+  const at = (ms) => PAD + px(ms);
   const zoomPct = ((pxPerSec - 28) / (280 - 28)) * 100;
 
-  const seek = (event) => {
+  // Arrastra el cabezal por toda la pista (scrubbing), no solo un clic.
+  const startScrub = (event) => {
+    event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(0, event.clientX - rect.left);
-    seekTo((x / trackWidth) * displayMs);
+    const toMs = (clientX) =>
+      ((Math.max(0, clientX - rect.left) - PAD) / pxPerSec) * 1000;
+    seekTo(toMs(event.clientX));
+    const move = (moveEvent) => seekTo(toMs(moveEvent.clientX));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.removeProperty("user-select");
+    };
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   };
 
   const iconBtn =
@@ -1857,20 +1870,24 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
                   <span
                     key={i}
                     className="absolute top-1 flex flex-col items-center text-[9px] tabular-nums text-muted-foreground/60"
-                    style={{ left: `${i * pxPerSec}px` }}
+                    style={{ left: `${PAD + i * pxPerSec}px` }}
                   >
                     {fmt(i * 1000)}
                   </span>
                 ))}
                 <span
                   className="absolute top-0 -translate-x-1/2 rounded bg-foreground px-1 text-[9px] font-medium tabular-nums text-background"
-                  style={{ left: `${px(pos)}px` }}
+                  style={{ left: `${at(pos)}px` }}
                 >
                   {fmt(pos)}
                 </span>
               </div>
-              {/* Pista con un bloque por línea, tintado con el color del personaje. */}
-              <div className="relative h-12 cursor-pointer py-1.5" onClick={seek}>
+              {/* Pista con un bloque por línea: trama diagonal, borde de color y, en el
+                  activo, asas redondeadas a los lados. */}
+              <div
+                className="relative h-12 cursor-pointer touch-none py-1.5"
+                onPointerDown={startScrub}
+              >
                 {clips.map((clip, i) => {
                   const activeClip =
                     pos >= offsets[i] && pos < offsets[i] + durations[i];
@@ -1878,26 +1895,38 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
                     <div
                       key={clip.id}
                       className={cn(
-                        "absolute inset-y-1.5 flex items-center overflow-hidden rounded-lg border px-2 text-[11px] font-medium shadow-sm",
-                        activeClip && "ring-2 ring-offset-1 ring-offset-background",
+                        "absolute inset-y-1.5 flex items-center overflow-hidden rounded-lg px-2.5 text-[11px] font-medium",
+                        activeClip ? "border-2" : "border",
                       )}
                       style={{
-                        left: `${px(offsets[i])}px`,
-                        width: `${Math.max(24, px(durations[i]))}px`,
-                        backgroundColor: `color-mix(in srgb, ${clip.hex} 16%, transparent)`,
-                        borderColor: `color-mix(in srgb, ${clip.hex} 42%, transparent)`,
-                        color: `color-mix(in srgb, ${clip.hex} 72%, #111)`,
-                        ...(activeClip ? { "--tw-ring-color": clip.hex } : {}),
+                        left: `${at(offsets[i])}px`,
+                        width: `${Math.max(28, px(durations[i]))}px`,
+                        backgroundColor: `color-mix(in srgb, ${clip.hex} 9%, transparent)`,
+                        backgroundImage: `repeating-linear-gradient(45deg, color-mix(in srgb, ${clip.hex} 24%, transparent) 0, color-mix(in srgb, ${clip.hex} 24%, transparent) 1px, transparent 1px, transparent 7px)`,
+                        borderColor: `color-mix(in srgb, ${clip.hex} ${activeClip ? 95 : 42}%, transparent)`,
+                        color: `color-mix(in srgb, ${clip.hex} 70%, #111)`,
                       }}
                       title={clip.label}
                     >
-                      <span className="truncate">{clip.label}</span>
+                      {activeClip && (
+                        <>
+                          <span
+                            className="absolute inset-y-1 left-0.5 w-1.5 rounded-full"
+                            style={{ backgroundColor: clip.hex }}
+                          />
+                          <span
+                            className="absolute inset-y-1 right-0.5 w-1.5 rounded-full"
+                            style={{ backgroundColor: clip.hex }}
+                          />
+                        </>
+                      )}
+                      <span className="relative truncate">{clip.label}</span>
                     </div>
                   );
                 })}
                 <div
                   className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-foreground"
-                  style={{ left: `${px(pos)}px` }}
+                  style={{ left: `${at(pos)}px` }}
                 />
               </div>
             </div>
@@ -2055,6 +2084,13 @@ export function ScreenplayStudio({
               (item) => String(item.id) === String(cue.asset_id) && item.url,
             )
           : null;
+        const accent = lineAccent(line, speaker);
+        // Cada bloque siempre con color: si el diálogo aún no tiene personaje, se le da
+        // uno estable por su id en vez del gris neutro.
+        const hex =
+          accent.hex === NEUTRAL_ACCENT.hex
+            ? characterColor(line.id).hex
+            : accent.hex;
         return {
           id: String(line.id),
           label:
@@ -2063,7 +2099,7 @@ export function ScreenplayStudio({
           durationMs:
             line.target_duration_ms ||
             Math.max(1200, String(line.text || "").length * 55),
-          hex: lineAccent(line, speaker).hex,
+          hex,
           url: asset?.url || null,
         };
       });
@@ -2125,15 +2161,7 @@ export function ScreenplayStudio({
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
-        <header className="flex h-16 shrink-0 items-center gap-4 border-b px-4">
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">
-              Guion de producción
-            </h2>
-            <p className="truncate text-xs text-muted-foreground">
-              Documento vivo para narrativa, interpretación, timing y lipsync.
-            </p>
-          </div>
+        <header className="flex h-12 shrink-0 items-center gap-3 px-4">
           <div className="ml-auto flex items-center gap-3">
             <Badge variant="outline">
               {data.scenes.length} escenas · {data.lines.length} líneas ·{" "}
@@ -2220,7 +2248,7 @@ export function ScreenplayStudio({
                   <ProductionListSkeleton />
                 ) : (
                   <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
-                    <div className="space-y-1">
+                    <div className="space-y-1.5">
                       {data.scenes.map((item, index) => {
                         const count = data.lines.filter(
                           (line) => String(line.scene_id) === String(item.id),
@@ -2236,11 +2264,11 @@ export function ScreenplayStudio({
                             key={item.id}
                             onClick={() => setSceneId(item.id)}
                             className={cn(
-                              "flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-accent/60",
-                              active && "bg-accent",
+                              "flex w-full cursor-pointer items-center gap-2 rounded-lg border bg-background px-2 py-1.5 text-left transition-colors hover:bg-accent/50",
+                              active && "border-foreground/25 bg-accent",
                             )}
                           >
-                            <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-semibold">
+                            <span className="flex size-6 shrink-0 items-center justify-center rounded-md border bg-background text-[11px] font-semibold">
                               {index + 1}
                             </span>
                             <span className="min-w-0 flex-1">
@@ -2254,7 +2282,7 @@ export function ScreenplayStudio({
                                 placeholder={`Escena ${index + 1}`}
                                 className="h-auto truncate border-0 bg-transparent p-0 text-xs font-medium shadow-none focus-visible:ring-0"
                               />
-                              <span className="mt-0.5 block truncate text-[10px] font-normal text-muted-foreground">
+                              <span className="block truncate text-[10px] font-normal text-muted-foreground">
                                 {count} {count === 1 ? "línea" : "líneas"}
                                 {" · "}
                                 {item.target_duration_ms
@@ -2267,18 +2295,18 @@ export function ScreenplayStudio({
                           </div>
                         );
                       })}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={addScene}
+                      >
+                        Añadir escena
+                      </Button>
                     </div>
                   </ScrollArea>
                 )}
-                <div className="space-y-2.5 border-t p-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={addScene}
-                  >
-                    Añadir escena
-                  </Button>
+                <div className="border-t p-2.5">
                   <button
                     type="button"
                     onClick={() =>
@@ -2286,17 +2314,13 @@ export function ScreenplayStudio({
                         "Crea una escena nueva y completa para este proyecto usando el contexto que ya tienes (brief, personajes, tono y escenas existentes). Estructúrala con sus líneas de diálogo, voz en off y acción, con el personaje que habla y su dirección. Si te falta algo clave para que quede perfecta, pregúntame antes de crearla.",
                       )
                     }
-                    className="group flex aspect-square w-full flex-col items-center justify-center gap-2.5 rounded-2xl border border-dashed p-4 text-center transition-colors hover:border-primary/50 hover:bg-accent/40"
+                    className="flex w-full items-center gap-2.5 rounded-lg border border-dashed px-3 py-2.5 text-left transition-colors hover:border-primary/50 hover:bg-accent/40"
                   >
-                    <span className="flex size-11 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-transform group-hover:scale-105">
-                      <Sparkles className="size-5" />
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      <Sparkles className="size-4" />
                     </span>
-                    <span className="text-sm font-semibold">
+                    <span className="text-xs font-semibold">
                       Generar escena con IA
-                    </span>
-                    <span className="text-[11px] leading-snug text-muted-foreground">
-                      El agente crea una escena con el contexto del proyecto — o
-                      te pregunta lo que falte para que quede perfecta.
                     </span>
                   </button>
                 </div>
