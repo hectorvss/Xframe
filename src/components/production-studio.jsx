@@ -4438,9 +4438,10 @@ function CategoryGrid({ categories, active, onSelect }) {
               type="button"
               onClick={() => onSelect(active === cat.name ? null : cat.name)}
               className={cn(
-                "relative flex aspect-[5/4] min-w-0 snap-start flex-col justify-between overflow-hidden rounded-2xl p-2.5 text-left text-white shadow-sm transition-transform hover:scale-[1.02]",
-                active === cat.name &&
-                  "ring-2 ring-foreground ring-offset-1 ring-offset-background",
+                // El ring de selección va por dentro (inset): con offset hacia fuera lo
+                // recortaba el overflow del carril en la primera y última tarjeta.
+                "relative flex aspect-[5/4] min-w-0 snap-start flex-col justify-between overflow-hidden rounded-2xl p-2.5 text-left text-black shadow-sm transition-transform hover:scale-[1.02]",
+                active === cat.name && "ring-2 ring-inset ring-black",
               )}
               style={{
                 backgroundImage: `url(${gradientUrl(cat.id)})`,
@@ -4448,8 +4449,8 @@ function CategoryGrid({ categories, active, onSelect }) {
                 backgroundPosition: "center",
               }}
             >
-              <Icon className="size-4 drop-shadow-sm" strokeWidth={1.75} />
-              <span className="line-clamp-2 text-[10px] font-semibold leading-tight drop-shadow-sm">
+              <Icon className="size-4" strokeWidth={1.75} />
+              <span className="line-clamp-2 text-[10px] font-semibold leading-tight">
                 {cat.name}
               </span>
             </button>
@@ -5184,19 +5185,24 @@ export function AudioStudio({
 
   return (
     <TooltipProvider>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
-        <header className="flex h-12 shrink-0 items-center gap-3 px-4">
+      {/* Rejilla 2×2: el sidebar ocupa toda la altura (las dos filas de su columna) y
+          el encabezado solo existe sobre la columna principal. Así el panel no deja
+          hueco arriba y el toggle queda fuera del sidebar, a la altura del resto de
+          botones. */}
+      <div
+        className="grid h-full min-h-0 grid-rows-[3rem_minmax(0,1fr)] overflow-hidden rounded-xl border bg-background"
+        style={{
+          gridTemplateColumns: `${audioLibraryVisible ? "400px" : "0px"} minmax(440px, 1fr)`,
+        }}
+      >
+        <header className="col-start-2 row-start-1 flex min-w-0 items-center gap-3 px-4">
           {audioLibraryVisible && (
-            // Desplegado: el toggle va justo fuera del sidebar (que mide 400px), a la
-            // misma altura del encabezado. 384px = 400 del panel menos el padding px-4.
-            <div className="ml-[384px] shrink-0">
-              <SidebarToggle
-                side="left"
-                expanded={audioLibraryVisible}
-                onChange={setAudioLibraryVisible}
-                label="biblioteca de sonido"
-              />
-            </div>
+            <SidebarToggle
+              side="left"
+              expanded={audioLibraryVisible}
+              onChange={setAudioLibraryVisible}
+              label="biblioteca de sonido"
+            />
           )}
           <div className="ml-auto flex items-center gap-3">
             {!audioLibraryVisible && (
@@ -5256,15 +5262,9 @@ export function AudioStudio({
             </Button>
           </div>
         </header>
-        <div
-          className="grid min-h-0 flex-1"
-          style={{
-            gridTemplateColumns: `${audioLibraryVisible ? "400px" : "0px"} minmax(440px, 1fr)`,
-          }}
-        >
           <aside
             className={cn(
-              "production-sidebar relative flex min-h-0 flex-col",
+              "production-sidebar relative col-start-1 row-span-2 row-start-1 flex min-h-0 flex-col",
               audioLibraryVisible
                 ? "overflow-hidden border-r bg-muted/10"
                 : "overflow-visible",
@@ -5327,7 +5327,7 @@ export function AudioStudio({
             )}
           </aside>
 
-          <main className="flex min-h-0 flex-col overflow-hidden">
+          <main className="col-start-2 row-start-2 flex min-h-0 flex-col overflow-hidden">
             <div
               className={cn(
                 "min-h-0 flex-1 overflow-auto p-5",
@@ -5401,7 +5401,6 @@ export function AudioStudio({
               )}
             </div>
           </main>
-        </div>
       </div>
     </TooltipProvider>
   );
