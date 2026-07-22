@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { Check, Languages } from "lucide-react";
 
+import { EXACT_EN_EXTRA } from "@/lib/i18n-extra";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -256,6 +257,12 @@ const EXACT_EN = new Map(
     "No se ha podido conectar con el servidor MCP. Comprueba que el backend está en marcha.": "Could not connect to the MCP server. Check that the backend is running.",
   }),
 );
+
+// Cobertura extendida (estudio de producción y resto de superficies). Se fusiona sin
+// pisar las entradas curadas de arriba: si una cadena está en las dos, gana la de arriba.
+for (const [source, target] of Object.entries(EXACT_EN_EXTRA)) {
+  if (!EXACT_EN.has(source)) EXACT_EN.set(source, target);
+}
 
 const PHRASE_EN = [
   ["Gestiona tu plan y el saldo de créditos.", "Manage your plan and credit balance."],

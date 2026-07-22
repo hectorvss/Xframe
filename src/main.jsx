@@ -6021,9 +6021,17 @@ function AssetStage({ asset, isVideo, isAudio, onAttach, onSendDirect }) {
             la herramienta activa: en reposo, los 4 iconos (desplegables al hover); en
             anotación, deshacer/rehacer/borrar + «AI chat»; en comentario, la pista de
             colocar el punto. Nunca dos barras apiladas. */}
-        <div className="group/tb absolute bottom-3 left-1/2 -translate-x-1/2">
+        <div
+          className="group/tb absolute bottom-3 left-1/2 -translate-x-1/2"
+          // CRÍTICO: la barra vive dentro del escenario que captura el puntero para
+          // dibujar. Sin cortar la propagación aquí, cada clic en deshacer/borrar/AI
+          // chat arrancaba un trazo, el contenedor capturaba el puntero y el clic
+          // jamás llegaba al botón — por eso "no funcionaba nada" de la barra.
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
           {tool === "annotate" ? (
-            <div className="flex items-center gap-0.5 rounded-full border border-white/15 bg-neutral-950/85 px-1.5 py-1 text-white shadow-2xl backdrop-blur-2xl">
+            <div className="flex items-center gap-0.5 rounded-full border border-white/15 bg-white/10 px-1.5 py-1 text-white shadow-2xl backdrop-blur-2xl">
               <button
                 title="Salir de anotación"
                 onClick={() => reset(null)}
@@ -6078,9 +6086,16 @@ function AssetStage({ asset, isVideo, isAudio, onAttach, onSendDirect }) {
               >
                 AI chat
               </button>
+              <button
+                title="Volver a las herramientas"
+                onClick={() => reset(null)}
+                className="ml-0.5 flex size-6 items-center justify-center rounded-full text-neutral-300 hover:bg-white/10"
+              >
+                <X className="size-3" />
+              </button>
             </div>
           ) : tool === "comment" ? (
-            <div className="flex items-center gap-0.5 rounded-full border border-white/15 bg-neutral-950/85 px-1.5 py-1 text-white shadow-2xl backdrop-blur-2xl">
+            <div className="flex items-center gap-0.5 rounded-full border border-white/15 bg-white/10 px-1.5 py-1 text-white shadow-2xl backdrop-blur-2xl">
               <button
                 title="Salir de comentario"
                 onClick={() => reset(null)}
