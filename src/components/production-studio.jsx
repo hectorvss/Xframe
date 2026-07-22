@@ -2539,24 +2539,16 @@ export function ScreenplayStudio({
           gridTemplateColumns: `${scenePanelVisible ? "272px" : "0px"} minmax(420px, 1fr)`,
         }}
       >
+        {/* El toggle va SIEMPRE el primero a la izquierda del encabezado: pegado al
+            sidebar cuando está abierto y en ese mismo hueco cuando está cerrado. */}
         <header className="col-start-2 row-start-1 flex min-w-0 items-center gap-3 px-4">
-          {scenePanelVisible && (
-            <SidebarToggle
-              side="left"
-              expanded={scenePanelVisible}
-              onChange={setScenePanelVisible}
-              label="escenas"
-            />
-          )}
+          <SidebarToggle
+            side="left"
+            expanded={scenePanelVisible}
+            onChange={setScenePanelVisible}
+            label="escenas"
+          />
           <div className="ml-auto flex items-center gap-3">
-            {!scenePanelVisible && (
-              <SidebarToggle
-                side="left"
-                expanded={scenePanelVisible}
-                onChange={setScenePanelVisible}
-                label="escenas"
-              />
-            )}
             <Badge variant="outline">
               {data.scenes.length} escenas · {data.lines.length} líneas ·{" "}
               {(totalDuration / 1000).toFixed(1)} s
@@ -5193,24 +5185,16 @@ export function AudioStudio({
           gridTemplateColumns: `${audioLibraryVisible ? "400px" : "0px"} minmax(440px, 1fr)`,
         }}
       >
+        {/* El toggle va SIEMPRE el primero a la izquierda del encabezado: pegado al
+            sidebar cuando está abierto y en ese mismo hueco cuando está cerrado. */}
         <header className="col-start-2 row-start-1 flex min-w-0 items-center gap-3 px-4">
-          {audioLibraryVisible && (
-            <SidebarToggle
-              side="left"
-              expanded={audioLibraryVisible}
-              onChange={setAudioLibraryVisible}
-              label="biblioteca de sonido"
-            />
-          )}
+          <SidebarToggle
+            side="left"
+            expanded={audioLibraryVisible}
+            onChange={setAudioLibraryVisible}
+            label="biblioteca de sonido"
+          />
           <div className="ml-auto flex items-center gap-3">
-            {!audioLibraryVisible && (
-              <SidebarToggle
-                side="left"
-                expanded={audioLibraryVisible}
-                onChange={setAudioLibraryVisible}
-                label="biblioteca de sonido"
-              />
-            )}
             {providerStatus && (
               <div className="hidden items-center gap-1.5 xl:flex">
                 <Badge variant="outline" className="gap-1 text-[10px]">
