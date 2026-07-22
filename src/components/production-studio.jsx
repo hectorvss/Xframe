@@ -97,6 +97,7 @@ import {
   SFX_CATEGORIES,
   SFX_LIBRARY,
   VOICE_CATALOG,
+  VOICE_CATEGORIES,
 } from "@/lib/soundLibrary";
 
 const EMPTY = {
@@ -4363,6 +4364,35 @@ function CueInspector({ cue, assets, scenes, lines, shots, sceneShots, run }) {
   );
 }
 
+// Rejilla de tarjetas de categoría (degradado + emoji + nombre). En rejilla y no en
+// scroll horizontal para que en un panel estrecho no se corten a media tarjeta.
+function CategoryGrid({ categories, active, onSelect }) {
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {categories.map((cat) => (
+        <button
+          key={cat.id}
+          type="button"
+          onClick={() => onSelect(active === cat.name ? null : cat.name)}
+          className={cn(
+            "relative flex h-14 flex-col justify-end overflow-hidden rounded-xl p-1.5 text-left text-white shadow-sm",
+            active === cat.name &&
+              "ring-2 ring-foreground ring-offset-1 ring-offset-background",
+          )}
+          style={{
+            backgroundImage: `linear-gradient(135deg, ${cat.from}, ${cat.to})`,
+          }}
+        >
+          <span className="text-sm leading-none">{cat.emoji}</span>
+          <span className="mt-0.5 line-clamp-1 text-[9px] font-semibold leading-tight">
+            {cat.name}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // Pestaña Biblioteca: catálogo de efectos por categoría (estilo librería de SFX) +
 // los sonidos ya guardados del proyecto. Explorar pide al agente que genere el efecto y
 // lo coloque; Guardados añade un asset existente a la pista elegida.
@@ -4402,30 +4432,11 @@ function SoundBrowser({ audioAssets, trackMeta, onUseEffect, onAddAsset }) {
       {tab === "explore" ? (
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-3 p-3">
-            <div className="scrollbar-hidden -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-              {SFX_CATEGORIES.map((cat) => (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() =>
-                    setCategory(category === cat.name ? null : cat.name)
-                  }
-                  className={cn(
-                    "relative flex h-16 w-24 shrink-0 flex-col justify-end overflow-hidden rounded-xl p-2 text-left text-white shadow-sm",
-                    category === cat.name &&
-                      "ring-2 ring-foreground ring-offset-1 ring-offset-background",
-                  )}
-                  style={{
-                    backgroundImage: `linear-gradient(135deg, ${cat.from}, ${cat.to})`,
-                  }}
-                >
-                  <span className="text-base leading-none">{cat.emoji}</span>
-                  <span className="mt-1 text-[10px] font-semibold leading-tight">
-                    {cat.name}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <CategoryGrid
+              categories={SFX_CATEGORIES}
+              active={category}
+              onSelect={setCategory}
+            />
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -4538,10 +4549,13 @@ function SoundBrowser({ audioAssets, trackMeta, onUseEffect, onAddAsset }) {
 function VoicesBrowser({ projectId, voices, run, onAskAgent }) {
   const [tab, setTab] = useState("explore");
   const [query, setQuery] = useState("");
-  const catalog = VOICE_CATALOG.filter((voice) =>
-    `${voice.name} ${voice.tagline} ${voice.description} ${voice.language} ${voice.gender} ${voice.category}`
-      .toLowerCase()
-      .includes(query.toLowerCase()),
+  const [category, setCategory] = useState(null);
+  const catalog = VOICE_CATALOG.filter(
+    (voice) =>
+      (!category || voice.category === category) &&
+      `${voice.name} ${voice.tagline} ${voice.description} ${voice.language} ${voice.gender} ${voice.category}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
   );
   const importVoice = (voice) =>
     run(() =>
@@ -4600,52 +4614,75 @@ function VoicesBrowser({ projectId, voices, run, onAskAgent }) {
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-1 p-3">
-          {tab === "explore"
-            ? catalog.map((voice) => (
-                <div
-                  key={voice.id}
-                  className="flex items-center gap-2.5 rounded-lg p-2 transition-colors hover:bg-accent/40"
+          {tab === "explore" ? (
+            <div className="space-y-2">
+              <CategoryGrid
+                categories={VOICE_CATEGORIES}
+                active={category}
+                onSelect={setCategory}
+              />
+              {category && (
+                <button
+                  type="button"
+                  onClick={() => setCategory(null)}
+                  className="text-[11px] text-muted-foreground hover:text-foreground"
                 >
-                  <span
-                    className="size-8 shrink-0 rounded-full"
-                    style={{
-                      backgroundImage: `linear-gradient(135deg, ${voice.from}, ${voice.to})`,
-                    }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold">
-                      {voice.name}{" "}
-                      <span className="font-normal text-muted-foreground">
-                        — {voice.tagline}
-                      </span>
-                    </p>
-                    <p className="truncate text-[10px] text-muted-foreground">
-                      {voice.description}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
-                    aria-label="Previsualizar"
+                  ← Todas las categorías · {category}
+                </button>
+              )}
+              <div className="space-y-1">
+                {catalog.map((voice) => (
+                  <div
+                    key={voice.id}
+                    className="flex items-center gap-2.5 rounded-lg border p-2"
                   >
-                    <Play className="size-3.5" />
-                  </button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="size-7">
-                        <MoreVertical className="size-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => importVoice(voice)}>
-                        <Plus className="mr-2 size-4" />
-                        Importar a Mis Voces
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              ))
-            : (
+                    <span
+                      className="size-8 shrink-0 rounded-full"
+                      style={{
+                        backgroundImage: `linear-gradient(135deg, ${voice.from}, ${voice.to})`,
+                      }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-semibold">
+                        {voice.name}{" "}
+                        <span className="font-normal text-muted-foreground">
+                          — {voice.tagline}
+                        </span>
+                      </p>
+                      <p className="truncate text-[10px] text-muted-foreground">
+                        {voice.description}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+                      aria-label="Previsualizar"
+                    >
+                      <Play className="size-3.5" />
+                    </button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="size-7">
+                          <MoreVertical className="size-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => importVoice(voice)}>
+                          <Plus className="mr-2 size-4" />
+                          Importar a Mis Voces
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                ))}
+                {!catalog.length && (
+                  <p className="px-1 py-4 text-center text-[11px] text-muted-foreground">
+                    Sin voces para ese filtro.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
                 <>
                   {voices.map((voice) => {
                     const color = characterColor(voice.id);

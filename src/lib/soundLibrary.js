@@ -44,6 +44,16 @@ export const SFX_LIBRARY = [
   { id: "sfx-whoosh", title: "Whoosh corto y aireado para una transición de interfaz: ataque suave, final sin resonancia", category: "Elementos de UI", sub: "Transición", duration: "0.6s", downloads: 902, track: "sfx" },
 ];
 
+export const VOICE_CATEGORIES = [
+  { id: "narracion", name: "Narración", emoji: "📖", from: "#818cf8", to: "#312e81" },
+  { id: "social", name: "Social", emoji: "📱", from: "#f472b6", to: "#831843" },
+  { id: "educacion", name: "Educación", emoji: "🎓", from: "#34d399", to: "#064e3b" },
+  { id: "conversacion", name: "Conversación", emoji: "💬", from: "#fbbf24", to: "#7c2d12" },
+  { id: "podcast", name: "Podcast", emoji: "🎙️", from: "#22d3ee", to: "#0e7490" },
+  { id: "corporativo", name: "Corporativo", emoji: "🏢", from: "#60a5fa", to: "#1e3a8a" },
+  { id: "comercial", name: "Comercial", emoji: "🛍️", from: "#a78bfa", to: "#4c1d95" },
+];
+
 export const VOICE_CATALOG = [
   { id: "vc-viraj", name: "Viraj", tagline: "Rich, Confident and Expressive", description: "Narrador expresivo y natural para historias.", from: "#6366f1", to: "#a855f7", language: "Inglés", accent: "Indio", gender: "Masculina", age: "Adulta", category: "Narración" },
   { id: "vc-samantha", name: "Samantha", tagline: "Emotional, Soft and Intimate", description: "Voz calmada y cercana, ideal para relatos íntimos.", from: "#f472b6", to: "#a855f7", language: "Inglés", accent: "Americano", gender: "Femenina", age: "Adulta", category: "Narración" },
