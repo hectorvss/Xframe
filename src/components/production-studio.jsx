@@ -11,7 +11,27 @@ import {
   ArrowUp,
   AudioLines,
   Bookmark,
+  BookOpen,
+  Briefcase,
+  Building2,
   Check,
+  ChevronLeft,
+  Clapperboard,
+  CloudLightning,
+  Cpu,
+  Crosshair,
+  Flame,
+  GraduationCap,
+  Leaf,
+  MessageCircle,
+  MousePointerClick,
+  PawPrint,
+  Rocket,
+  Satellite,
+  ShoppingBag,
+  Smartphone,
+  TrendingUp,
+  Trophy,
   ChevronRight,
   CopyPlus,
   FileAudio,
@@ -94,6 +114,7 @@ import { cn } from "@/lib/utils";
 import { db } from "@/lib/db";
 import { agentApi } from "@/lib/agent";
 import {
+  gradientUrl,
   SFX_CATEGORIES,
   SFX_LIBRARY,
   VOICE_CATALOG,
@@ -4364,31 +4385,93 @@ function CueInspector({ cue, assets, scenes, lines, shots, sceneShots, run }) {
   );
 }
 
-// Rejilla de tarjetas de categoría (degradado + emoji + nombre). En rejilla y no en
-// scroll horizontal para que en un panel estrecho no se corten a media tarjeta.
+// Icono minimalista por categoría (biblioteca de sonido + voces). Sustituye a los
+// emojis: línea fina en blanco sobre la imagen de gradiente.
+const CATEGORY_ICONS = {
+  animales: PawPrint,
+  armas: Crosshair,
+  ascensos: TrendingUp,
+  bajo: Volume2,
+  braams: Clapperboard,
+  "ciencia-ficcion": Rocket,
+  clima: CloudLightning,
+  cuerdas: Music2,
+  deportes: Trophy,
+  dispositivos: Cpu,
+  drones: Satellite,
+  ui: MousePointerClick,
+  escuela: GraduationCap,
+  explosiones: Flame,
+  magia: Sparkles,
+  humano: UserRound,
+  naturaleza: Leaf,
+  ambiente: Building2,
+  narracion: BookOpen,
+  social: Smartphone,
+  educacion: GraduationCap,
+  conversacion: MessageCircle,
+  podcast: Mic2,
+  corporativo: Briefcase,
+  comercial: ShoppingBag,
+};
+
+// Carril horizontal de categorías: 3 tarjetas casi cuadradas visibles a la vez, con
+// las imágenes de gradiente como fondo, icono minimalista y sin barra de scroll (se
+// desplaza con rueda/arrastre y con las flechas laterales).
 function CategoryGrid({ categories, active, onSelect }) {
+  const railRef = useRef(null);
+  const nudge = (dir) => {
+    const rail = railRef.current;
+    if (rail) rail.scrollBy({ left: dir * rail.clientWidth * 0.9, behavior: "smooth" });
+  };
   return (
-    <div className="grid grid-cols-3 gap-2">
-      {categories.map((cat) => (
-        <button
-          key={cat.id}
-          type="button"
-          onClick={() => onSelect(active === cat.name ? null : cat.name)}
-          className={cn(
-            "relative flex h-14 min-w-0 flex-col justify-end overflow-hidden rounded-xl p-1.5 text-left text-white shadow-sm",
-            active === cat.name &&
-              "ring-2 ring-foreground ring-offset-1 ring-offset-background",
-          )}
-          style={{
-            backgroundImage: `linear-gradient(135deg, ${cat.from}, ${cat.to})`,
-          }}
-        >
-          <span className="text-sm leading-none">{cat.emoji}</span>
-          <span className="mt-0.5 line-clamp-1 text-[9px] font-semibold leading-tight">
-            {cat.name}
-          </span>
-        </button>
-      ))}
+    <div className="group/rail relative">
+      <div
+        ref={railRef}
+        className="no-scrollbar grid snap-x snap-mandatory grid-flow-col auto-cols-[calc((100%-1rem)/3)] gap-2 overflow-x-auto scroll-smooth"
+      >
+        {categories.map((cat) => {
+          const Icon = CATEGORY_ICONS[cat.id] ?? Music2;
+          return (
+            <button
+              key={cat.id}
+              type="button"
+              onClick={() => onSelect(active === cat.name ? null : cat.name)}
+              className={cn(
+                "relative flex aspect-[5/4] min-w-0 snap-start flex-col justify-between overflow-hidden rounded-2xl p-2.5 text-left text-white shadow-sm transition-transform hover:scale-[1.02]",
+                active === cat.name &&
+                  "ring-2 ring-foreground ring-offset-1 ring-offset-background",
+              )}
+              style={{
+                backgroundImage: `url(${gradientUrl(cat.id)})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
+            >
+              <Icon className="size-4 drop-shadow-sm" strokeWidth={1.75} />
+              <span className="line-clamp-2 text-[10px] font-semibold leading-tight drop-shadow-sm">
+                {cat.name}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={() => nudge(-1)}
+        aria-label="Categorías anteriores"
+        className="absolute -left-1.5 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-full border bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover/rail:opacity-100"
+      >
+        <ChevronLeft className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => nudge(1)}
+        aria-label="Más categorías"
+        className="absolute -right-1.5 top-1/2 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-full border bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover/rail:opacity-100"
+      >
+        <ChevronRight className="size-3.5" />
+      </button>
     </div>
   );
 }
@@ -4463,10 +4546,15 @@ function SoundBrowser({ audioAssets, trackMeta, onUseEffect, onAddAsset }) {
                 >
                   <button
                     type="button"
-                    className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
+                    className="flex size-8 shrink-0 items-center justify-center rounded-full text-white shadow-sm"
+                    style={{
+                      backgroundImage: `url(${gradientUrl(effect.id)})`,
+                      backgroundSize: "cover",
+                      backgroundPosition: "center",
+                    }}
                     aria-label="Previsualizar"
                   >
-                    <Play className="size-3.5" />
+                    <Play className="size-3.5 fill-current drop-shadow-sm" />
                   </button>
                   <div className="min-w-0 flex-1">
                     <p className="line-clamp-2 text-[11px] font-medium leading-snug">
@@ -4637,9 +4725,11 @@ function VoicesBrowser({ projectId, voices, run, onAskAgent }) {
                     className="flex items-center gap-2.5 rounded-lg border p-2"
                   >
                     <span
-                      className="size-8 shrink-0 rounded-full"
+                      className="size-9 shrink-0 rounded-full ring-1 ring-black/80"
                       style={{
-                        backgroundImage: `linear-gradient(135deg, ${voice.from}, ${voice.to})`,
+                        backgroundImage: `url(${gradientUrl(voice.id)})`,
+                        backgroundSize: "cover",
+                        backgroundPosition: "center",
                       }}
                     />
                     <div className="min-w-0 flex-1">
@@ -4685,15 +4775,18 @@ function VoicesBrowser({ projectId, voices, run, onAskAgent }) {
           ) : (
                 <>
                   {voices.map((voice) => {
-                    const color = characterColor(voice.id);
                     return (
                       <div
                         key={voice.id}
                         className="flex items-center gap-2.5 rounded-lg border p-2"
                       >
                         <span
-                          className="size-8 shrink-0 rounded-full"
-                          style={{ backgroundColor: color.hex }}
+                          className="size-9 shrink-0 rounded-full ring-1 ring-black/80"
+                          style={{
+                            backgroundImage: `url(${gradientUrl(voice.id)})`,
+                            backgroundSize: "cover",
+                            backgroundPosition: "center",
+                          }}
                         />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-xs font-semibold">
@@ -5183,7 +5276,7 @@ export function AudioStudio({
                 onValueChange={setLibraryTab}
                 className="flex min-h-0 flex-1 flex-col"
               >
-                <TabsList className="m-3 mb-0 grid grid-cols-3">
+                <TabsList className="mx-3 mt-3 grid h-10 w-auto grid-cols-3 p-1">
                   <TabsTrigger value="library">Biblioteca</TabsTrigger>
                   <TabsTrigger value="create">Crear</TabsTrigger>
                   <TabsTrigger value="voices">Voces</TabsTrigger>

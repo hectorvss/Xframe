@@ -5,6 +5,17 @@
  * Separado por categoría, al estilo de una librería de SFX/voces.
  */
 
+// 44 degradados tipo aurora en public/gradients (grad-1.jpg … grad-44.jpg). Cada
+// entrada del catálogo elige el suyo por hash de su id: estable entre renders y
+// sin dos vecinas con la misma imagen casi seguro.
+export const GRADIENT_COUNT = 44;
+
+export function gradientUrl(seed) {
+  let hash = 0;
+  for (const char of String(seed)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return `/gradients/grad-${(hash % GRADIENT_COUNT) + 1}.jpg`;
+}
+
 export const SFX_CATEGORIES = [
   { id: "animales", name: "Animales", emoji: "🐾", from: "#fb923c", to: "#b91c1c" },
   { id: "armas", name: "Armas", emoji: "🔫", from: "#f59e0b", to: "#7c2d12" },

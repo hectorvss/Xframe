@@ -181,3 +181,12 @@
     border-radius: 10px;
   }
 }
+
+/* Carril horizontal sin barra de scroll visible (categorías de la biblioteca de audio). */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
