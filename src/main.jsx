@@ -105,6 +105,7 @@ import {
   Clapperboard,
   Megaphone,
   Presentation,
+  Star,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button as UIButton } from "@/components/ui/button";
@@ -3289,11 +3290,17 @@ function DashboardSide({ width, onResize }) {
       )}
       <div className="flex w-full flex-col gap-1">
         {[
-          [FolderKanban, "Todos los proyectos"],
-          [Users, "Creados por mí"],
-          [Share2, "Compartido conmigo"],
-        ].map(([I, l]) => (
-          <button key={l} title={l} className={navCls(false)}>
+          [FolderKanban, "Todos los proyectos", "/dashboard/projects"],
+          [Star, "Destacados", "/dashboard/projects/starred"],
+          [Users, "Creados por mí", "/dashboard/projects/mine"],
+          [Share2, "Compartido conmigo", "/dashboard/projects/shared"],
+        ].map(([I, l, path]) => (
+          <button
+            key={l}
+            title={l}
+            className={navCls(location.pathname === path)}
+            onClick={() => go(path)}
+          >
             <I />
             {!collapsed && l}
           </button>
@@ -3644,7 +3651,7 @@ function ProjectGrid({ view }) {
     </>
   );
 }
-function Dashboard({ kind = "home" }) {
+function Dashboard({ kind = "home", projectScope = "all" }) {
   const { profile } = useStudio();
   const [projectView, setProjectView] = useState("mine");
   const [sidebarW, resizeSidebar] = useResizableWidth(
@@ -3758,6 +3765,8 @@ function Dashboard({ kind = "home" }) {
               </div>
             </section>
           </>
+        ) : kind === "projects" ? (
+          <ProjectsPage scope={projectScope} />
         ) : (
           <Resources />
         )}
@@ -3791,6 +3800,346 @@ function Resources() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Proyectos destacados: se guardan en localStorage (una estrella es preferencia de
+// UI local, no un campo del proyecto), así que se puede destacar sin tocar la BD ni
+// mover la fecha de "última edición".
+const STARRED_KEY = "xf-starred-projects";
+function useStarredProjects() {
+  const [starred, setStarred] = useState(() => {
+    try {
+      const raw = localStorage.getItem(STARRED_KEY);
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const toggle = useCallback((id) => {
+    setStarred((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(STARRED_KEY, JSON.stringify([...next]));
+      } catch {
+        // Sin persistencia (modo privado, cuota): la estrella dura la sesión.
+      }
+      return next;
+    });
+  }, []);
+  return { starred, toggle };
+}
+
+// Metadatos de cada página de proyectos del sidebar.
+const PROJECT_SCOPES = {
+  all: { title: "Proyectos", subtitle: "Todos los proyectos de tu espacio" },
+  mine: { title: "Creados por mí", subtitle: "Proyectos que has creado" },
+  starred: { title: "Destacados", subtitle: "Tus proyectos marcados con estrella" },
+  shared: { title: "Compartido conmigo", subtitle: "Proyectos que otros han compartido contigo" },
+};
+const PROJECT_SORTS = {
+  edited: { label: "Última edición", cmp: (a, b) => b.updated_at.localeCompare(a.updated_at) },
+  created: { label: "Creación", cmp: (a, b) => (b.created_at || "").localeCompare(a.created_at || "") },
+  name: { label: "Nombre", cmp: (a, b) => (a.title || "").localeCompare(b.title || "") },
+};
+// Franjas de actividad, como en la referencia (activos recientes vs. inactivos).
+const ACTIVITY_BUCKETS = [
+  { id: "active", label: "Activos en los últimos 14 días", max: 14 },
+  { id: "month", label: "Del último par de meses", max: 60 },
+  { id: "stale", label: "Inactivos hace más de 60 días", max: Infinity },
+];
+const daysSince = (iso) => Math.floor((Date.now() - new Date(iso)) / 86400000);
+
+function ProjectCard({ project, view, starred, onToggleStar, onDelete }) {
+  const initial = (project.title ?? "P").charAt(0).toUpperCase();
+  const menu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          aria-label="Acciones del proyecto"
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100 data-[state=open]:opacity-100"
+        >
+          <MoreHorizontal className="size-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => go(`/projects/${project.id}`)}>
+          <ExternalLink className="mr-2 size-3.5" /> Abrir
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onToggleStar(project.id)}>
+          <Star
+            className={cn("mr-2 size-3.5", starred && "fill-current text-amber-500")}
+          />
+          {starred ? "Quitar de destacados" : "Destacar"}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() => onDelete(project.id)}
+          className="text-destructive focus:text-destructive"
+        >
+          <Trash2 className="mr-2 size-3.5" /> Eliminar
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  if (view === "list") {
+    return (
+      <div
+        onClick={() => go(`/projects/${project.id}`)}
+        className="group flex cursor-pointer items-center gap-4 rounded-xl border p-2.5 transition-colors hover:bg-accent/40"
+      >
+        <div
+          className="aspect-video w-28 shrink-0 overflow-hidden rounded-lg border bg-muted bg-cover bg-center"
+          style={{ backgroundImage: project.cover_url ? `url(${project.cover_url})` : undefined }}
+        />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{project.title}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <ProjectTypePill type={project.project_type} />
+            <p className="text-xs text-muted-foreground">
+              {relativeDate(project.updated_at)}
+            </p>
+          </div>
+        </div>
+        {starred && <Star className="size-4 shrink-0 fill-current text-amber-500" />}
+        {menu}
+      </div>
+    );
+  }
+
+  return (
+    <div className="group relative cursor-pointer">
+      <div
+        onClick={() => go(`/projects/${project.id}`)}
+        className="relative aspect-video overflow-hidden rounded-xl border bg-muted bg-cover bg-center transition-shadow group-hover:shadow-md"
+        style={{ backgroundImage: project.cover_url ? `url(${project.cover_url})` : undefined }}
+      >
+        <button
+          aria-label={starred ? "Quitar de destacados" : "Destacar"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleStar(project.id);
+          }}
+          className={cn(
+            "absolute right-2 top-2 rounded-full bg-background/80 p-1.5 backdrop-blur transition-opacity",
+            starred
+              ? "opacity-100"
+              : "opacity-0 group-hover:opacity-100",
+          )}
+        >
+          <Star className={cn("size-4", starred && "fill-current text-amber-500")} />
+        </button>
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <span className="flex size-7 items-center justify-center rounded-full bg-green-100 text-xs font-semibold text-green-700">
+          {initial}
+        </span>
+        <div className="min-w-0 flex-1" onClick={() => go(`/projects/${project.id}`)}>
+          <p className="truncate text-sm font-medium">{project.title}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <ProjectTypePill type={project.project_type} />
+            <p className="text-xs text-muted-foreground">
+              {relativeDate(project.updated_at)}
+            </p>
+          </div>
+        </div>
+        {menu}
+      </div>
+    </div>
+  );
+}
+
+function ProjectsPage({ scope = "all" }) {
+  const { projects, deleteProject } = useStudio();
+  const { starred, toggle } = useStarredProjects();
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState("edited");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [view, setView] = useState("grid");
+
+  const meta = PROJECT_SCOPES[scope] || PROJECT_SCOPES.all;
+
+  // El origen depende del apartado: destacados por la estrella, compartidos aún sin
+  // backend de colaboración, y el resto son los del propietario.
+  const base = useMemo(() => {
+    if (scope === "shared") return [];
+    if (scope === "starred") return projects.filter((p) => starred.has(p.id));
+    return projects;
+  }, [scope, projects, starred]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return base
+      .filter((p) => (typeFilter === "all" ? true : (p.project_type || "cinema") === typeFilter))
+      .filter((p) => (q ? (p.title || "").toLowerCase().includes(q) : true))
+      .sort((PROJECT_SORTS[sort] || PROJECT_SORTS.edited).cmp);
+  }, [base, query, typeFilter, sort]);
+
+  const groups = useMemo(() => {
+    const map = new Map(ACTIVITY_BUCKETS.map((b) => [b.id, []]));
+    for (const project of filtered) {
+      const age = daysSince(project.updated_at);
+      const bucket = ACTIVITY_BUCKETS.find((b) => age <= b.max) || ACTIVITY_BUCKETS.at(-1);
+      map.get(bucket.id).push(project);
+    }
+    return ACTIVITY_BUCKETS.map((b) => [b, map.get(b.id)]).filter(([, list]) => list.length);
+  }, [filtered]);
+
+  const emptyState = () => {
+    if (scope === "starred") {
+      return (
+        <div className="mt-16 flex flex-col items-center text-center">
+          <Star className="size-9 text-muted-foreground" />
+          <p className="mt-4 text-lg font-semibold">
+            Destaca proyectos para acceder rápido desde cualquier lugar
+          </p>
+          <UIButton className="mt-4" variant="outline" onClick={() => go("/dashboard/projects")}>
+            Explorar proyectos
+          </UIButton>
+        </div>
+      );
+    }
+    if (scope === "shared") {
+      return (
+        <div className="mt-16 flex flex-col items-center text-center">
+          <Share2 className="size-9 text-muted-foreground" />
+          <p className="mt-4 text-lg font-semibold">
+            Nadie ha compartido proyectos contigo todavía
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Cuando alguien comparta un proyecto, aparecerá aquí.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="mt-16 flex flex-col items-center text-center">
+        <Sparkles className="size-9 text-muted-foreground" />
+        <p className="mt-4 text-lg font-semibold">
+          {query || typeFilter !== "all"
+            ? "Ningún proyecto coincide con el filtro"
+            : "Aún no tienes proyectos"}
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {query || typeFilter !== "all"
+            ? "Prueba con otra búsqueda o quita los filtros."
+            : "Empieza en el Panel escribiendo tu idea y Xframe creará el proyecto."}
+        </p>
+        {!query && typeFilter === "all" && (
+          <UIButton className="mt-4" onClick={() => go("/dashboard")}>
+            <Plus /> Nuevo proyecto
+          </UIButton>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="px-8 py-8">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">{meta.title}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{meta.subtitle}</p>
+        </div>
+        <UIButton onClick={() => go("/dashboard")}>
+          <Plus /> Crear
+        </UIButton>
+      </div>
+
+      {/* Barra de búsqueda + filtros + alternador de vista, como en la referencia. */}
+      <div className="mt-6 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-56 flex-1">
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar proyectos…"
+            className="h-9 pl-9"
+          />
+        </div>
+        <Select value={sort} onValueChange={setSort}>
+          <SelectTrigger className="h-9 w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.entries(PROJECT_SORTS).map(([id, s]) => (
+              <SelectItem key={id} value={id}>
+                {s.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={typeFilter} onValueChange={setTypeFilter}>
+          <SelectTrigger className="h-9 w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Cualquier tipo</SelectItem>
+            {Object.entries(PROJECT_TYPES).map(([id, item]) => (
+              <SelectItem key={id} value={id}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="flex items-center rounded-lg border p-0.5">
+          {[
+            ["grid", Grid2X2],
+            ["list", List],
+          ].map(([id, Icon]) => (
+            <button
+              key={id}
+              onClick={() => setView(id)}
+              aria-label={id === "grid" ? "Vista de cuadrícula" : "Vista de lista"}
+              className={cn(
+                "flex size-7 items-center justify-center rounded-md transition-colors",
+                view === id
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Icon className="size-4" />
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {!filtered.length ? (
+        emptyState()
+      ) : (
+        <div className="mt-8 space-y-10">
+          {groups.map(([bucket, list]) => (
+            <section key={bucket.id}>
+              <p className="mb-4 text-sm font-medium text-muted-foreground">
+                {bucket.label}
+              </p>
+              <div
+                className={cn(
+                  view === "grid"
+                    ? "grid grid-cols-2 gap-x-5 gap-y-6 md:grid-cols-3 lg:grid-cols-4"
+                    : "flex flex-col gap-2",
+                )}
+              >
+                {list.map((project) => (
+                  <ProjectCard
+                    key={project.id}
+                    project={project}
+                    view={view}
+                    starred={starred.has(project.id)}
+                    onToggleStar={toggle}
+                    onDelete={deleteProject}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -13708,6 +14057,10 @@ function App() {
   if (p === "/es/pricing") page = <Pricing />;
   else if (p === "/es" || p === "/") page = <Landing />;
   else if (p === "/dashboard/resources") page = <Dashboard kind="resources" />;
+  else if (p === "/dashboard/projects") page = <Dashboard kind="projects" projectScope="all" />;
+  else if (p === "/dashboard/projects/mine") page = <Dashboard kind="projects" projectScope="mine" />;
+  else if (p === "/dashboard/projects/starred") page = <Dashboard kind="projects" projectScope="starred" />;
+  else if (p === "/dashboard/projects/shared") page = <Dashboard kind="projects" projectScope="shared" />;
   else if (p === "/dashboard") page = <Dashboard kind="home" />;
   else if (settingsMatch) page = <SettingsPage page={settingsMatch[1]} />;
   else if (projectMatch) page = <Editor projectId={projectMatch[1]} />;
