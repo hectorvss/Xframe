@@ -5665,6 +5665,404 @@ function EditorPreview({
 
 const elementRoles = ["Personaje", "Localización", "Objeto"];
 
+/**
+ * El "escenario" del asset: el medio con su barra de herramientas flotante de cristal,
+ * calcada del flujo de Lovable. Cuatro modos, y cada uno termina en una referencia que
+ * el chat del agente entiende (con el id del asset y las coordenadas normalizadas de la
+ * zona marcada), o en un envío directo del prompt.
+ *
+ * - Seleccionar componente: arrastra una caja. En imagen crea una referencia de zona;
+ *   en vídeo aún no hay selección de componentes (se avisa), pero el andamiaje está.
+ * - Texto: marca dónde iría/está un elemento de texto. Hoy no hay texto editable en un
+ *   render, así que es un stub honesto — pero funcional y referenciable — para cuando
+ *   existan elementos de marketing/demo.
+ * - Anotación: dibujo libre con deshacer/rehacer/borrar; al enviar, marca la zona.
+ * - Comentar: fija un punto y escribe; al enviar, el prompt va DIRECTO al agente.
+ */
+function AssetStage({ asset, isVideo, isAudio, onReferenceInChat, onSendToChat }) {
+  const [tool, setTool] = useState(null); // null | select | text | annotate | comment
+  const [box, setBox] = useState(null); // {x,y,w,h} normalizado
+  const [point, setPoint] = useState(null); // {x,y} normalizado
+  const [strokes, setStrokes] = useState([]); // [[{x,y}...]...]
+  const [redo, setRedo] = useState([]);
+  const [comment, setComment] = useState("");
+  const stageRef = useRef(null);
+  const drawing = useRef(null);
+  const boxStart = useRef(null);
+
+  const label = asset.role ? `@${asset.name}` : `"${asset.name}"`;
+  const reset = (next = null) => {
+    setTool(next);
+    setBox(null);
+    setPoint(null);
+    setStrokes([]);
+    setRedo([]);
+    setComment("");
+  };
+
+  const ptFrom = (e) => {
+    const r = stageRef.current.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
+      y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
+    };
+  };
+  const pct = (n) => `${(n * 100).toFixed(1)}%`;
+  const zoneWords = (b) => {
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    const h = cy < 0.34 ? "superior" : cy > 0.66 ? "inferior" : "central";
+    const v = cx < 0.34 ? "izquierda" : cx > 0.66 ? "derecha" : "centro";
+    return `${h} ${v}`.replace("central centro", "centro");
+  };
+
+  // -- interacción sobre el medio --------------------------------------- //
+  const onDown = (e) => {
+    if (tool === "select") {
+      if (isVideo) return; // sin selección de componentes en vídeo (todavía)
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      boxStart.current = ptFrom(e);
+      setBox({ ...boxStart.current, w: 0, h: 0 });
+    } else if (tool === "annotate") {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      drawing.current = [ptFrom(e)];
+      setRedo([]);
+      setStrokes((s) => [...s, drawing.current]);
+    } else if (tool === "text" || tool === "comment") {
+      setPoint(ptFrom(e));
+    }
+  };
+  const onMove = (e) => {
+    if (tool === "select" && boxStart.current) {
+      const p = ptFrom(e);
+      const s = boxStart.current;
+      setBox({
+        x: Math.min(s.x, p.x),
+        y: Math.min(s.y, p.y),
+        w: Math.abs(p.x - s.x),
+        h: Math.abs(p.y - s.y),
+      });
+    } else if (tool === "annotate" && drawing.current) {
+      drawing.current.push(ptFrom(e));
+      setStrokes((s) => [...s.slice(0, -1), [...drawing.current]]);
+    }
+  };
+  const onUp = () => {
+    if (tool === "select") {
+      boxStart.current = null;
+      setBox((b) => (b && b.w >= 0.02 && b.h >= 0.02 ? b : null));
+    } else if (tool === "annotate") {
+      drawing.current = null;
+    }
+  };
+
+  const strokesBBox = () => {
+    const pts = strokes.flat();
+    if (!pts.length) return null;
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    return {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      w: Math.max(...xs) - Math.min(...xs),
+      h: Math.max(...ys) - Math.min(...ys),
+    };
+  };
+
+  // -- confirmaciones --------------------------------------------------- //
+  const sendSelect = () => {
+    if (!box) return;
+    onReferenceInChat(
+      `Sobre ${label} (asset ${asset.id}), en la zona ${zoneWords(box)} ` +
+        `(x ${pct(box.x)}, y ${pct(box.y)}, ancho ${pct(box.w)}, alto ${pct(box.h)}): `,
+    );
+  };
+  const sendText = () => {
+    if (!point) return;
+    onReferenceInChat(
+      `Sobre ${label} (asset ${asset.id}), referido al elemento en el punto ` +
+        `(x ${pct(point.x)}, y ${pct(point.y)}): `,
+    );
+  };
+  const sendAnnotation = () => {
+    const bb = strokesBBox();
+    if (!bb) return;
+    onReferenceInChat(
+      `Sobre ${label} (asset ${asset.id}), he marcado con una anotación la zona ` +
+        `${zoneWords(bb)} (x ${pct(bb.x)}, y ${pct(bb.y)}, ancho ${pct(bb.w)}, alto ${pct(bb.h)}): `,
+    );
+  };
+  const sendComment = () => {
+    if (!point || !comment.trim()) return;
+    onSendToChat(
+      `Sobre ${label} (asset ${asset.id}), en el punto (x ${pct(point.x)}, y ${pct(point.y)}): ` +
+        `${comment.trim()}. Aplica el cambio solo en esa zona y mantén el resto del render igual.`,
+    );
+  };
+
+  const TOOLS = [
+    ["select", Crosshair, "Seleccionar componente"],
+    ["text", Type, "Texto"],
+    ["annotate", Pencil, "Anotación"],
+    ["comment", MessageCircle, "Comentario"],
+  ];
+  const active = TOOLS.find(([t]) => t === tool);
+
+  return (
+    <div className="space-y-2">
+      <div
+        ref={stageRef}
+        className="relative select-none overflow-hidden rounded-lg"
+        onPointerDown={tool ? onDown : undefined}
+        onPointerMove={tool ? onMove : undefined}
+        onPointerUp={tool ? onUp : undefined}
+        style={{
+          cursor:
+            tool === "annotate"
+              ? "crosshair"
+              : tool && (tool !== "select" || !isVideo)
+                ? "crosshair"
+                : "default",
+        }}
+      >
+        {asset.url && isVideo ? (
+          <video
+            src={asset.url}
+            controls={!tool}
+            playsInline
+            className="max-h-[62vh] w-full rounded-lg bg-black object-contain"
+          />
+        ) : asset.url && isAudio ? (
+          <audio src={asset.url} controls className="w-full" />
+        ) : asset.url ? (
+          <img
+            src={asset.url}
+            alt={asset.name}
+            draggable={false}
+            className="max-h-[62vh] w-full rounded-lg bg-muted object-contain"
+          />
+        ) : (
+          <div className="flex h-64 items-center justify-center rounded-lg bg-muted">
+            <Volume2 className="size-10 text-muted-foreground" />
+          </div>
+        )}
+
+        {/* Overlays de las marcas */}
+        {tool && !isAudio && (
+          <>
+            {box && (
+              <span
+                className="pointer-events-none absolute rounded border-2 border-blue-500 bg-blue-500/15"
+                style={{ left: pct(box.x), top: pct(box.y), width: pct(box.w), height: pct(box.h) }}
+              />
+            )}
+            {point && (
+              <span
+                className="pointer-events-none absolute flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-blue-600 text-[10px] font-semibold text-white shadow-lg"
+                style={{ left: pct(point.x), top: pct(point.y) }}
+              >
+                {tool === "comment" ? <MessageCircle className="size-3" /> : <Type className="size-3" />}
+              </span>
+            )}
+            {strokes.length > 0 && (
+              <svg className="pointer-events-none absolute inset-0 size-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                {strokes.map((st, i) => (
+                  <polyline
+                    key={i}
+                    points={st.map((p) => `${p.x * 100},${p.y * 100}`).join(" ")}
+                    fill="none"
+                    stroke="#ef4444"
+                    strokeWidth="0.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    vectorEffect="non-scaling-stroke"
+                    style={{ strokeWidth: 2.5 }}
+                  />
+                ))}
+              </svg>
+            )}
+          </>
+        )}
+
+        {/* Chip de selección (como en Lovable) */}
+        {tool === "select" && box && (
+          <div className="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/15 bg-neutral-950/80 px-1 py-1 text-xs text-white shadow-xl backdrop-blur-xl">
+            <span className="flex items-center gap-1.5 pl-2">
+              <Crosshair className="size-3" /> 1 selección
+            </span>
+            <button onClick={() => setBox(null)} className="rounded-full px-2 py-0.5 text-neutral-300 hover:bg-white/10">
+              Borrar
+            </button>
+            <button onClick={sendSelect} className="rounded-full bg-blue-600 px-2.5 py-0.5 font-medium hover:bg-blue-500">
+              Al chat
+            </button>
+          </div>
+        )}
+
+        {/* Barra de anotación */}
+        {tool === "annotate" && (
+          <div className="absolute bottom-16 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/15 bg-neutral-950/80 px-1.5 py-1 text-white shadow-xl backdrop-blur-xl">
+            <span className="flex items-center gap-1.5 px-1.5 text-xs">
+              <Pencil className="size-3" /> Anotación
+            </span>
+            <div className="mx-0.5 h-4 w-px bg-white/15" />
+            <button
+              title="Deshacer"
+              disabled={!strokes.length}
+              onClick={() => {
+                setStrokes((s) => {
+                  if (!s.length) return s;
+                  setRedo((r) => [s[s.length - 1], ...r]);
+                  return s.slice(0, -1);
+                });
+              }}
+              className="flex size-7 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30"
+            >
+              <Undo2 className="size-3.5" />
+            </button>
+            <button
+              title="Rehacer"
+              disabled={!redo.length}
+              onClick={() => {
+                setRedo((r) => {
+                  if (!r.length) return r;
+                  setStrokes((s) => [...s, r[0]]);
+                  return r.slice(1);
+                });
+              }}
+              className="flex size-7 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30"
+            >
+              <Redo2 className="size-3.5" />
+            </button>
+            <button
+              title="Borrar todo"
+              disabled={!strokes.length}
+              onClick={() => {
+                setStrokes([]);
+                setRedo([]);
+              }}
+              className="flex size-7 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+            <button
+              disabled={!strokes.length}
+              onClick={sendAnnotation}
+              className="ml-0.5 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-medium hover:bg-blue-500 disabled:opacity-30"
+            >
+              Al chat
+            </button>
+          </div>
+        )}
+
+        {/* LA BARRA DE CRISTAL — colapsada, se despliega al pasar el ratón */}
+        <div className="group/tb absolute bottom-3 left-1/2 -translate-x-1/2">
+          <div className="flex items-center gap-0.5 rounded-full border border-white/15 bg-white/10 p-1 text-white shadow-2xl backdrop-blur-2xl transition-all duration-300">
+            {TOOLS.map(([t, Icon, title]) => {
+              const disabled = t === "select" && isVideo;
+              return (
+                <button
+                  key={t}
+                  title={
+                    disabled
+                      ? "La selección de componentes aún no está disponible en vídeo"
+                      : title
+                  }
+                  disabled={disabled}
+                  onClick={() => reset(tool === t ? null : t)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full px-2 py-1.5 text-xs font-medium transition-all",
+                    tool === t ? "bg-blue-600 text-white" : "hover:bg-white/15",
+                    disabled && "opacity-40",
+                  )}
+                >
+                  <Icon className="size-4" />
+                  {/* La etiqueta solo aparece al desplegar (hover) o si es la activa */}
+                  <span
+                    className={cn(
+                      "max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-300 group-hover/tb:max-w-[120px] group-hover/tb:opacity-100",
+                      tool === t && "max-w-[120px] opacity-100",
+                    )}
+                  >
+                    {title}
+                  </span>
+                </button>
+              );
+            })}
+            {/* Afordancia "más" que aparece al desplegar, como en la referencia */}
+            <div className="max-w-0 overflow-hidden opacity-0 transition-all duration-300 group-hover/tb:max-w-[64px] group-hover/tb:opacity-100">
+              <div className="flex items-center">
+                <div className="mx-0.5 h-4 w-px bg-white/20" />
+                <button
+                  title="Cerrar herramientas"
+                  onClick={() => reset(null)}
+                  className="flex size-7 items-center justify-center rounded-full text-neutral-300 hover:bg-white/15"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Panel del modo texto: hoy no hay texto editable, pero funcional y referenciable */}
+      {tool === "text" && (
+        <div className="rounded-xl border bg-muted/40 p-3 text-sm">
+          {point ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-muted-foreground">
+                Elemento de texto marcado. Aún no hay capas de texto editables en un
+                render — pero puedes referirlo al agente para cuando existan.
+              </p>
+              <UIButton size="sm" onClick={sendText}>
+                <ArrowUp /> Al chat
+              </UIButton>
+            </div>
+          ) : (
+            <p className="text-muted-foreground">
+              Toca sobre el asset para marcar dónde va un elemento de texto. En
+              marketing y demos podrás editar y referenciar textos aquí.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Tarjeta de comentario: fija un punto y el prompt va DIRECTO al agente */}
+      {tool === "comment" && point && (
+        <div className="rounded-xl border bg-background p-3 shadow-sm">
+          <Textarea
+            autoFocus
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendComment();
+              }
+            }}
+            placeholder="Describe el cambio exacto en este punto y se lo mando al agente…"
+            className="min-h-20 resize-none border-0 p-0 shadow-none focus-visible:ring-0"
+          />
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-[11px] text-muted-foreground">
+              Enter envía · el agente aplicará el cambio solo en esa zona
+            </span>
+            <div className="flex gap-2">
+              <UIButton variant="ghost" size="sm" onClick={() => setPoint(null)}>
+                Cancelar
+              </UIButton>
+              <UIButton size="sm" disabled={!comment.trim()} onClick={sendComment}>
+                <ArrowUp /> Enviar
+              </UIButton>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Vista ampliada del asset.
 function AssetLightbox({
   asset,
@@ -5674,91 +6072,12 @@ function AssetLightbox({
   onRegenerate,
   onDuplicate,
   onAction,
+  onReferenceInChat,
+  onSendToChat,
 }) {
-  const [reviewMode, setReviewMode] = useState(null);
-  const [pin, setPin] = useState(null);
-  const [region, setRegion] = useState(null);
-  const regionStart = useRef(null);
-  const [comment, setComment] = useState("");
-  const [qualityReports, setQualityReports] = useState([]);
-  const [qualityType, setQualityType] = useState(() =>
-    /audio/i.test(String(asset.type)) ? "audio" : "render",
-  );
-  const [qualityNote, setQualityNote] = useState("");
-  const [qualitySaving, setQualitySaving] = useState(false);
-  const refreshQuality = useCallback(() => {
-    db.listQualityReports(asset.id).then(setQualityReports).catch(() => setQualityReports([]));
-  }, [asset.id]);
-  useEffect(refreshQuality, [refreshQuality]);
-  const saveQuality = async (passed) => {
-    if (!qualityNote.trim()) return;
-    setQualitySaving(true);
-    try {
-      await db.createHumanQualityReview(projectId, asset.id, {
-        check_type: qualityType,
-        passed,
-        score: passed ? 1 : 0,
-        note: qualityNote.trim(),
-      });
-      setQualityNote("");
-      refreshQuality();
-    } finally {
-      setQualitySaving(false);
-    }
-  };
-  const placePin = (event) => {
-    if (!["comment", "text"].includes(reviewMode)) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    setPin({
-      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
-      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
-    });
-  };
-  const saveComment = async () => {
-    if ((!pin && !region) || !comment.trim()) return;
-    await db.addAnnotation(projectId, {
-      asset_id: asset.id,
-      kind: region ? "region" : reviewMode === "text" ? "text" : "comment",
-      body: comment.trim(),
-      geometry: region || { type: "point", ...pin },
-    });
-    setComment("");
-    setPin(null);
-    setRegion(null);
-    setReviewMode(null);
-  };
-  const mediaPoint = (event) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    return {
-      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
-      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
-    };
-  };
-  const startRegion = (event) => {
-    if (reviewMode !== "region") return;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    regionStart.current = mediaPoint(event);
-    setRegion({ type: "rect", ...regionStart.current, width: 0, height: 0 });
-  };
-  const moveRegion = (event) => {
-    if (reviewMode !== "region" || !regionStart.current) return;
-    const end = mediaPoint(event);
-    const start = regionStart.current;
-    setRegion({
-      type: "rect",
-      x: Math.min(start.x, end.x),
-      y: Math.min(start.y, end.y),
-      width: Math.abs(end.x - start.x),
-      height: Math.abs(end.y - start.y),
-    });
-  };
-  const finishRegion = () => {
-    if (reviewMode !== "region") return;
-    regionStart.current = null;
-    setRegion((value) =>
-      value && value.width >= 0.01 && value.height >= 0.01 ? value : null,
-    );
-  };
+  const isVideo = /video|cut/i.test(String(asset.type));
+  const isAudio = /audio/i.test(String(asset.type));
+
   const derived = [
     ["edit", Wand2, "Editar componente"],
     ["extend", MoveHorizontal, "Extender clip"],
@@ -5788,68 +6107,19 @@ function AssetLightbox({
           </DialogDescription>
         </DialogHeader>
 
-        <div
-          className="relative"
-          onClick={placePin}
-          onPointerDown={startRegion}
-          onPointerMove={moveRegion}
-          onPointerUp={finishRegion}
-        >
-        {asset.url && /video|cut/i.test(String(asset.type)) ? (
-          // Un vídeo se reproduce, no se enseña como imagen rota.
-          <video
-            src={asset.url}
-            controls
-            playsInline
-            className="max-h-[65vh] w-full rounded-lg bg-black object-contain"
-          />
-        ) : asset.url && /audio/i.test(String(asset.type)) ? (
-          <audio src={asset.url} controls className="w-full" />
-        ) : asset.url ? (
-          <img
-            src={asset.url}
-            alt={asset.name}
-            className="max-h-[65vh] w-full rounded-lg bg-muted object-contain"
-          />
-        ) : (
-          <div className="flex h-64 items-center justify-center rounded-lg bg-muted">
-            <Volume2 className="size-10 text-muted-foreground" />
-          </div>
-        )}
-          {["comment", "text", "region"].includes(reviewMode) && (
-            <div className="pointer-events-none absolute inset-0 cursor-crosshair ring-1 ring-inset ring-blue-500/70" />
-          )}
-          {region && (
-            <span
-              className="pointer-events-none absolute border-2 border-blue-500 bg-blue-500/15"
-              style={{
-                left: `${region.x * 100}%`,
-                top: `${region.y * 100}%`,
-                width: `${region.width * 100}%`,
-                height: `${region.height * 100}%`,
-              }}
-            />
-          )}
-          {pin && (
-            <span
-              className="absolute flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-blue-600 text-[10px] font-semibold text-white shadow-lg"
-              style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
-            >1</span>
-          )}
-          <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center rounded-full border border-white/10 bg-neutral-950/90 p-1 text-white shadow-xl backdrop-blur">
-            <button title="Seleccionar" onClick={(e) => { e.stopPropagation(); setReviewMode(null); setPin(null); setRegion(null); }} className="flex size-8 items-center justify-center rounded-full hover:bg-white/10"><Crosshair className="size-3.5" /></button>
-            <button title="Texto" onClick={(e) => { e.stopPropagation(); setReviewMode("text"); setRegion(null); }} className={cn("flex size-8 items-center justify-center rounded-full hover:bg-white/10", reviewMode === "text" && "bg-blue-600 hover:bg-blue-600")}><Type className="size-3.5" /></button>
-            <button title="Seleccionar región editable" onClick={(e) => { e.stopPropagation(); setReviewMode("region"); setPin(null); setRegion(null); }} className={cn("flex size-8 items-center justify-center rounded-full hover:bg-white/10", reviewMode === "region" && "bg-blue-600 hover:bg-blue-600")}><Pencil className="size-3.5" /></button>
-            <button title="Comentar" onClick={(e) => { e.stopPropagation(); setReviewMode("comment"); }} className="flex size-8 items-center justify-center rounded-full hover:bg-white/10"><MessageCircle className="size-3.5" /></button>
-          </div>
-        </div>
-
-        {(pin || region) && (
-          <div className="rounded-xl border bg-background p-3 shadow-sm">
-            <Textarea autoFocus value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Describe el cambio exacto en este punto…" className="min-h-20 resize-none border-0 p-0 shadow-none focus-visible:ring-0" />
-            <div className="mt-2 flex justify-end gap-2"><UIButton variant="ghost" size="sm" onClick={() => { setPin(null); setRegion(null); }}>Cancelar</UIButton><UIButton size="sm" disabled={!comment.trim()} onClick={saveComment}>{region ? "Guardar región" : "Guardar comentario"}</UIButton></div>
-          </div>
-        )}
+        <AssetStage
+          asset={asset}
+          isVideo={isVideo}
+          isAudio={isAudio}
+          onReferenceInChat={(text) => {
+            onClose();
+            onReferenceInChat?.(text);
+          }}
+          onSendToChat={(text) => {
+            onClose();
+            onSendToChat?.(text);
+          }}
+        />
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
           {derived.map(([action, Icon, label]) => (
@@ -5857,63 +6127,6 @@ function AssetLightbox({
               <Icon className="size-4 text-muted-foreground" />{label}
             </button>
           ))}
-        </div>
-
-        <div className="rounded-xl border p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold">Control de calidad</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                La aprobación queda registrada con criterio, autor y evidencia; el director no puede inventarla.
-              </p>
-            </div>
-            <Badge variant="outline" className="shrink-0 text-[10px]">
-              {qualityReports.length} revisiones
-            </Badge>
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-[190px_1fr]">
-            <Select value={qualityType} onValueChange={setQualityType}>
-              <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="render">Integridad visual</SelectItem>
-                <SelectItem value="prompt_adherence">Fidelidad al prompt</SelectItem>
-                <SelectItem value="identity">Identidad/personaje</SelectItem>
-                <SelectItem value="continuity">Continuidad</SelectItem>
-                <SelectItem value="product_fidelity">Producto</SelectItem>
-                <SelectItem value="text_logo">Texto y logotipo</SelectItem>
-                <SelectItem value="audio">Audio y mezcla</SelectItem>
-                <SelectItem value="transition">Transición</SelectItem>
-                <SelectItem value="final_cut">Corte final</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input
-              value={qualityNote}
-              onChange={(event) => setQualityNote(event.target.value)}
-              placeholder="Qué has comprobado y por qué pasa o falla…"
-              className="h-9 text-xs"
-            />
-          </div>
-          <div className="mt-2 flex gap-2">
-            <UIButton size="sm" disabled={!qualityNote.trim() || qualitySaving} onClick={() => saveQuality(true)}>
-              <ThumbsUp /> Aprobar criterio
-            </UIButton>
-            <UIButton variant="outline" size="sm" disabled={!qualityNote.trim() || qualitySaving} onClick={() => saveQuality(false)}>
-              <ThumbsDown /> Registrar fallo
-            </UIButton>
-          </div>
-          {!!qualityReports.length && (
-            <div className="mt-3 space-y-1 border-t pt-2">
-              {qualityReports.slice(0, 4).map((report) => (
-                <div key={report.id} className="flex items-center gap-2 text-[10px]">
-                  <span className={cn("size-1.5 rounded-full", report.passed ? "bg-emerald-500" : "bg-red-500")} />
-                  <span className="font-medium">{report.check_type}</span>
-                  <span className="truncate text-muted-foreground">
-                    {report.review_source || "automated"} · {report.review_evidence?.note || report.issues?.[0]?.message || "sin nota"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -6225,6 +6438,8 @@ function EditorAssets({
   onRegenerate,
   onUpload,
   onAction,
+  onReferenceInChat,
+  onSendToChat,
   selectedIds = [],
   onSelectionChange,
 }) {
@@ -6388,6 +6603,27 @@ function EditorAssets({
                 onCustomRole={setCustomId}
               />
             )}
+            {a.status === "failed" && (
+              // Un asset fallido no tiene render que asignar, duplicar ni abrir, pero
+              // el usuario tiene que poder quitarlo del proyecto (y reintentarlo). Le
+              // damos su propia barra en vez del AssetMenu completo, que asume un `url`.
+              <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover/card:opacity-100 focus-within:opacity-100">
+                <button
+                  onClick={() => onRegenerate(a.id)}
+                  title="Reintentar generación"
+                  className="flex size-7 items-center justify-center rounded-md bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/75"
+                >
+                  <RefreshCw className="size-3.5" />
+                </button>
+                <button
+                  onClick={() => onRemove(a.id)}
+                  title="Eliminar"
+                  className="flex size-7 items-center justify-center rounded-md bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-red-600/80"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+            )}
             {a.status === "ready" && (
               <button
                 type="button"
@@ -6423,6 +6659,8 @@ function EditorAssets({
           onRegenerate={onRegenerate}
           onDuplicate={onDuplicate}
           onAction={onAction}
+          onReferenceInChat={onReferenceInChat}
+          onSendToChat={onSendToChat}
         />
       )}
       {customAsset && (
@@ -8498,6 +8736,16 @@ function Editor({ projectId }) {
                 };
                 setChatHidden(false);
                 setChatInsert({ text: instructions[action], at: Date.now() });
+              }}
+              onReferenceInChat={(text) => {
+                // Marca una zona/anotación: siembra el chat y deja al usuario redactar.
+                setChatHidden(false);
+                setChatInsert({ text, at: Date.now() });
+              }}
+              onSendToChat={(text) => {
+                // Comentario fijado: el prompt va directo al agente.
+                setChatHidden(false);
+                handleSend(text);
               }}
               selectedIds={selectedAssetIds}
               onSelectionChange={setSelectedAssetIds}

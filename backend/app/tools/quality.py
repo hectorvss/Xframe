@@ -521,6 +521,7 @@ class CompleteProductionManifestTool(SnapshotTool):
                 continue
             latest = await db.fetch(
                 """select distinct on (check_type) id,check_type,passed,review_source
+                     from public.quality_reports
                     where project_id=$1::uuid and asset_id=$2::uuid
                     order by check_type,created_at desc""",
                 self.ctx.project_id, asset["id"],
