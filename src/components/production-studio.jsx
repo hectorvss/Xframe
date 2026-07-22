@@ -2529,9 +2529,34 @@ export function ScreenplayStudio({
 
   return (
     <TooltipProvider>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
-        <header className="flex h-12 shrink-0 items-center gap-3 px-4">
+      {/* Misma rejilla 2×2 que en Audio: el sidebar ocupa toda la altura de su columna
+          y el encabezado solo existe sobre la principal. El toggle vive en el
+          encabezado: fuera del sidebar al desplegarse, primero del grupo derecho al
+          colapsar. */}
+      <div
+        className="grid h-full min-h-0 grid-rows-[3rem_minmax(0,1fr)] overflow-hidden rounded-xl border bg-background"
+        style={{
+          gridTemplateColumns: `${scenePanelVisible ? "272px" : "0px"} minmax(420px, 1fr)`,
+        }}
+      >
+        <header className="col-start-2 row-start-1 flex min-w-0 items-center gap-3 px-4">
+          {scenePanelVisible && (
+            <SidebarToggle
+              side="left"
+              expanded={scenePanelVisible}
+              onChange={setScenePanelVisible}
+              label="escenas"
+            />
+          )}
           <div className="ml-auto flex items-center gap-3">
+            {!scenePanelVisible && (
+              <SidebarToggle
+                side="left"
+                expanded={scenePanelVisible}
+                onChange={setScenePanelVisible}
+                label="escenas"
+              />
+            )}
             <Badge variant="outline">
               {data.scenes.length} escenas · {data.lines.length} líneas ·{" "}
               {(totalDuration / 1000).toFixed(1)} s
@@ -2545,30 +2570,17 @@ export function ScreenplayStudio({
             </Button>
           </div>
         </header>
-        <div
-          className="grid min-h-0 flex-1"
-          style={{
-            gridTemplateColumns: `${scenePanelVisible ? "272px" : "0px"} minmax(420px, 1fr)`,
-          }}
-        >
           <aside
             className={cn(
-              "production-sidebar relative flex min-h-0 flex-col",
+              "production-sidebar relative col-start-1 row-span-2 row-start-1 flex min-h-0 flex-col",
               scenePanelVisible
                 ? "overflow-hidden border-r bg-muted/10"
                 : "overflow-visible",
             )}
           >
-            <div
-              className={cn(
-                "flex shrink-0 items-center",
-                scenePanelVisible
-                  ? "h-14 justify-between border-b px-3"
-                  : "absolute left-2 top-5 z-20",
-              )}
-            >
-              {scenePanelVisible && (
-                <div className="flex rounded-xl border bg-muted/40 p-1">
+            {scenePanelVisible && (
+              <div className="flex shrink-0 items-center border-b p-3">
+                <div className="grid w-full grid-cols-2 rounded-xl border bg-muted/40 p-1">
                   {[
                     ["scenes", "Escenas"],
                     ["cast", "Personajes"],
@@ -2578,7 +2590,7 @@ export function ScreenplayStudio({
                       type="button"
                       onClick={() => setLeftTab(value)}
                       className={cn(
-                        "rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors",
+                        "rounded-lg px-3.5 py-1.5 text-center text-xs font-semibold transition-colors",
                         leftTab === value
                           ? "bg-background text-foreground shadow-sm"
                           : "text-muted-foreground hover:text-foreground",
@@ -2588,16 +2600,8 @@ export function ScreenplayStudio({
                     </button>
                   ))}
                 </div>
-              )}
-              <div className="flex items-center gap-1">
-                <SidebarToggle
-                  side="left"
-                  expanded={scenePanelVisible}
-                  onChange={setScenePanelVisible}
-                  label="escenas"
-                />
               </div>
-            </div>
+            )}
             {scenePanelVisible && leftTab === "cast" && (
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <CastPanel
@@ -2698,13 +2702,8 @@ export function ScreenplayStudio({
             )}
           </aside>
 
-          <main className="flex min-h-0 flex-col overflow-hidden">
-            <div
-              className={cn(
-                "min-h-0 flex-1 overflow-y-auto",
-                !scenePanelVisible && "pl-14",
-              )}
-            >
+          <main className="col-start-2 row-start-2 flex min-h-0 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-y-auto">
             {loading ? <ScreenplayWorkspaceSkeleton /> : !scene ? (
               <div className="p-6">
                 <EmptyState
@@ -2980,7 +2979,6 @@ export function ScreenplayStudio({
               />
             )}
           </main>
-        </div>
       </div>
     </TooltipProvider>
   );
@@ -5328,12 +5326,7 @@ export function AudioStudio({
           </aside>
 
           <main className="col-start-2 row-start-2 flex min-h-0 flex-col overflow-hidden">
-            <div
-              className={cn(
-                "min-h-0 flex-1 overflow-auto p-5",
-                !audioLibraryVisible && "pl-14",
-              )}
-            >
+            <div className="min-h-0 flex-1 overflow-auto p-5">
               {loading ? (
                 <AudioWorkspaceSkeleton />
               ) : (
