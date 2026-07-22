@@ -312,7 +312,14 @@ function DraftInput({
   const Component = multiline ? Textarea : Input;
   return (
     <Component
+      // Las "esquinas" tenues que salen al escribir las pinta el corrector/predictor del
+      // navegador (MS Editor en Edge). Se desactivan sus ganchos y el resize del textarea.
+      spellCheck={false}
+      autoCorrect="off"
+      autoComplete="off"
+      data-gramm="false"
       {...props}
+      className={cn(multiline && "resize-none", props.className)}
       type={number && !multiline ? "number" : props.type}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
@@ -1664,10 +1671,13 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
   }
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
+  const [speed, setSpeed] = useState(1);
   const rafRef = useRef(0);
   const audioRef = useRef(null);
   const activeRef = useRef(-1);
   const clockRef = useRef({ t0: 0, base: 0 });
+  const speedRef = useRef(1);
+  speedRef.current = speed;
 
   const stopAudio = () => {
     activeRef.current = -1;
@@ -1690,7 +1700,9 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
 
   const frame = () => {
     const now = performance.now();
-    const p = clockRef.current.base + (now - clockRef.current.t0);
+    const p =
+      clockRef.current.base +
+      (now - clockRef.current.t0) * speedRef.current;
     if (p >= total) {
       setPos(total);
       halt();
@@ -1715,6 +1727,7 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
           audioRef.current = audio;
         }
         audio.src = clip.url;
+        audio.playbackRate = speedRef.current;
         audio.play().catch(() => {});
       }
     }
@@ -1778,6 +1791,36 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
     window.addEventListener("pointerup", up);
   };
 
+  const SPEEDS = [1, 1.25, 1.5, 2, 0.5];
+  const cycleSpeed = () => {
+    const next = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length] ?? 1;
+    // Rebasa el reloj para que el cambio de velocidad no dé un salto en el cabezal.
+    clockRef.current = { t0: performance.now(), base: pos };
+    if (audioRef.current) audioRef.current.playbackRate = next;
+    setSpeed(next);
+  };
+
+  // El control − ● + ajusta la escala de segundos (zoom) de la pista; se puede arrastrar.
+  const startZoom = (event) => {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const apply = (clientX) => {
+      const ratio = Math.min(
+        1,
+        Math.max(0, (clientX - rect.left) / rect.width),
+      );
+      setPxPerSec(clampZoom(28 + ratio * (280 - 28)));
+    };
+    apply(event.clientX);
+    const move = (moveEvent) => apply(moveEvent.clientX);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
   const iconBtn =
     "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40";
 
@@ -1785,16 +1828,18 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
     <div className="shrink-0 border-t bg-background">
       {/* Transporte, idéntico al reproductor de referencia. */}
       <div className="flex items-center gap-2 border-b px-3 py-1.5">
-        <button type="button" className={iconBtn} aria-label="Colapsar">
-          <PanelLeftClose className="size-4" />
-        </button>
         <div className="flex flex-1 items-center justify-center gap-2">
           <button type="button" className={iconBtn} aria-label="Pistas">
             <ListFilter className="size-4" />
           </button>
-          <span className="px-1 text-xs font-medium tabular-nums text-muted-foreground">
-            1.0x
-          </span>
+          <button
+            type="button"
+            onClick={cycleSpeed}
+            title="Velocidad de reproducción"
+            className="rounded-md px-1.5 py-0.5 text-xs font-medium tabular-nums text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            {speed}x
+          </button>
           <button
             type="button"
             className={iconBtn}
@@ -1837,7 +1882,12 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
           >
             <Minus className="size-4" />
           </button>
-          <div className="relative h-1 w-14 rounded-full bg-muted">
+          <div
+            className="relative h-4 w-16 cursor-pointer touch-none"
+            onPointerDown={startZoom}
+            title="Escala de segundos"
+          >
+            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted" />
             <span
               className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground"
               style={{ left: `${zoomPct}%` }}
@@ -1850,9 +1900,6 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
             aria-label="Acercar"
           >
             <Plus className="size-4" />
-          </button>
-          <button type="button" className={iconBtn} aria-label="Vista">
-            <PanelRightClose className="size-4" />
           </button>
         </div>
       </div>
@@ -2301,7 +2348,7 @@ export function ScreenplayStudio({
                         className="w-full"
                         onClick={addScene}
                       >
-                        Añadir escena
+                        <Plus className="size-3.5" /> Añadir escena
                       </Button>
                     </div>
                   </ScrollArea>
