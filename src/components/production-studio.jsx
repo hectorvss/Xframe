@@ -2327,7 +2327,8 @@ export function ScreenplayStudio({
                                   )
                                 }
                                 placeholder={`Escena ${index + 1}`}
-                                className="h-auto truncate border-0 bg-transparent p-0 text-xs font-medium shadow-none focus-visible:ring-0"
+                                onClick={(event) => event.stopPropagation()}
+                                className="h-auto w-full appearance-none truncate rounded-none border-0 bg-transparent p-0 text-xs font-medium text-foreground shadow-none outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
                               />
                               <span className="block truncate text-[10px] font-normal text-muted-foreground">
                                 {count} {count === 1 ? "línea" : "líneas"}
