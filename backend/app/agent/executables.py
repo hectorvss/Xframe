@@ -62,12 +62,22 @@ class RootNode:
 
         system = build_system_prompt(mode=str(state.mode or AgentMode.PREPRODUCTION))
 
+        from app.config import get_settings
+
+        model_name = get_settings().model_root
         model = llm.chat_model("root", max_tokens=8192, temperature=0.4)
 
         # 4. Límites, con degradación amable: al alcanzarlos no se lanza una excepción,
         #    se le quitan las herramientas al modelo y se le pide que cierre. El usuario
         #    ve un cierre razonado en vez de un error a mitad de un trabajo largo.
+        #
+        #    El saldo es uno de esos límites: razonar cuesta tokens y los tokens cuestan
+        #    créditos, así que sin saldo NO se lanza un turno con herramientas (sería
+        #    trabajo caro que no se puede cobrar). Se cierra con un mensaje, que es la
+        #    única llamada barata que aún tiene sentido hacer.
         reason = self._exhausted(messages, billable)
+        if not reason and ctx.credits_available <= 0:
+            reason = "credits"
         prelude = [SystemMessage(content=system), *context_messages]
 
         if reason:
@@ -77,6 +87,18 @@ class RootNode:
             )
         else:
             response = await model.bind_tools(tools).ainvoke([*prelude, *messages])
+
+        # 5. Cobro del razonamiento. Va después de la respuesta —los tokens ya se
+        #    gastaron— y nunca rompe el turno: si el cobro falla, se registra y se sigue.
+        from app.agent.metering import meter_tokens
+
+        await meter_tokens(
+            response,
+            profile_id=state.user_id,
+            model_name=model_name,
+            purpose="root",
+            project_id=state.project_id,
+        )
 
         if compacted:
             # `compacted` es un `ReplaceMessages`: hay que devolverlo tal cual para que
@@ -145,6 +167,13 @@ class RootNode:
                 "You have reached the generation limit for this turn. Do not try to "
                 "generate anything else. Tell the user what you produced, what is still "
                 "pending, and let them ask you to continue."
+            )
+        if reason == "credits":
+            return (
+                "The user has run out of credits, so you cannot use any tools or generate "
+                "anything. Do not attempt any tool call. In one short paragraph, tell the "
+                "user they are out of credits and can top up or upgrade their plan to "
+                "continue, and stop."
             )
         return (
             "You have reached the tool call limit for this turn. Summarise what you did "

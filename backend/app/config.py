@@ -110,6 +110,15 @@ class Settings(BaseSettings):
     model_fast: str = Field(default="gpt-5.6-luna", alias="MODEL_FAST")
     model_summarize: str = Field(default="gpt-5.6-luna", alias="MODEL_SUMMARIZE")
 
+    # Precio por defecto de tokens del agente, para modelos que no estén en la tabla de
+    # `app/agent/metering.py`. En USD por millón de tokens. Existen para que un modelo
+    # nuevo NUNCA se mida a 0 (sería razonar gratis contra una API de pago): si no lo
+    # reconocemos, se cobra a este precio conservador. Los modelos conocidos (Claude,
+    # y el gpt-5.6 actual) llevan su precio real en la tabla. Ajusta esto —o añade una
+    # fila a la tabla— cuando cambies el modelo de razonamiento.
+    llm_price_input_per_mtok: float = Field(default=10.0, alias="LLM_PRICE_INPUT_PER_MTOK")
+    llm_price_output_per_mtok: float = Field(default=30.0, alias="LLM_PRICE_OUTPUT_PER_MTOK")
+
     # --- proveedores de generación ---
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
     # `openai_api_key` se declara arriba, en la sección de LLM: la misma clave sirve para

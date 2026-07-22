@@ -144,8 +144,8 @@ create table if not exists public.credit_ledger (
   profile_id  uuid not null references public.profiles on delete cascade,
   project_id  uuid references public.projects on delete set null,
   job_id      uuid references public.generation_jobs on delete set null,
-  kind        text not null check (kind in ('grant','reserve','charge','refund','expire')),
-  amount      integer not null,                  -- con signo: reserve/charge negativos
+  kind        text not null check (kind in ('grant','reserve','charge','refund','expire','tokens')),
+  amount      integer not null,                  -- con signo: reserve/charge/tokens negativos
   balance_after integer not null,
   note        text,
   created_at  timestamptz not null default now()

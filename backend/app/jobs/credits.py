@@ -54,7 +54,7 @@ from app.tools.errors import InsufficientCreditsError
 
 logger = logging.getLogger(__name__)
 
-LedgerKind = Literal["grant", "reserve", "charge", "refund", "expire"]
+LedgerKind = Literal["grant", "reserve", "charge", "refund", "expire", "tokens"]
 
 TERMINAL_LEDGER_KINDS: tuple[LedgerKind, ...] = ("charge", "refund")
 """
@@ -193,6 +193,65 @@ async def _grant_locked(
     )
     logger.info("credits_granted", extra={"profile_id": str(pid), "amount": amount})
     return after
+
+
+async def debit_tokens(
+    profile_id: str | UUID,
+    amount: int,
+    note: str,
+    *,
+    project_id: str | UUID | None = None,
+    conn: asyncpg.Connection | None = None,
+) -> int:
+    """
+    Cobra `amount` créditos por el consumo de tokens del agente. Devuelve el saldo.
+
+    A diferencia de un job (reservar → confirmar), esto es un cobro **directo**: los
+    tokens ya se gastaron contra la API cuando el modelo respondió, así que no hay nada
+    que reservar ni reembolsar. Se registra el consumo y punto.
+
+    Por eso, y a diferencia de `reserve`, **no falla por saldo insuficiente**: el coste ya
+    se incurrió y negarlo solo perdería la traza. Puede dejar el saldo del libro en
+    negativo (el espejo `profiles.credits` se satura a 0); ese negativo es lo que corta el
+    siguiente gasto, porque `reserve` sí comprueba saldo antes de encolar. Cortar *antes*
+    de razonar es responsabilidad de quien llama (el nodo del agente mira el saldo y, si es
+    <= 0, cierra sin herramientas en vez de lanzar otro turno caro).
+
+    `amount == 0` no escribe fila: un turno cacheado o vacío no es un movimiento.
+    """
+    if amount < 0:
+        raise ValueError("debit_tokens() solo cobra; los importes negativos no tienen sentido")
+    if amount == 0:
+        return await balance(profile_id, conn=conn)
+    if not note or not note.strip():
+        raise ValueError("debit_tokens() exige una nota: un cobro sin procedencia no es auditable")
+
+    if conn is not None:
+        return await _debit_tokens_locked(conn, profile_id, amount, note, project_id)
+    async with transaction() as tx:
+        return await _debit_tokens_locked(tx, profile_id, amount, note, project_id)
+
+
+async def _debit_tokens_locked(
+    conn: asyncpg.Connection,
+    profile_id: str | UUID,
+    amount: int,
+    note: str,
+    project_id: str | UUID | None,
+) -> int:
+    pid = _uuid(profile_id)
+    await _lock_profile(conn, pid)
+    before = await _balance_bootstrapped(conn, pid)
+    return await _append(
+        conn,
+        profile_id=pid,
+        project_id=project_id,
+        job_id=None,
+        kind="tokens",
+        amount=-amount,
+        balance_before=before,
+        note=note,
+    )
 
 
 async def reserve(
