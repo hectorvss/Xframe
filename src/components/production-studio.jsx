@@ -113,6 +113,7 @@ import {
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/db";
 import { agentApi } from "@/lib/agent";
+import { mentionSlug } from "@/lib/resourceRefs";
 import {
   gradientUrl,
   SFX_CATEGORIES,
@@ -2040,6 +2041,7 @@ function MixTimeline({
   selectedCueId,
   onSelectCue,
   onDropTemplate,
+  onDropEffect,
   onMoveCue,
 }) {
   const [pxPerSec, setPxPerSec] = useState(70);
@@ -2184,18 +2186,39 @@ function MixTimeline({
                   const types = event.dataTransfer.types;
                   if (
                     types.includes("application/x-xframe-audio-template") ||
+                    types.includes("application/x-xframe-sound-effect") ||
                     types.includes("application/x-xframe-cue")
                   )
                     event.preventDefault();
                 }}
                 onDrop={(event) => {
-                  if (
-                    event.dataTransfer.types.includes(
-                      "application/x-xframe-cue",
-                    )
-                  )
-                    dropCue(event, track.kind);
-                  else onDropTemplate(event, track.kind);
+                  const types = event.dataTransfer.types;
+                  if (types.includes("application/x-xframe-cue"))
+                    return dropCue(event, track.kind);
+                  if (types.includes("application/x-xframe-sound-effect")) {
+                    // Efecto de la biblioteca: aún no hay asset, así que se entrega
+                    // el instante exacto y quien nos usa se lo pide al agente.
+                    const raw = event.dataTransfer.getData(
+                      "application/x-xframe-sound-effect",
+                    );
+                    if (!raw || !onDropEffect) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const startMs = Math.max(
+                      0,
+                      Math.round(
+                        (((event.clientX - rect.left - PAD) / pxPerSec) *
+                          1000) /
+                          50,
+                      ) * 50,
+                    );
+                    try {
+                      onDropEffect(JSON.parse(raw), track.kind, startMs);
+                    } catch {
+                      // Payload externo o corrupto: se ignora.
+                    }
+                    return;
+                  }
+                  onDropTemplate(event, track.kind);
                 }}
               >
                 {track.cues.map((cue) => {
@@ -4533,7 +4556,17 @@ function SoundBrowser({ audioAssets, trackMeta, onUseEffect, onAddAsset }) {
               {effects.map((effect) => (
                 <div
                   key={effect.id}
-                  className="flex items-center gap-2.5 rounded-lg border p-2"
+                  draggable
+                  onDragStart={(event) => {
+                    // Arrastrable a la mezcla: la pista y el instante exactos los
+                    // resuelve la lane de MixTimeline donde se suelte.
+                    event.dataTransfer.setData(
+                      "application/x-xframe-sound-effect",
+                      JSON.stringify(effect),
+                    );
+                    event.dataTransfer.effectAllowed = "copy";
+                  }}
+                  className="flex cursor-grab items-center gap-2.5 rounded-lg border p-2 active:cursor-grabbing"
                 >
                   <button
                     type="button"
@@ -4625,7 +4658,7 @@ function SoundBrowser({ audioAssets, trackMeta, onUseEffect, onAddAsset }) {
 
 // Pestaña Voces: lista de voces del catálogo (Explorar) y las del proyecto (Mis Voces),
 // con búsqueda y filtros, al estilo de una librería de voces.
-function VoicesBrowser({ projectId, voices, run, onAskAgent }) {
+function VoicesBrowser({ projectId, voices, run, onAskAgent, onUseVoice }) {
   const [tab, setTab] = useState("explore");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState(null);
@@ -4741,19 +4774,21 @@ function VoicesBrowser({ projectId, voices, run, onAskAgent }) {
                     >
                       <Play className="size-3.5" />
                     </button>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="size-7">
-                          <MoreVertical className="size-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => importVoice(voice)}>
-                          <Plus className="mr-2 size-4" />
-                          Importar a Mis Voces
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-7"
+                      title="Usar como referencia de voz (chip en el chat)"
+                      onClick={async () => {
+                        // Importarla primero la convierte en recurso del proyecto,
+                        // así el @voice-… del chat se vuelve una chip real que el
+                        // agente puede resolver al generar el asset.
+                        await importVoice(voice);
+                        onUseVoice?.(voice);
+                      }}
+                    >
+                      <Plus className="size-4" />
+                    </Button>
                   </div>
                 ))}
                 {!catalog.length && (
@@ -5146,6 +5181,19 @@ export function AudioStudio({
     onSeedChat?.(
       `Crea una variante del archivo ${mentionAsset(asset)} (id ${asset.id}) sin modificar el original. Conserva duración y función narrativa; pregúntame qué propiedad debo cambiar, registra el linaje y guarda el resultado como un asset nuevo.`,
     );
+  // Pide al agente generar un efecto del catálogo y colocarlo en la mezcla. Con
+  // startMs (soltado por drag & drop sobre una lane) fija el instante exacto.
+  const requestEffect = (effect, trackKind = effect.track, startMs = null) => {
+    const label = (trackMeta[trackKind]?.[1] || trackKind).toLowerCase();
+    (onSendAgent || onSeedChat)?.(
+      `Genera un efecto de sonido con generate_audio y guárdalo en Assets: "${effect.title}". ` +
+        `Duración aproximada ${effect.duration}. Colócalo en la pista de ${label} de la mezcla` +
+        (startMs != null
+          ? ` empezando exactamente en ${startMs} ms (placement_start_ms=${startMs})`
+          : "") +
+        `. Estima créditos antes de generar.`,
+    );
+  };
   const dropTemplate = (event, trackKind) => {
     event.preventDefault();
     const raw = event.dataTransfer.getData(
@@ -5268,12 +5316,7 @@ export function AudioStudio({
                     audioAssets={audioAssets}
                     trackMeta={trackMeta}
                     onAddAsset={addCue}
-                    onUseEffect={(effect) =>
-                      (onSendAgent || onSeedChat)?.(
-                        `Genera un efecto de sonido con generate_audio y guárdalo en Assets: "${effect.title}". ` +
-                          `Duración aproximada ${effect.duration}. Colócalo en la pista de ${effect.track === "ambience" ? "ambiente" : effect.track === "music" ? "música" : "efectos"} de la mezcla. Estima créditos antes de generar.`,
-                      )
-                    }
+                    onUseEffect={(effect) => requestEffect(effect)}
                   />
                 </TabsContent>
                 <TabsContent value="create" className="min-h-0 flex-1">
@@ -5303,6 +5346,13 @@ export function AudioStudio({
                     voices={data.voices}
                     run={run}
                     onAskAgent={askForVoices}
+                    onUseVoice={(voice) =>
+                      onSeedChat?.(
+                        `Usa @voice-${mentionSlug(voice.name)} como referencia para el próximo asset de voz: ` +
+                          `${voice.tagline}. ${voice.gender}, ${voice.age}, ${voice.language}` +
+                          `${voice.accent ? ` (acento ${voice.accent.toLowerCase()})` : ""}, categoría ${voice.category.toLowerCase()}. `,
+                      )
+                    }
                   />
                 </TabsContent>
               </Tabs>
@@ -5352,6 +5402,7 @@ export function AudioStudio({
                     selectedCueId={cueId}
                     onSelectCue={setCueId}
                     onDropTemplate={dropTemplate}
+                    onDropEffect={requestEffect}
                     onMoveCue={(id, start_ms, end_ms, track_kind) =>
                       run(() =>
                         db.updateAudioCue(id, { start_ms, end_ms, track_kind }),
