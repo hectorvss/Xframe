@@ -4797,10 +4797,15 @@ function EditorChat({
       out.push(
         <span
           key={`${i}-${m.index}`}
-          className={cn(
-            "rounded-md px-1 font-medium",
-            animated ? "mention-rainbow" : MENTION_CATEGORIES[category].pill,
-          )}
+          className={
+            // En el compositor la pill va sobre un "espejo" alineado carácter a carácter
+            // con el textarea transparente: NO puede llevar padding horizontal ni cambiar
+            // el grosor, o el ancho del texto deja de coincidir y el cursor se desplaza.
+            // En el chat ya enviado no hay espejo, así que ahí sí lleva padding y peso.
+            animated
+              ? "mention-rainbow"
+              : cn("rounded-md px-1 font-medium", MENTION_CATEGORIES[category].pill)
+          }
         >
           {m[0]}
         </span>,
