@@ -295,10 +295,20 @@ function ProjectTypePill({ type = "cinema", onChange, className }) {
       <DropdownMenuContent align="start" className="w-64 p-1">
         {Object.entries(PROJECT_TYPES).map(([id, item]) => {
           const TypeIcon = item.Icon;
+          // Solo Cinema está disponible por ahora; Marketing y Demo se muestran en
+          // gris y no se pueden pulsar (próximamente).
+          const disabled = id !== "cinema";
           return (
             <DropdownMenuItem
               key={id}
-              onSelect={() => onChange(id)}
+              disabled={disabled}
+              onSelect={(event) => {
+                if (disabled) {
+                  event.preventDefault();
+                  return;
+                }
+                onChange(id);
+              }}
               className="items-start gap-2.5 px-2 py-2"
             >
               <span
