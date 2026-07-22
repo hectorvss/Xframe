@@ -407,8 +407,11 @@ async def test_un_plano_sin_saldo_no_cancela_a_sus_hermanos(wired) -> None:
     assert "1 queued, 1 failed" in content
     assert "FAILED shot" in content
     assert payload["credits_reserved"] == 40, "se anuncian los créditos reservados de verdad"
-    # 4s y 6s a 0.50 USD/s = 5 USD, que `usd_to_credits` convierte con margen.
-    assert payload["credits_quoted"] == 800
+    # 4s y 6s a 0.50 USD/s = 5 USD, que `usd_to_credits` convierte al K vigente. Se deriva
+    # de la conversión para no clavar el valor a un K concreto.
+    from app.jobs.credits import usd_to_credits
+
+    assert payload["credits_quoted"] == usd_to_credits(Decimal("5.00"))
 
 
 async def test_retry_dirigido_acepta_solo_un_plano_fallido(wired) -> None:

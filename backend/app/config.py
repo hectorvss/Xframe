@@ -201,12 +201,23 @@ class Settings(BaseSettings):
     max_concurrent_jobs_per_project: int = 6
 
     # --- economía ---
-    credits_per_usd: int = Field(default=100, alias="CREDITS_PER_USD")
+    #
+    # K = credits_per_usd * credit_margin es el ÚNICO número que fija el precio: cuántos
+    # créditos cuesta 1 USD de coste real de API. Hoy K = 40.
+    #
+    # El margen de la SUSCRIPCIÓN no vive aquí, vive en la relación créditos-por-euro que
+    # se conceden: con 200 créditos por 20 € (0,10 €/crédito) y K = 40 (coste real de
+    # 1/40 $ ≈ 0,023 € por crédito), el peor caso —el usuario quema los 200— deja
+    #   margen = 1 − (0,92 · 200/40) / 20 ≈ 77 %.
+    # Para reapuntar a otro margen M en ese plan: K = 9,2 / (1 − M).
+    credits_per_usd: int = Field(default=40, alias="CREDITS_PER_USD")
     """
-    Conversión coste de API → créditos al cliente. El precio de cada modelo se deriva
-    de aquí en `credits_per_unit`, así que subir el margen es cambiar una constante.
+    Conversión coste de API → créditos al cliente (la parte entera de K). El precio de
+    cada modelo se deriva de aquí en `credits_per_unit`; cambiar K exige regenerar el
+    seed (`python -m app.providers.seed --emit-sql > backend/seeds/taxonomy.sql`), o el
+    menú que ve el agente y el cobro real divergen.
     """
-    credit_margin: float = Field(default=1.6, alias="CREDIT_MARGIN")
+    credit_margin: float = Field(default=1.0, alias="CREDIT_MARGIN")
 
     ffmpeg_path: str = Field(default="ffmpeg", alias="FFMPEG_PATH")
 

@@ -54,6 +54,12 @@ from app.providers.base import (
 )
 from app.tools.errors import InsufficientCreditsError, ProviderError
 
+# Coste en créditos de un job de 1 USD al K vigente (K = credits_per_usd * credit_margin).
+# Derivarlo de la conversión, en vez de clavar 160/40 a mano, hace que estos tests midan
+# el LIBRO MAYOR y no el valor de K: cambiar K no vuelve a romperlos. (La conversión en sí
+# se prueba aparte, con cifras explícitas, en test_usd_to_credits_rounds_up_and_has_a_floor.)
+COST_1USD = credits.usd_to_credits(Decimal("1.00"))
+
 
 def run(coro: Any) -> Any:
     """Sin `pytest-asyncio`: una dependencia menos y el control del bucle es explícito."""
@@ -406,9 +412,9 @@ def test_same_request_charges_once(monkeypatch: pytest.MonkeyPatch) -> None:
     assert second.job_id == first.job_id
     assert second.credits_reserved == 0
     assert len(db.jobs) == 1, "no debe crearse un segundo job para la misma petición"
-    # 1.00 USD * 100 créditos/USD * 1.6 de margen = 160 créditos, cobrados una sola vez.
-    assert first.credits_reserved == 160
-    assert balance == 1000 - 160
+    # Un job de 1.00 USD se cobra una sola vez, al K vigente.
+    assert first.credits_reserved == COST_1USD
+    assert balance == 1000 - COST_1USD
 
 
 def test_succeeded_job_returns_cached_asset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -473,7 +479,7 @@ def test_refund_returns_everything(monkeypatch: pytest.MonkeyPatch, state: str) 
 
     after_reserve, after_refund, net = run(scenario())
 
-    assert after_reserve == 500 - 160
+    assert after_reserve == 500 - COST_1USD
     assert after_refund == 500
     assert net == 0
 
@@ -492,7 +498,7 @@ def test_refund_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
         for _ in range(5):
             await credits.refund(job_id=result.job_id, reason="webhook duplicado")
         # Un cobro tardío tras el reembolso tampoco debe mover nada.
-        await credits.charge(job_id=result.job_id, final_credits=160)
+        await credits.charge(job_id=result.job_id, final_credits=COST_1USD)
         return await credits.balance(profile_id)
 
     assert run(scenario()) == 500
@@ -514,8 +520,8 @@ def test_charge_is_idempotent_and_capped(monkeypatch: pytest.MonkeyPatch) -> Non
         return await credits.balance(profile_id), await credits.job_net(result.job_id)
 
     balance, net = run(scenario())
-    assert balance == 500 - 160
-    assert net == -160
+    assert balance == 500 - COST_1USD
+    assert net == -COST_1USD
 
 
 # --------------------------------------------------------------------------- #
@@ -536,7 +542,8 @@ def test_concurrent_enqueue_cannot_overspend(monkeypatch: pytest.MonkeyPatch) ->
     Este test falla si se quita el cerrojo del código de producción, que es la razón de
     que exista.
     """
-    db, profile_id, project_id = seeded_db(credits_available=200)  # alcanza para uno de 160
+    # Saldo para exactamente un job: por encima de uno, por debajo de dos.
+    db, profile_id, project_id = seeded_db(credits_available=COST_1USD + 10)
     install_fake_db(monkeypatch, db)
     adapter = StubAdapter("1.00")
 
@@ -554,7 +561,7 @@ def test_concurrent_enqueue_cannot_overspend(monkeypatch: pytest.MonkeyPatch) ->
 
     assert len(ok) == 1, f"se encolaron {len(ok)} jobs con saldo para uno solo"
     assert len(rejected) == 1
-    assert run(credits.balance(profile_id)) == 200 - 160 >= 0
+    assert run(credits.balance(profile_id)) == 10 >= 0
 
 
 def test_reserve_rejects_when_short(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -565,7 +572,7 @@ def test_reserve_rejects_when_short(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(InsufficientCreditsError) as exc:
         run(queue.enqueue(a_request(), project_id=project_id, adapter=StubAdapter("1.00")))
 
-    assert exc.value.needed == 160
+    assert exc.value.needed == COST_1USD
     assert exc.value.available == 10
     assert db.jobs == {}, "un encolado rechazado no debe dejar el job insertado"
 
@@ -740,9 +747,10 @@ def test_usd_to_credits_rounds_up_and_has_a_floor() -> None:
     siempre en nuestra contra; permitir el 0 crea una generación gratis repetible contra
     una API que sí nos cobra.
     """
-    assert credits.usd_to_credits(Decimal("1.00")) == 160
+    # Cifras al K vigente (K = 40 = credits_per_usd 40 * credit_margin 1.0).
+    assert credits.usd_to_credits(Decimal("1.00")) == 40
     assert credits.usd_to_credits(Decimal("0.001")) == 1
     assert credits.usd_to_credits(Decimal("0")) == 1
-    # 0.03 USD * 100 * 1.6 = 4.8 créditos exactos. Hacia abajo serían 4, y esos 0.8
-    # perdidos por job son la fuga silenciosa que este redondeo evita.
-    assert credits.usd_to_credits(Decimal("0.03")) == 5
+    # 0.03 USD * 40 = 1.2 créditos. Hacia abajo serían 1, y esos 0.2 perdidos por job
+    # son la fuga silenciosa que el redondeo hacia arriba evita.
+    assert credits.usd_to_credits(Decimal("0.03")) == 2

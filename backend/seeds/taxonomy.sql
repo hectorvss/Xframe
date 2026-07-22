@@ -4,7 +4,7 @@
 --   python -m app.providers.seed --emit-sql > backend/seeds/taxonomy.sql
 -- La fuente de verdad es backend/app/providers/seed.py.
 --
--- credits_per_unit = ceil(coste_usd * 100 * 1.6)
+-- credits_per_unit = ceil(coste_usd * 40 * 1.0)
 -- Cada modelo lleva la confianza de su precio según el informe 06:
 --   [V] verificado · [S] secundario · [I] inferido.
 -- Los [S] y [I] son deuda: un precio bajo equivocado se paga en margen y no
@@ -30,7 +30,7 @@ insert into public.gen_models (
   4, 8,
   array['720p', '1080p', '4K']::text[], array['16:9', '9:16']::text[],
   true, true, true, true,
-  0.40, null, 64,
+  0.40, null, 16,
   'pro', 'active', null, 10
 )
 on conflict (id) do update set
@@ -64,7 +64,7 @@ insert into public.gen_models (
   4, 8,
   array['720p', '1080p']::text[], array['16:9', '9:16']::text[],
   true, true, true, true,
-  0.05, null, 8,
+  0.05, null, 2,
   'free', 'active', null, 11
 )
 on conflict (id) do update set
@@ -98,7 +98,7 @@ insert into public.gen_models (
   4, 8,
   array['720p', '1080p', '4K']::text[], array['16:9', '9:16']::text[],
   true, true, true, true,
-  0.10, null, 16,
+  0.10, null, 4,
   'free', 'active', null, 12
 )
 on conflict (id) do update set
@@ -132,7 +132,7 @@ insert into public.gen_models (
   4, 10,
   array['720p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, true, true,
-  0.10, null, 16,
+  0.10, null, 4,
   'free', 'active', null, 13
 )
 on conflict (id) do update set
@@ -166,7 +166,7 @@ insert into public.gen_models (
   4, 12,
   array['720p']::text[], array['16:9', '9:16']::text[],
   true, false, true, true,
-  0.10, null, 16,
+  0.10, null, 4,
   'free', 'deprecated', '2026-09-24'::timestamptz, 20
 )
 on conflict (id) do update set
@@ -196,11 +196,11 @@ insert into public.gen_models (
 ) values (
   'sora-2-pro', 'OpenAI Sora', 'openai', 'video',
   'OpenAI Sora 2 Pro',
-  'Version larga y de mas resolucion de Sora 2: admite hasta 25 segundos, lo que lo hace el unico del catalogo capaz de sostener una escena entera sin cortar. Comparte la fecha de apagado del 24 de septiembre de 2026, asi que vale para entregar ya, no para construir encima.',
-  10, 25,
+  'Version de mas resolucion de Sora 2, con el mismo rango de duracion (hasta 12 segundos por plano). Comparte la fecha de apagado del 24 de septiembre de 2026, asi que vale para entregar ya, no para construir encima.',
+  4, 12,
   array['720p', '1024p', '1080p']::text[], array['16:9', '9:16']::text[],
   true, false, true, true,
-  0.30, null, 48,
+  0.30, null, 12,
   'pro', 'deprecated', '2026-09-24'::timestamptz, 21
 )
 on conflict (id) do update set
@@ -235,7 +235,7 @@ insert into public.gen_models (
   null, null,
   array['1024x1024', '1536x1024', '1024x1536']::text[], array['1:1', '16:9', '9:16']::text[],
   false, false, true, false,
-  0.053, 0.053, 9,
+  0.053, 0.053, 3,
   'free', 'active', null, 1
 )
 on conflict (id) do update set
@@ -270,7 +270,7 @@ insert into public.gen_models (
   null, null,
   array['1024x1024', '1536x1024', '1024x1536']::text[], array['1:1', '16:9', '9:16']::text[],
   false, false, true, false,
-  0.042, 0.042, 7,
+  0.042, 0.042, 2,
   'free', 'active', null, 2
 )
 on conflict (id) do update set
@@ -305,7 +305,7 @@ insert into public.gen_models (
   null, null,
   array['1024x1024', '1536x1024', '1024x1536']::text[], array['1:1', '16:9', '9:16']::text[],
   false, false, true, false,
-  0.015, 0.015, 3,
+  0.015, 0.015, 1,
   'free', 'active', null, 3
 )
 on conflict (id) do update set
@@ -340,7 +340,7 @@ insert into public.gen_models (
   null, null,
   array['1024x1024', '1536x1024', '1024x1536']::text[], array['1:1', '16:9', '9:16']::text[],
   false, false, true, false,
-  0.042, 0.042, 7,
+  0.042, 0.042, 2,
   'free', 'deprecated', '2026-10-23'::timestamptz, 4
 )
 on conflict (id) do update set
@@ -374,7 +374,7 @@ insert into public.gen_models (
   3, 15,
   array['720p', '1080p', '4K']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, true, true,
-  0.075, null, 12,
+  0.075, null, 3,
   'free', 'active', null, 30
 )
 on conflict (id) do update set
@@ -408,7 +408,7 @@ insert into public.gen_models (
   3, 15,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, true, false,
-  0.07, null, 12,
+  0.07, null, 3,
   'free', 'active', null, 31
 )
 on conflict (id) do update set
@@ -443,7 +443,7 @@ insert into public.gen_models (
   3, 30,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, true, false,
-  0.09, null, 15,
+  0.09, null, 4,
   'free', 'active', null, 32
 )
 on conflict (id) do update set
@@ -477,7 +477,7 @@ insert into public.gen_models (
   5, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, false, false,
-  0.07, null, 12,
+  0.07, null, 3,
   'free', 'active', null, 33
 )
 on conflict (id) do update set
@@ -512,7 +512,7 @@ insert into public.gen_models (
   5, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
-  0.14, null, 23,
+  0.14, null, 6,
   'pro', 'active', null, 34
 )
 on conflict (id) do update set
@@ -548,7 +548,7 @@ insert into public.gen_models (
   6, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, true, false,
-  0.0934, null, 15,
+  0.0934, null, 4,
   'pro', 'active', null, 40
 )
 on conflict (id) do update set
@@ -584,7 +584,7 @@ insert into public.gen_models (
   6, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
-  0.0317, null, 6,
+  0.0317, null, 2,
   'free', 'active', null, 41
 )
 on conflict (id) do update set
@@ -620,7 +620,7 @@ insert into public.gen_models (
   6, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
-  0.0750, null, 12,
+  0.0750, null, 3,
   'pro', 'active', null, 42
 )
 on conflict (id) do update set
@@ -656,7 +656,7 @@ insert into public.gen_models (
   6, 10,
   array['512p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
-  0.0250, null, 4,
+  0.0250, null, 1,
   'free', 'active', null, 43
 )
 on conflict (id) do update set
@@ -691,7 +691,7 @@ insert into public.gen_models (
   4, 15,
   array['720p', '1080p', '4K']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, true, false,
-  0.36, null, 58,
+  0.36, null, 15,
   'business', 'deprecated', null, 50
 )
 on conflict (id) do update set
@@ -726,7 +726,7 @@ insert into public.gen_models (
   4, 15,
   array['720p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, true, false,
-  0.12, null, 20,
+  0.12, null, 5,
   'pro', 'deprecated', null, 51
 )
 on conflict (id) do update set
@@ -761,7 +761,7 @@ insert into public.gen_models (
   4, 15,
   array['720p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
-  0.06, null, 10,
+  0.06, null, 3,
   'free', 'deprecated', null, 52
 )
 on conflict (id) do update set
@@ -796,7 +796,7 @@ insert into public.gen_models (
   5, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, false, false,
-  0.10, null, 16,
+  0.10, null, 4,
   'free', 'deprecated', null, 53
 )
 on conflict (id) do update set
@@ -830,7 +830,7 @@ insert into public.gen_models (
   2, 15,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, true, false,
-  0.10, null, 16,
+  0.10, null, 4,
   'free', 'active', null, 60
 )
 on conflict (id) do update set
@@ -864,7 +864,7 @@ insert into public.gen_models (
   5, 10,
   array['480p', '720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, false, true,
-  0.05, null, 8,
+  0.05, null, 2,
   'free', 'active', null, 61
 )
 on conflict (id) do update set
@@ -898,7 +898,7 @@ insert into public.gen_models (
   5, 5,
   array['720p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, false, false,
-  0.10, null, 16,
+  0.10, null, 4,
   'free', 'active', null, 62
 )
 on conflict (id) do update set
@@ -933,7 +933,7 @@ insert into public.gen_models (
   5, 5,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, true, false,
-  0.083, null, 14,
+  0.083, null, 4,
   'free', 'active', null, 5
 )
 on conflict (id) do update set
@@ -968,7 +968,7 @@ insert into public.gen_models (
   5, 5,
   array['720p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, false, false,
-  0.027, null, 5,
+  0.027, null, 2,
   'free', 'active', null, 6
 )
 on conflict (id) do update set
@@ -1003,7 +1003,7 @@ insert into public.gen_models (
   5, 5,
   array['1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, true, true, false,
-  0.115, null, 19,
+  0.115, null, 5,
   'pro', 'active', null, 7
 )
 on conflict (id) do update set
@@ -1038,7 +1038,7 @@ insert into public.gen_models (
   null, null,
   array['1536x1536', '1536x2048', '2048x1536']::text[], array['16:9', '9:16', '1:1']::text[],
   false, false, true, false,
-  0.17, 0.17, 28,
+  0.17, 0.17, 7,
   'free', 'active', null, 8
 )
 on conflict (id) do update set
@@ -1073,7 +1073,7 @@ insert into public.gen_models (
   null, null,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   false, false, true, false,
-  0.03, 0.03, 5,
+  0.03, 0.03, 2,
   'free', 'active', null, 70
 )
 on conflict (id) do update set
@@ -1108,7 +1108,7 @@ insert into public.gen_models (
   null, null,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   false, false, true, false,
-  0.07, 0.07, 12,
+  0.07, 0.07, 3,
   'pro', 'active', null, 71
 )
 on conflict (id) do update set
@@ -1142,7 +1142,7 @@ insert into public.gen_models (
   null, null,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   false, false, true, false,
-  0.04, 0.04, 7,
+  0.04, 0.04, 2,
   'free', 'active', null, 72
 )
 on conflict (id) do update set
@@ -1177,7 +1177,7 @@ insert into public.gen_models (
   5, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, true, false,
-  0.05, null, 8,
+  0.05, null, 2,
   'free', 'deprecated', '2026-07-30'::timestamptz, 90
 )
 on conflict (id) do update set
@@ -1212,7 +1212,7 @@ insert into public.gen_models (
   5, 10,
   array['720p', '1080p']::text[], array['16:9', '9:16', '1:1']::text[],
   true, false, true, false,
-  0.12, null, 20,
+  0.12, null, 5,
   'pro', 'deprecated', '2026-07-30'::timestamptz, 91
 )
 on conflict (id) do update set
@@ -1547,3 +1547,4 @@ update public.gen_models set status = 'retired', updated_at = now()
  where id <> all (array['veo-3.1-generate-preview', 'veo-3.1-lite-generate-preview', 'veo-3.1-fast-generate-preview', 'gemini-omni-flash', 'sora-2', 'sora-2-pro', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1-mini', 'gpt-image-1', 'kling-3.0', 'kling-3.0-turbo', 'kling-3.0-motion-control', 'kling-2.5-turbo', 'kling-2.1-master', 'hailuo-2.3', 'hailuo-2.3-fast', 'hailuo-02', 'hailuo-02-fast', 'seedance-2.0', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-1.0-pro', 'wan-2.7', 'wan-2.5', 'wan-2.2-plus', 'higgsfield-dop-turbo', 'higgsfield-dop-lite', 'higgsfield-dop-preview', 'higgsfield-soul', 'flux-2-pro', 'flux-2-max', 'flux-kontext-pro', 'runway-gen-4-turbo', 'runway-gen-4']::text[]) and status <> 'retired';
 
 commit;
+

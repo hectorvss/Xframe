@@ -1428,7 +1428,9 @@ def _pricing_params() -> tuple[int, float]:
         settings = get_settings()
         return settings.credits_per_usd, settings.credit_margin
     except Exception:
-        return 100, 1.6
+        # Espejo de los defaults de app.config: si esto se desincroniza, el seed sale
+        # con otro K que el runtime y el cobro deja de coincidir con el menú.
+        return 40, 1.0
 
 
 def _sql_str(value: str) -> str:

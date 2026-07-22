@@ -781,14 +781,14 @@ def test_final_credits_uses_the_reported_cost_when_there_is_one() -> None:
         credits_reserved=160,
     )
 
-    # 0.50 USD * 100 créditos/USD * 1.6 de margen = 80 créditos, la mitad de la reserva.
+    # 0.50 USD * K(=40) = 20 créditos, muy por debajo de la reserva (techo).
     reported = ProviderJobStatus(state="succeeded", raw={"cost_usd": "0.50"})
-    assert worker.JobWorker._final_credits(w, job, reported) == 80
+    assert worker.JobWorker._final_credits(w, job, reported) == 20
 
     # Anidado bajo un envoltorio habitual.
     assert worker.JobWorker._final_credits(
         w, job, ProviderJobStatus(state="succeeded", raw={"usage": {"cost": 0.50}})
-    ) == 80
+    ) == 20
 
     # Sin dato: se cobra la reserva, que es lo que el usuario aprobó.
     assert worker.JobWorker._final_credits(
