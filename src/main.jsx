@@ -5719,7 +5719,7 @@ const elementRoles = ["Personaje", "Localización", "Objeto"];
  * - Anotación: dibujo libre con deshacer/rehacer/borrar; al enviar, marca la zona.
  * - Comentar: fija un punto y escribe; al enviar, el prompt va DIRECTO al agente.
  */
-function AssetStage({ asset, isVideo, isAudio, onAttach }) {
+function AssetStage({ asset, isVideo, isAudio, onAttach, onSendDirect }) {
   // Un render es una imagen/vídeo plano: no hay CAPAS de componentes ni de texto que
   // seleccionar por separado. Esas dos herramientas solo cobran sentido cuando el asset
   // se compone de elementos añadidos (marketing/demos, aún por construir), así que hoy
@@ -5777,16 +5777,10 @@ function AssetStage({ asset, isVideo, isAudio, onAttach }) {
       setRedo([]);
       setStrokes((s) => [...s, drawing.current]);
     } else if (tool === "comment") {
-      // Colocar el punto ADJUNTA la referencia al compositor principal: es ahí donde
-      // el usuario escribe la instrucción, no en una segunda caja de texto.
-      const p = ptFrom(e);
-      setPoint(p);
-      onAttach({
-        label: `Comentario · ${zoneWords({ x: p.x, y: p.y, w: 0, h: 0 })}`,
-        context:
-          `Sobre ${label} (asset ${asset.id}), en el punto (x ${pct(p.x)}, y ${pct(p.y)}). ` +
-          `Aplica el cambio solo en esa zona y mantén el resto del render igual: `,
-      });
+      // Colocar el punto abre la TARJETA de comentario flotante ahí mismo (estilo
+      // Lovable): miniatura, campo de texto y envío directo del prompt al agente.
+      setPoint(ptFrom(e));
+      setComment("");
     } else if (tool === "text") {
       if (!hasTextLayers) return; // sin capas de texto no hay nada que marcar
       setPoint(ptFrom(e));
@@ -5860,13 +5854,12 @@ function AssetStage({ asset, isVideo, isAudio, onAttach }) {
     });
   };
   const sendComment = () => {
-    if (!point) return;
-    onAttach({
-      label: `Comentario · ${zoneWords({ x: point.x, y: point.y, w: 0, h: 0 })}`,
-      context:
-        `Sobre ${label} (asset ${asset.id}), en el punto (x ${pct(point.x)}, y ${pct(point.y)}). ` +
-        `Aplica el cambio solo en esa zona y mantén el resto del render igual: `,
-    });
+    if (!point || !comment.trim()) return;
+    // El comentario fijado se envía DIRECTO al agente: es la orden completa.
+    onSendDirect(
+      `Sobre ${label} (asset ${asset.id}), en el punto (x ${pct(point.x)}, y ${pct(point.y)}): ` +
+        `${comment.trim()}. Aplica el cambio solo en esa zona y mantén el resto del render igual.`,
+    );
   };
 
   const TOOLS = [
@@ -5968,128 +5961,178 @@ function AssetStage({ asset, isVideo, isAudio, onAttach }) {
           </div>
         )}
 
-        {/* Barra de anotación */}
-        {tool === "annotate" && (
-          <div className="absolute bottom-16 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/15 bg-neutral-950/80 px-1.5 py-1 text-white shadow-xl backdrop-blur-xl">
-            <span className="flex items-center gap-1.5 px-1.5 text-xs">
-              <Pencil className="size-3" /> Anotación
-            </span>
-            <div className="mx-0.5 h-4 w-px bg-white/15" />
-            <button
-              title="Deshacer"
-              disabled={!strokes.length}
-              onClick={() => {
-                setStrokes((s) => {
-                  if (!s.length) return s;
-                  setRedo((r) => [s[s.length - 1], ...r]);
-                  return s.slice(0, -1);
-                });
+        {/* Tarjeta de comentario flotante EN el punto (estilo Lovable): miniatura del
+            asset, campo de texto y envío directo. El prompt sale al pulsar la flecha
+            o Enter, y va con las coordenadas exactas del punto. */}
+        {tool === "comment" && point && (
+          <div
+            className="absolute z-30 w-60 rounded-2xl bg-white p-2 text-neutral-900 shadow-2xl"
+            style={{
+              left: `${Math.min(88, Math.max(12, point.x * 100))}%`,
+              top: `${Math.min(70, point.y * 100)}%`,
+              transform: "translate(-50%, 12px)",
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="overflow-hidden rounded-lg bg-neutral-100">
+              {isVideo ? (
+                <video src={asset.url} muted playsInline preload="metadata" className="pointer-events-none aspect-video w-full object-cover" />
+              ) : (
+                <div
+                  className="aspect-video w-full bg-cover bg-center"
+                  style={{ backgroundImage: asset.url ? `url(${asset.url})` : undefined }}
+                />
+              )}
+            </div>
+            <textarea
+              autoFocus
+              rows={1}
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendComment();
+                }
+                if (e.key === "Escape") setPoint(null);
               }}
-              className="flex size-7 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30"
-            >
-              <Undo2 className="size-3.5" />
-            </button>
-            <button
-              title="Rehacer"
-              disabled={!redo.length}
-              onClick={() => {
-                setRedo((r) => {
-                  if (!r.length) return r;
-                  setStrokes((s) => [...s, r[0]]);
-                  return r.slice(1);
-                });
-              }}
-              className="flex size-7 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30"
-            >
-              <Redo2 className="size-3.5" />
-            </button>
-            <button
-              title="Borrar todo"
-              disabled={!strokes.length}
-              onClick={() => {
-                setStrokes([]);
-                setRedo([]);
-              }}
-              className="flex size-7 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30"
-            >
-              <Trash2 className="size-3.5" />
-            </button>
-            <button
-              disabled={!strokes.length}
-              onClick={sendAnnotation}
-              className="ml-0.5 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-medium hover:bg-blue-500 disabled:opacity-30"
-            >
-              Al chat
-            </button>
+              placeholder="Añade un comentario"
+              className="mt-2 w-full resize-none bg-transparent px-1 text-sm outline-none placeholder:text-neutral-400"
+            />
+            <div className="mt-1 flex items-center justify-between px-0.5">
+              <div className="flex items-center gap-1 text-neutral-400">
+                <AtSign className="size-4" />
+                <Sparkles className="size-4" />
+              </div>
+              <button
+                onClick={sendComment}
+                disabled={!comment.trim()}
+                title="Enviar al agente"
+                className="flex size-7 items-center justify-center rounded-full bg-neutral-900 text-white transition-opacity hover:bg-neutral-700 disabled:opacity-30"
+              >
+                <ArrowUp className="size-3.5" />
+              </button>
+            </div>
           </div>
         )}
 
-        {/* LA BARRA DE CRISTAL — colapsada, se despliega al pasar el ratón */}
+        {/* LA BARRA ÚNICA. Una sola, siempre en el mismo sitio, que SE TRANSFORMA con
+            la herramienta activa: en reposo, los 4 iconos (desplegables al hover); en
+            anotación, deshacer/rehacer/borrar + «AI chat»; en comentario, la pista de
+            colocar el punto. Nunca dos barras apiladas. */}
         <div className="group/tb absolute bottom-3 left-1/2 -translate-x-1/2">
-          <div className="flex items-center gap-0.5 rounded-full border border-white/15 bg-white/10 p-1 text-white shadow-2xl backdrop-blur-2xl transition-all duration-300">
-            {TOOLS.map(([t, Icon, title]) => {
-              const disabled =
-                (t === "select" && !hasComponents) || (t === "text" && !hasTextLayers);
-              return (
-                <button
-                  key={t}
-                  title={
-                    t === "select" && disabled
-                      ? "Selección de componentes: disponible cuando el asset tenga componentes añadidos"
-                      : t === "text" && disabled
-                        ? "Edición de texto: disponible cuando el asset tenga capas de texto"
-                        : title
-                  }
-                  disabled={disabled}
-                  onClick={() => !disabled && reset(tool === t ? null : t)}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-full px-2 py-1.5 text-xs font-medium transition-all",
-                    tool === t ? "bg-blue-600 text-white" : "hover:bg-white/15",
-                    disabled && "opacity-40",
-                  )}
-                >
-                  <Icon className="size-4" />
-                  {/* La etiqueta solo aparece al desplegar (hover) o si es la activa */}
-                  <span
+          {tool === "annotate" ? (
+            <div className="flex items-center gap-0.5 rounded-full border border-white/15 bg-neutral-950/85 px-1.5 py-1 text-white shadow-2xl backdrop-blur-2xl">
+              <button
+                title="Salir de anotación"
+                onClick={() => reset(null)}
+                className="flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium hover:bg-white/10"
+              >
+                <Pencil className="size-3.5 text-blue-400" /> Anotación
+              </button>
+              <div className="mx-0.5 h-4 w-px bg-white/15" />
+              <button
+                title="Deshacer"
+                disabled={!strokes.length}
+                onClick={() =>
+                  setStrokes((s) => {
+                    if (!s.length) return s;
+                    setRedo((r) => [s[s.length - 1], ...r]);
+                    return s.slice(0, -1);
+                  })
+                }
+                className="flex size-7 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30"
+              >
+                <Undo2 className="size-3.5" />
+              </button>
+              <button
+                title="Rehacer"
+                disabled={!redo.length}
+                onClick={() =>
+                  setRedo((r) => {
+                    if (!r.length) return r;
+                    setStrokes((s) => [...s, r[0]]);
+                    return r.slice(1);
+                  })
+                }
+                className="flex size-7 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30"
+              >
+                <Redo2 className="size-3.5" />
+              </button>
+              <button
+                title="Borrar todo"
+                disabled={!strokes.length}
+                onClick={() => {
+                  setStrokes([]);
+                  setRedo([]);
+                }}
+                className="flex size-7 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+              <button
+                disabled={!strokes.length}
+                onClick={sendAnnotation}
+                className="ml-0.5 rounded-full bg-blue-600 px-3 py-1 text-xs font-medium hover:bg-blue-500 disabled:opacity-40"
+              >
+                AI chat
+              </button>
+            </div>
+          ) : tool === "comment" ? (
+            <div className="flex items-center gap-0.5 rounded-full border border-white/15 bg-neutral-950/85 px-1.5 py-1 text-white shadow-2xl backdrop-blur-2xl">
+              <button
+                title="Salir de comentario"
+                onClick={() => reset(null)}
+                className="flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium hover:bg-white/10"
+              >
+                <MessageCircle className="size-3.5 text-blue-400" /> Comentario
+              </button>
+              <span className="px-1.5 text-[11px] text-neutral-400">
+                toca el punto exacto del cambio
+              </span>
+              <button
+                title="Cerrar"
+                onClick={() => reset(null)}
+                className="flex size-6 items-center justify-center rounded-full text-neutral-300 hover:bg-white/10"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-0.5 rounded-full border border-white/15 bg-white/10 p-1 text-white shadow-2xl backdrop-blur-2xl transition-all duration-300">
+              {TOOLS.map(([t, Icon, title]) => {
+                const disabled =
+                  (t === "select" && !hasComponents) || (t === "text" && !hasTextLayers);
+                return (
+                  <button
+                    key={t}
+                    title={
+                      t === "select" && disabled
+                        ? "Selección de componentes: disponible cuando el asset tenga componentes añadidos"
+                        : t === "text" && disabled
+                          ? "Edición de texto: disponible cuando el asset tenga capas de texto"
+                          : title
+                    }
+                    disabled={disabled}
+                    onClick={() => !disabled && reset(t)}
                     className={cn(
-                      "max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-300 group-hover/tb:max-w-[120px] group-hover/tb:opacity-100",
-                      tool === t && "max-w-[120px] opacity-100",
+                      "flex items-center gap-1.5 rounded-full px-2 py-1.5 text-xs font-medium transition-all hover:bg-white/15",
+                      disabled && "opacity-40",
                     )}
                   >
-                    {title}
-                  </span>
-                </button>
-              );
-            })}
-            {/* Afordancia "más" que aparece al desplegar, como en la referencia */}
-            <div className="max-w-0 overflow-hidden opacity-0 transition-all duration-300 group-hover/tb:max-w-[64px] group-hover/tb:opacity-100">
-              <div className="flex items-center">
-                <div className="mx-0.5 h-4 w-px bg-white/20" />
-                <button
-                  title="Cerrar herramientas"
-                  onClick={() => reset(null)}
-                  className="flex size-7 items-center justify-center rounded-full text-neutral-300 hover:bg-white/15"
-                >
-                  <X className="size-3.5" />
-                </button>
-              </div>
+                    <Icon className="size-4" />
+                    {/* La etiqueta solo aparece al desplegar (hover) */}
+                    <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-300 group-hover/tb:max-w-[120px] group-hover/tb:opacity-100">
+                      {title}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          </div>
+          )}
         </div>
       </div>
-
-      {/* Pista contextual del modo activo: qué hacer, sin abrir una segunda superficie. */}
-      {tool === "comment" && (
-        <p className="px-1 text-center text-[11px] text-muted-foreground">
-          Toca el punto exacto del cambio — la referencia se adjuntará al chat para que
-          escribas la instrucción.
-        </p>
-      )}
-      {tool === "annotate" && (
-        <p className="px-1 text-center text-[11px] text-muted-foreground">
-          Dibuja sobre la zona que quieres cambiar y pulsa «Al chat».
-        </p>
-      )}
     </div>
   );
 }
@@ -6104,6 +6147,7 @@ function AssetLightbox({
   onDuplicate,
   onAction,
   onAttach,
+  onSendDirect,
 }) {
   const isVideo = /video|cut/i.test(String(asset.type));
   const isAudio = /audio/i.test(String(asset.type));
@@ -6146,6 +6190,11 @@ function AssetLightbox({
             // una sola superficie, la del chat, adopta lo necesario para la acción.
             onClose();
             onAttach?.({ ...ref, asset });
+          }}
+          onSendDirect={(text) => {
+            // El comentario fijado ES el prompt: se envía directo al agente.
+            onClose();
+            onSendDirect?.(text);
           }}
         />
 
@@ -6467,6 +6516,7 @@ function EditorAssets({
   onUpload,
   onAction,
   onAttach,
+  onSendDirect,
   selectedIds = [],
   onSelectionChange,
 }) {
@@ -6687,6 +6737,7 @@ function EditorAssets({
           onDuplicate={onDuplicate}
           onAction={onAction}
           onAttach={onAttach}
+          onSendDirect={onSendDirect}
         />
       )}
       {customAsset && (
@@ -8775,6 +8826,11 @@ function Editor({ projectId }) {
                 // enviar, el compositor vuelve a la normalidad.
                 setChatHidden(false);
                 setChatAttach(ref);
+              }}
+              onSendDirect={(text) => {
+                // Comentario fijado sobre el asset: el prompt viaja directo al agente.
+                setChatHidden(false);
+                handleSend(text);
               }}
               selectedIds={selectedAssetIds}
               onSelectionChange={setSelectedAssetIds}

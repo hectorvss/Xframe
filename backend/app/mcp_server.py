@@ -5,10 +5,12 @@ proporcionado por el cliente. Cada llamada lleva un token personal ``xfr_`` cuyo
 hash, scopes y posible lista de proyectos se consultan en Postgres. Los JWT de
 Supabase siguen funcionando para clientes controlados por el usuario.
 
-No se anuncia OAuth mientras Xframe no tenga un Authorization Server que emita
-tokens para este recurso: fingirlo haría que Claude/Cursor descubrieran una URL
-de login que no puede completar el flujo. El transporte es Streamable HTTP y
-los clientes que admitan cabeceras pueden conectarse hoy mismo.
+OAuth se anuncia sólo cuando hay de verdad un Authorization Server detrás
+(``oauth_server_enabled()`` sondea Supabase): fingirlo haría que Claude/Cursor
+descubrieran una URL de login que no puede completar el flujo. Sin AS, el reto 401
+es un ``Bearer`` a secas —sin apuntar a un descubrimiento muerto— y el token
+personal ``xfr_`` sigue funcionando. El transporte es Streamable HTTP y los clientes
+que admitan cabeceras pueden conectarse hoy mismo.
 """
 
 from __future__ import annotations
@@ -241,18 +243,24 @@ class McpBearerAuth:
 
     @staticmethod
     async def _reject(send: Send, detail: str) -> None:
-        from app.mcp_api import protected_resource_metadata_url
+        from app.mcp_api import oauth_server_enabled, protected_resource_metadata_url
+
+        # Sólo mandamos al cliente al descubrimiento RFC 9728 si hay un Authorization
+        # Server que pueda completarlo. Sin él, un Bearer a secas: el cliente pide un
+        # token personal en vez de perseguir un login que no existe.
+        if await oauth_server_enabled():
+            challenge = (
+                'Bearer resource_metadata="'
+                + protected_resource_metadata_url()
+                + '", scope="openid profile email"'
+            )
+        else:
+            challenge = 'Bearer error="invalid_token", error_description="Xframe personal token (xfr_) required"'
 
         response = JSONResponse(
             {"detail": detail},
             status_code=401,
-            headers={
-                "WWW-Authenticate": (
-                    'Bearer resource_metadata="'
-                    + protected_resource_metadata_url()
-                    + '", scope="openid profile email"'
-                )
-            },
+            headers={"WWW-Authenticate": challenge},
         )
         await send(
             {

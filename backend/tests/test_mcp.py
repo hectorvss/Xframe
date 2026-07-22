@@ -52,6 +52,35 @@ async def test_oauth_token_uses_the_saved_client_grant(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reject_advertises_oauth_only_when_the_server_is_enabled(monkeypatch) -> None:
+    """El reto 401 sólo apunta al descubrimiento RFC 9728 cuando hay un Authorization
+    Server que pueda completarlo. Sin él, un ``Bearer`` a secas: fingir OAuth mandaría a
+    Claude/Cursor a un login inexistente en vez de a pedir un token personal."""
+    import app.mcp_api as mcp_api
+
+    async def www_authenticate_when(enabled: bool) -> str:
+        sent: list[dict] = []
+
+        async def capture(message: dict) -> None:
+            sent.append(message)
+
+        async def probe() -> bool:
+            return enabled
+
+        monkeypatch.setattr(mcp_api, "oauth_server_enabled", probe)
+        await mcp_server.McpBearerAuth._reject(capture, "sin credenciales")
+        headers = {key.decode().lower(): value.decode() for key, value in sent[0]["headers"]}
+        return headers["www-authenticate"]
+
+    enabled_challenge = await www_authenticate_when(True)
+    assert "resource_metadata=" in enabled_challenge
+
+    disabled_challenge = await www_authenticate_when(False)
+    assert "resource_metadata=" not in disabled_challenge
+    assert "xfr_" in disabled_challenge
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_initialize_runs_inside_mcp_lifespan(monkeypatch) -> None:
     """El primer initialize no puede fallar por un task group sin arrancar."""
     principal = mcp_server.McpPrincipal(
