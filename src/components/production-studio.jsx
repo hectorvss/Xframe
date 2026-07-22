@@ -2164,9 +2164,10 @@ function MixTimeline({
     "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
-      {/* Tarjeta 1: la mezcla multipista, ocupando todo el alto disponible. */}
-      <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border bg-background">
+    <div className="flex flex-col gap-3">
+      {/* Tarjeta 1: la mezcla multipista, con su altura natural (el resto queda en
+          blanco a propósito). */}
+      <div className="overflow-hidden rounded-xl border bg-background">
       <div className="flex">
         {/* Columna fija de nombres de pista */}
         <div className="shrink-0 border-r" style={{ width: `${NAME_W}px` }}>
@@ -5542,7 +5543,7 @@ export function AudioStudio({
               {loading ? (
                 <AudioWorkspaceSkeleton />
               ) : (
-                <div className="flex min-h-full flex-col">
+                <div>
                   {previewError && (
                     <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
                       {previewError}

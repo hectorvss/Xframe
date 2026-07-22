@@ -300,6 +300,47 @@ class Guidance(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Grafo del canvas                                                             #
+# --------------------------------------------------------------------------- #
+
+
+class CanvasNode(BaseModel):
+    """
+    Un nodo LIBRE del lienzo: un concepto o una referencia que el usuario (o el agente)
+    colocó alrededor de los planos. No es un plano — es intención, dirección de arte,
+    material de apoyo, una idea que aún no es un shot. Viaja aparte del timeline porque
+    no tiene orden narrativo: existe para dar sentido, no para rodarse tal cual.
+
+    `key` es el `node_key` estable con el que las aristas lo referencian.
+    """
+
+    key: str
+    kind: str = "concept"
+    """`canvas_nodes.type` para lo que no es shot: concept | reference."""
+    title: str = ""
+    text: str = ""
+    asset_name: str | None = None
+    """Si el nodo lleva un asset colgado (una referencia visual), su nombre."""
+
+
+class CanvasLink(BaseModel):
+    """
+    Una conexión dirigida del lienzo: `from → to`. Es lo que convierte una nube de
+    nodos en un GRAFO con intención — qué idea alimenta a qué plano, qué referencia
+    gobierna qué escena. Sin las aristas, el agente vería piezas sueltas y perdería
+    justamente la estructura que el usuario dibujó para explicarse.
+
+    Las etiquetas ya vienen resueltas a texto legible (título del nodo o del plano),
+    no a `node_key`: el destinatario es un LLM razonando, no un grafo que recorrer.
+    """
+
+    from_label: str
+    to_label: str
+    from_kind: str = "concept"
+    to_kind: str = "concept"
+
+
+# --------------------------------------------------------------------------- #
 # El contexto completo                                                         #
 # --------------------------------------------------------------------------- #
 
@@ -323,6 +364,11 @@ class XframeUIContext(BaseModel):
 
     timeline: list[ShotContext] = Field(default_factory=list)
     """Planos en ORDEN NARRATIVO. Ver `narrative_sort_key`."""
+
+    canvas_nodes: list[CanvasNode] = Field(default_factory=list)
+    """Nodos libres del lienzo (concepto/referencia) que NO son planos."""
+    canvas_links: list[CanvasLink] = Field(default_factory=list)
+    """Aristas del lienzo, ya resueltas a etiquetas legibles. El grafo de intención."""
 
     elements: list[ElementContext] = Field(default_factory=list)
     recent_assets: list[AssetContext] = Field(default_factory=list)

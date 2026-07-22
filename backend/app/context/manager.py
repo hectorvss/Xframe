@@ -987,14 +987,28 @@ class XframeContextManager:
             self._load_profile(),
             self._load_guidance(),
             self._load_production(),
+            self._load_canvas_graph(),
             return_exceptions=True,
         )
-        project, brief, shots, assets_bundle, sheets, profile, guidance, production = [
+        (
+            project,
+            brief,
+            shots,
+            assets_bundle,
+            sheets,
+            profile,
+            guidance,
+            production,
+            canvas_graph,
+        ) = [
             self._or_default(r, default)
             for r, default in zip(
-                results, ({}, [], [], ([], 0), {}, {}, Guidance(), {}), strict=True
+                results,
+                ({}, [], [], ([], 0), {}, {}, Guidance(), {}, ([], [])),
+                strict=True,
             )
         ]
+        canvas_nodes, canvas_links = canvas_graph
 
         assets, total_assets = assets_bundle
         elements = self._build_elements(assets, sheets)
@@ -1010,6 +1024,8 @@ class XframeContextManager:
             open_tab=_coerce_tab(open_tab),
             brief=brief,
             timeline=sorted(shots, key=narrative_sort_key),
+            canvas_nodes=canvas_nodes,
+            canvas_links=canvas_links,
             elements=elements,
             recent_assets=assets,
             selected_assets=selected,
@@ -1353,6 +1369,85 @@ class XframeContextManager:
                 )
             )
         return shots
+
+    async def _load_canvas_graph(self) -> tuple[list[CanvasNode], list[CanvasLink]]:
+        """
+        El lienzo COMO GRAFO: los nodos libres (concepto/referencia) y las aristas.
+
+        Los planos ya viajan por `_load_shots`; aquí se cargan los nodos que NO son
+        planos y TODAS las aristas, resolviendo cada extremo a una etiqueta legible.
+        Sin esto el agente veía una lista de planos y era ciego a la estructura que el
+        usuario dibujó alrededor — conceptos, referencias y qué alimenta a qué. Peor: el
+        agente podía CREAR nodos y conexiones que luego no podía releer.
+
+        Las aristas de `canvas_edges` referencian por `node_key` (texto), no por uuid, así
+        que se construye un mapa `node_key → (etiqueta, tipo)` sobre TODOS los nodos —
+        planos incluidos— para poder decir "Concepto: isla → Plano 03" en vez de un par
+        de identificadores opacos. Una arista con un extremo colgando (nodo borrado) se
+        descarta en silencio: es ruido, no información.
+        """
+        node_rows, edge_rows = await asyncio.gather(
+            db.fetch(
+                """
+                select node_key, type, title, text, asset_id
+                  from public.canvas_nodes
+                 where project_id = $1::uuid
+                """,
+                self._project_id,
+            ),
+            db.fetch(
+                "select from_node, to_node from public.canvas_edges where project_id = $1::uuid",
+                self._project_id,
+            ),
+        )
+
+        # Nombres de asset para los nodos que cuelgan una referencia visual.
+        asset_ids = [r["asset_id"] for r in node_rows if r["asset_id"]]
+        asset_names: dict[str, str] = {}
+        if asset_ids:
+            arows = await db.fetch(
+                "select id, name from public.assets where id = any($1::uuid[])", asset_ids
+            )
+            asset_names = {str(r["id"]): r["name"] for r in arows}
+
+        # Mapa node_key → etiqueta legible, sobre TODOS los nodos (para resolver aristas).
+        def _label(r: Any) -> str:
+            title = (r["title"] or "").strip()
+            if title:
+                return title
+            kind = r["type"] or "nodo"
+            body = (r["text"] or "").strip()
+            return f"{kind}: {body[:40]}" if body else kind
+
+        label_by_key = {r["node_key"]: _label(r) for r in node_rows}
+        kind_by_key = {r["node_key"]: (r["type"] or "concept") for r in node_rows}
+
+        nodes = [
+            CanvasNode(
+                key=r["node_key"],
+                kind=r["type"] or "concept",
+                title=r["title"] or "",
+                text=r["text"] or "",
+                asset_name=asset_names.get(str(r["asset_id"])) if r["asset_id"] else None,
+            )
+            for r in node_rows
+            if (r["type"] or "concept") != "shot"
+        ]
+
+        links: list[CanvasLink] = []
+        for e in edge_rows:
+            fk, tk = e["from_node"], e["to_node"]
+            if fk not in label_by_key or tk not in label_by_key:
+                continue  # arista huérfana: un extremo ya no existe
+            links.append(
+                CanvasLink(
+                    from_label=label_by_key[fk],
+                    to_label=label_by_key[tk],
+                    from_kind=kind_by_key.get(fk, "concept"),
+                    to_kind=kind_by_key.get(tk, "concept"),
+                )
+            )
+        return nodes, links
 
     async def _load_assets(self) -> tuple[list[AssetContext], int]:
         """
