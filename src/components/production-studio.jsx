@@ -1522,91 +1522,175 @@ function lineAccent(line, speaker) {
 
 // Reproduce una lista de tomas de audio una detrás de otra con un único <audio>. Sirve
 // para escuchar solo el guion (las voces) sin música ni efectos.
-function useSequentialPlayback(tracks) {
+// Línea de tiempo de reproducción reutilizable: una pista con los clips en orden,
+// coloreados, con regla de tiempo, cabezal y transporte. La usa el Guion para escuchar el
+// diálogo y es el mismo módulo que debe llevar el estudio de voces/audio.
+function DialogueTimeline({ clips, emptyHint, caption }) {
+  const durations = clips.map((clip) => Math.max(400, clip.durationMs || 1000));
+  const total = Math.max(1000, durations.reduce((sum, d) => sum + d, 0));
+  const offsets = [];
+  {
+    let acc = 0;
+    for (const d of durations) {
+      offsets.push(acc);
+      acc += d;
+    }
+  }
   const [playing, setPlaying] = useState(false);
-  const [index, setIndex] = useState(-1);
+  const [pos, setPos] = useState(0);
+  const rafRef = useRef(0);
   const audioRef = useRef(null);
-  const tracksRef = useRef(tracks);
-  tracksRef.current = tracks;
+  const activeRef = useRef(-1);
+  const clockRef = useRef({ t0: 0, base: 0 });
 
-  const stop = useCallback(() => {
-    const audio = audioRef.current;
-    if (audio) {
-      audio.pause();
-      audio.onended = null;
-      audio.onerror = null;
-    }
+  const stopAudio = () => {
+    activeRef.current = -1;
+    if (audioRef.current) audioRef.current.pause();
+  };
+  const halt = () => {
+    cancelAnimationFrame(rafRef.current);
+    stopAudio();
     setPlaying(false);
-    setIndex(-1);
-  }, []);
+  };
 
-  const playFrom = useCallback(
-    (start) => {
-      const list = tracksRef.current;
-      if (start >= list.length) {
-        stop();
-        return;
-      }
-      let audio = audioRef.current;
-      if (!audio) {
-        audio = new Audio();
-        audioRef.current = audio;
-      }
-      audio.src = list[start].url;
-      audio.onended = () => playFrom(start + 1);
-      audio.onerror = () => playFrom(start + 1);
-      setIndex(start);
-      setPlaying(true);
-      audio.play().catch(() => stop());
-    },
-    [stop],
-  );
+  // Reinicia el cabezal cuando cambia la lista de clips (otra escena).
+  const clipKey = clips.map((clip) => clip.id).join("|");
+  useEffect(() => {
+    halt();
+    setPos(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipKey]);
+  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
 
-  const toggle = useCallback(() => {
-    if (playing) {
-      audioRef.current?.pause();
-      setPlaying(false);
-    } else if (index >= 0 && audioRef.current) {
-      audioRef.current.play().catch(() => {});
-      setPlaying(true);
-    } else {
-      playFrom(0);
+  const frame = () => {
+    const now = performance.now();
+    const p = clockRef.current.base + (now - clockRef.current.t0);
+    if (p >= total) {
+      setPos(total);
+      halt();
+      return;
     }
-  }, [playing, index, playFrom]);
+    setPos(p);
+    let idx = -1;
+    for (let i = 0; i < clips.length; i += 1) {
+      if (p >= offsets[i] && p < offsets[i] + durations[i]) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx !== activeRef.current) {
+      stopAudio();
+      activeRef.current = idx;
+      const clip = clips[idx];
+      if (clip?.url) {
+        let audio = audioRef.current;
+        if (!audio) {
+          audio = new Audio();
+          audioRef.current = audio;
+        }
+        audio.src = clip.url;
+        audio.play().catch(() => {});
+      }
+    }
+    rafRef.current = requestAnimationFrame(frame);
+  };
 
-  useEffect(() => stop, [stop]);
-  return { playing, index, toggle };
-}
+  const toggle = () => {
+    if (!clips.length) return;
+    if (playing) {
+      cancelAnimationFrame(rafRef.current);
+      stopAudio();
+      clockRef.current.base = pos;
+      setPlaying(false);
+      return;
+    }
+    const start = pos >= total ? 0 : pos;
+    clockRef.current = { t0: performance.now(), base: start };
+    activeRef.current = -1;
+    setPlaying(true);
+    rafRef.current = requestAnimationFrame(frame);
+  };
 
-function ScreenplayPlayBar({ tracks }) {
-  const { playing, index, toggle } = useSequentialPlayback(tracks);
-  const has = tracks.length > 0;
-  const current = index >= 0 ? tracks[index] : null;
+  const seek = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(
+      1,
+      Math.max(0, (event.clientX - rect.left) / rect.width),
+    );
+    const ms = ratio * total;
+    setPos(ms);
+    clockRef.current = { t0: performance.now(), base: ms };
+    stopAudio();
+  };
+
+  const fmt = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+  const ticks = Math.min(20, Math.floor(total / 1000) + 1);
+
   return (
-    <div className="flex shrink-0 items-center gap-3 border-t bg-muted/20 px-4 py-2.5">
-      <Button
-        size="icon"
-        variant={has ? "default" : "outline"}
-        className="size-9 shrink-0 rounded-full"
-        disabled={!has}
-        onClick={toggle}
-        aria-label={playing ? "Pausar" : "Escuchar el guion"}
-      >
-        {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
-      </Button>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium">
-          {current ? current.label : "Escuchar el guion"}
-        </p>
-        <p className="truncate text-[10px] text-muted-foreground">
-          {has
-            ? `${tracks.length} ${tracks.length === 1 ? "toma" : "tomas"} de voz, en orden`
-            : "Genera las tomas de las líneas para reproducir el guion."}
-        </p>
+    <div className="shrink-0 border-t bg-muted/10">
+      <div className="flex items-center gap-3 px-4 py-2">
+        <Button
+          size="icon"
+          variant={clips.length ? "default" : "outline"}
+          className="size-9 shrink-0 rounded-full"
+          disabled={!clips.length}
+          onClick={toggle}
+          aria-label={playing ? "Pausar" : "Reproducir"}
+        >
+          {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+        </Button>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {fmt(pos)} / {fmt(total)}
+        </span>
+        <span className="ml-auto flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+          <Volume2 className="size-3.5" /> {caption || "Diálogo"}
+        </span>
       </div>
-      <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
-        <Volume2 className="size-3.5" /> Solo voces
-      </span>
+      {clips.length ? (
+        <div className="px-4 pb-3">
+          <div className="relative mb-1 h-3">
+            {Array.from({ length: ticks }).map((_, i) => (
+              <span
+                key={i}
+                className="absolute top-0 -translate-x-1/2 text-[9px] tabular-nums text-muted-foreground/60"
+                style={{ left: `${((i * 1000) / total) * 100}%` }}
+              >
+                {fmt(i * 1000)}
+              </span>
+            ))}
+          </div>
+          <div
+            className="relative h-11 cursor-pointer rounded-lg border bg-muted/40"
+            onClick={seek}
+          >
+            {clips.map((clip, i) => (
+              <div
+                key={clip.id}
+                className="absolute inset-y-1 flex items-center overflow-hidden rounded-md px-2 text-[11px] font-medium text-white shadow-sm"
+                style={{
+                  left: `${(offsets[i] / total) * 100}%`,
+                  width: `${(durations[i] / total) * 100}%`,
+                  backgroundColor: clip.hex,
+                }}
+                title={clip.label}
+              >
+                <span className="truncate">{clip.label}</span>
+              </div>
+            ))}
+            <div
+              className="pointer-events-none absolute inset-y-0 w-0.5 bg-foreground"
+              style={{ left: `${(pos / total) * 100}%` }}
+            >
+              <span className="absolute -top-1 left-1/2 size-2 -translate-x-1/2 rounded-full bg-foreground" />
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="px-4 pb-3 text-[11px] text-muted-foreground">{emptyHint}</p>
+      )}
     </div>
   );
 }
@@ -1739,31 +1823,36 @@ export function ScreenplayStudio({
   const [openLineId, setOpenLineId] = useState("");
   const [overLineId, setOverLineId] = useState(null);
   const dragLineId = useRef(null);
-  // Tomas de voz de la escena actual, en orden de línea: es lo que reproduce la barra de
-  // play del guion (solo voces, sin música ni efectos).
-  const speechTracks = useMemo(() => {
-    const order = new Map(linesByScene.map((line, i) => [String(line.id), i]));
-    return data.cues
-      .filter(
-        (cue) =>
-          ["dialogue", "voiceover"].includes(cue.track_kind) &&
-          order.has(String(cue.script_line_id)),
-      )
-      .sort(
-        (a, b) =>
-          order.get(String(a.script_line_id)) -
-          order.get(String(b.script_line_id)),
-      )
-      .map((cue) => {
-        const asset = assets.find(
-          (item) => String(item.id) === String(cue.asset_id) && item.url,
+  // Clips de diálogo/voz de la escena para la línea de tiempo: cada línea es un bloque
+  // coloreado por quien habla; si ya tiene toma generada, su audio suena al reproducir.
+  const dialogueClips = useMemo(() => {
+    return linesByScene
+      .filter((line) => ["dialogue", "voiceover"].includes(line.line_type))
+      .map((line) => {
+        const speaker = characters.find(
+          (item) => String(item.id) === String(line.speaker_element_id),
         );
-        return asset
-          ? { id: cue.id, url: asset.url, label: asset.name || "Toma de voz" }
+        const cue = data.cues.find(
+          (item) => String(item.script_line_id) === String(line.id),
+        );
+        const asset = cue
+          ? assets.find(
+              (item) => String(item.id) === String(cue.asset_id) && item.url,
+            )
           : null;
-      })
-      .filter(Boolean);
-  }, [data.cues, linesByScene, assets]);
+        return {
+          id: String(line.id),
+          label:
+            line.text ||
+            (line.line_type === "voiceover" ? "Voz en off" : "Diálogo"),
+          durationMs:
+            line.target_duration_ms ||
+            Math.max(1200, String(line.text || "").length * 55),
+          hex: lineAccent(line, speaker).hex,
+          url: asset?.url || null,
+        };
+      });
+  }, [linesByScene, characters, data.cues, assets]);
 
   useEffect(() => {
     if (!data.scenes.length) {
@@ -2382,7 +2471,13 @@ export function ScreenplayStudio({
               )
             )}
             </div>
-            {scene && <ScreenplayPlayBar tracks={speechTracks} />}
+            {scene && (
+              <DialogueTimeline
+                clips={dialogueClips}
+                caption="Diálogo del guion"
+                emptyHint="Añade diálogo o voz en off para ver aquí la línea de tiempo del guion."
+              />
+            )}
           </main>
         </div>
       </div>
