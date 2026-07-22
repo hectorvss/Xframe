@@ -1568,6 +1568,11 @@ const SPEED_OPTS = ["Más lento", "Lento", "Normal", "Rápido", "Más rápido"];
 const SPEED_VALUES = [0.7, 0.85, 1.0, 1.05, 1.2];
 const LEVEL_OPTS = ["Muy baja", "Baja", "Media", "Alta", "Muy alta"];
 const LEVEL_VALUES = [0, 0.25, 0.5, 0.75, 1];
+// Duración e inicio del compositor de sonido, también como deslizables segmentados.
+const DURATION_OPTS = ["1s", "2s", "3s", "5s", "8s", "10s", "15s", "20s", "30s"];
+const DURATION_VALUES = [1, 2, 3, 5, 8, 10, 15, 20, 30];
+const START_OPTS = ["0s", "1s", "2s", "3s", "5s", "8s", "10s", "15s", "20s", "30s", "45s", "60s"];
+const START_VALUES = [0, 1, 2, 3, 5, 8, 10, 15, 20, 30, 45, 60];
 
 function nearestIndex(value, values) {
   const num = Number(value);
@@ -3418,6 +3423,36 @@ function SoundComposer({
       `${voice.name} ${voice.description || ""} ${voice.accent || ""}`.toLowerCase();
     return text.includes(voiceSearch.trim().toLowerCase());
   });
+  // Catálogo integrado para Explorar: elegir una voz concreta la importa como perfil
+  // del proyecto y la deja seleccionada para generar con ella.
+  const catalogMatches = VOICE_CATALOG.filter((voice) =>
+    `${voice.name} ${voice.tagline} ${voice.language} ${voice.gender} ${voice.category}`
+      .toLowerCase()
+      .includes(voiceSearch.trim().toLowerCase()),
+  );
+  const pickCatalogVoice = async (voice) => {
+    const existing = voices.find((item) => item.name === voice.name);
+    if (existing) {
+      setVoiceId(String(existing.id));
+      setVoicePickerOpen(false);
+      return;
+    }
+    let created;
+    const ok = await run(async () => {
+      created = await db.createVoiceProfile(projectId, {
+        name: voice.name,
+        description: voice.tagline,
+        language: voice.language === "Español" ? "es" : "en",
+        accent: voice.accent || "",
+        source: "library",
+        status: "draft",
+      });
+    });
+    if (ok && created) {
+      setVoiceId(String(created.id));
+      setVoicePickerOpen(false);
+    }
+  };
 
   useEffect(() => {
     if (!seed) return;
@@ -3546,18 +3581,6 @@ function SoundComposer({
       </TabsContent>
 
       <TabsContent value="settings" className="mt-0 space-y-5 p-4">
-        <div className="flex items-center gap-3 rounded-xl border p-2.5">
-          <span className="flex size-14 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-900 text-white">
-            <AudioLines className="size-5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium">Diseño de voz y sonido</p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Ajusta la interpretación y genera una toma vinculada al guion.
-            </p>
-          </div>
-        </div>
-
         <div className="grid grid-cols-4 rounded-lg border bg-muted/30 p-1">
           {[
             ["voice", "Voz"],
@@ -3587,7 +3610,21 @@ function SoundComposer({
                     className="h-11 w-full justify-between px-3 font-normal"
                   >
                     <span className="flex min-w-0 items-center gap-2">
-                      <span className="size-6 shrink-0 rounded-full bg-gradient-to-br from-slate-300 to-slate-700" />
+                      <span
+                        className="size-6 shrink-0 rounded-full ring-1 ring-black/80"
+                        style={
+                          selectedVoice
+                            ? {
+                                backgroundImage: `url(${gradientUrl(selectedVoice.id)})`,
+                                backgroundSize: "cover",
+                                backgroundPosition: "center",
+                              }
+                            : {
+                                backgroundImage:
+                                  "linear-gradient(135deg, #cbd5e1, #334155)",
+                              }
+                        }
+                      />
                       <span className="truncate">
                         {selectedVoice?.name || "Selecciona una voz"}
                       </span>
@@ -3649,63 +3686,102 @@ function SoundComposer({
                         ),
                       )}
                     </div>
-                    <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+                    <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
                       <div className="space-y-0.5">
-                        {visibleVoices.map((voice, index) => (
-                          <button
-                            key={voice.id}
-                            type="button"
-                            onClick={() => {
-                              setVoiceId(String(voice.id));
-                              setVoicePickerOpen(false);
-                            }}
-                            className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-accent"
-                          >
-                            <span
-                              className={cn(
-                                "size-9 shrink-0 rounded-full",
-                                index % 3 === 0
-                                  ? "bg-gradient-to-br from-slate-300 to-slate-800"
-                                  : index % 3 === 1
-                                    ? "bg-gradient-to-br from-amber-200 to-rose-500"
-                                    : "bg-gradient-to-br from-cyan-200 to-indigo-600",
-                              )}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-xs font-semibold">
-                                {voice.name}
-                              </span>
-                              <span className="block truncate text-[11px] text-muted-foreground">
-                                {voice.description ||
-                                  `${voice.language} · ${voice.accent || "Voz de proyecto"}`}
-                              </span>
-                            </span>
-                            <Play className="size-3.5 fill-current" />
-                            <MoreVertical className="size-4 text-muted-foreground" />
-                          </button>
-                        ))}
-                        {!visibleVoices.length && (
-                          <div className="p-6 text-center">
-                            <p className="text-sm font-medium">
-                              No hay voces configuradas
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Añade una voz con su ID del proveedor para poder
-                              generar.
-                            </p>
-                            <Button
-                              className="mt-4"
-                              onClick={() => {
-                                setVoicePickerOpen(false);
-                                onOpenVoices();
-                              }}
-                            >
-                              <Plus /> Añadir voz
-                            </Button>
-                          </div>
+                        {voiceTab === "explore" ? (
+                          <>
+                            {catalogMatches.map((voice) => (
+                              <button
+                                key={voice.id}
+                                type="button"
+                                onClick={() => pickCatalogVoice(voice)}
+                                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-accent"
+                              >
+                                <span
+                                  className="size-9 shrink-0 rounded-full ring-1 ring-black/80"
+                                  style={{
+                                    backgroundImage: `url(${gradientUrl(voice.id)})`,
+                                    backgroundSize: "cover",
+                                    backgroundPosition: "center",
+                                  }}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-xs font-semibold">
+                                    {voice.name}{" "}
+                                    <span className="font-normal text-muted-foreground">
+                                      — {voice.tagline}
+                                    </span>
+                                  </span>
+                                  <span className="block truncate text-[11px] text-muted-foreground">
+                                    {voice.language} · {voice.accent} ·{" "}
+                                    {voice.gender} · {voice.category}
+                                  </span>
+                                </span>
+                                <Play className="size-3.5 fill-current" />
+                              </button>
+                            ))}
+                            {!catalogMatches.length && (
+                              <p className="px-2 py-6 text-center text-[11px] text-muted-foreground">
+                                Sin voces del catálogo para esa búsqueda.
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            {visibleVoices.map((voice) => (
+                              <button
+                                key={voice.id}
+                                type="button"
+                                onClick={() => {
+                                  setVoiceId(String(voice.id));
+                                  setVoicePickerOpen(false);
+                                }}
+                                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-accent"
+                              >
+                                <span
+                                  className="size-9 shrink-0 rounded-full ring-1 ring-black/80"
+                                  style={{
+                                    backgroundImage: `url(${gradientUrl(voice.id)})`,
+                                    backgroundSize: "cover",
+                                    backgroundPosition: "center",
+                                  }}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-xs font-semibold">
+                                    {voice.name}
+                                  </span>
+                                  <span className="block truncate text-[11px] text-muted-foreground">
+                                    {voice.description ||
+                                      `${voice.language} · ${voice.accent || "Voz de proyecto"}`}
+                                  </span>
+                                </span>
+                                <Play className="size-3.5 fill-current" />
+                              </button>
+                            ))}
+                            {!visibleVoices.length && (
+                              <div className="p-6 text-center">
+                                <p className="text-sm font-medium">
+                                  No hay voces configuradas
+                                </p>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  Importa una voz desde Explorar o desde la
+                                  pestaña Voces.
+                                </p>
+                                <Button
+                                  className="mt-4"
+                                  onClick={() => {
+                                    setVoicePickerOpen(false);
+                                    onOpenVoices();
+                                  }}
+                                >
+                                  <Plus /> Añadir voz
+                                </Button>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
-                    </ScrollArea>
+                    </div>
                   </Tabs>
                 </DialogContent>
               </Dialog>
@@ -3807,27 +3883,22 @@ function SoundComposer({
                 placeholder="Describe con precisión el sonido, su evolución y lo que debe evitar…"
               />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Duración" hint="seg">
-                <Input
-                  type="number"
-                  min="0.5"
-                  step="0.1"
-                  value={duration}
-                  onChange={(event) => setDuration(event.target.value)}
-                />
-              </Field>
-              <Field label="Intensidad">
-                <Input
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={intensity}
-                  onChange={(event) => setIntensity(Number(event.target.value))}
-                />
-              </Field>
-            </div>
+            <SettingsSlider
+              label="Duración"
+              value={DURATION_OPTS[nearestIndex(duration, DURATION_VALUES)]}
+              options={DURATION_OPTS}
+              onChange={(v) =>
+                setDuration(String(DURATION_VALUES[DURATION_OPTS.indexOf(v)]))
+              }
+            />
+            <SettingsSlider
+              label="Intensidad"
+              value={INTENSITY_OPTS[nearestIndex(intensity, LEVEL_VALUES)]}
+              options={INTENSITY_OPTS}
+              onChange={(v) =>
+                setIntensity(LEVEL_VALUES[INTENSITY_OPTS.indexOf(v)])
+              }
+            />
             <div className="flex items-center justify-between border-y py-3">
               <p className="text-xs font-medium">Bucle continuo</p>
               <Switch checked={loop} onCheckedChange={setLoop} />
@@ -3904,18 +3975,18 @@ function SoundComposer({
             </SelectContent>
           </Select>
         </Field>
-        <Field
-          label="Empieza en"
-          hint={sceneId === "__none__" ? "segundos del proyecto" : "segundos de la escena"}
-        >
-          <Input
-            type="number"
-            min="0"
-            step="0.1"
-            value={start}
-            onChange={(event) => setStart(event.target.value)}
-          />
-        </Field>
+        <SettingsSlider
+          label={
+            sceneId === "__none__"
+              ? "Empieza en (proyecto)"
+              : "Empieza en (escena)"
+          }
+          value={START_OPTS[nearestIndex(start, START_VALUES)]}
+          options={START_OPTS}
+          onChange={(v) =>
+            setStart(String(START_VALUES[START_OPTS.indexOf(v)]))
+          }
+        />
         {kind === "voice" &&
           selectedVoice &&
           !selectedVoice.provider_voice_id && (
@@ -3924,13 +3995,6 @@ function SoundComposer({
               una toma.
             </p>
           )}
-        {!providerReady && (
-          <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-            Conecta un proveedor de voz y sonido para habilitar la generación
-            real de voz, música, efectos y ambientes. La edición de perfiles,
-            plantillas y timeline sigue disponible.
-          </p>
-        )}
         <div className="flex gap-2">
           <Button
             variant="outline"
