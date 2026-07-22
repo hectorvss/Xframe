@@ -701,6 +701,102 @@ function AssetReferences({
   );
 }
 
+// Solo los Elements con rol de Personaje pueden hablar y llevar voz; una localización o
+// un objeto no.
+function isPersonajeRole(role) {
+  return /personaje|character/i.test(String(role || ""));
+}
+
+// Fila de ajuste compacta: etiqueta a la izquierda, control a la derecha. Da el aire de
+// hoja de ajustes visual (como la de generación) en vez de un formulario plano.
+function MetaRow({ label, children }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b py-2.5 last:border-b-0">
+      <span className="shrink-0 text-xs font-medium text-muted-foreground">
+        {label}
+      </span>
+      <div className="min-w-0 flex-1 text-right">{children}</div>
+    </div>
+  );
+}
+
+// Grupo de pastillas seleccionables (estado, tipo…): un clic, sin desplegable.
+function SegPills({ value, options, onChange }) {
+  return (
+    <div className="flex rounded-lg border bg-muted/40 p-0.5">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={cn(
+            "flex-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors",
+            String(value) === String(option.value)
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Deslizable segmentado por pasos, con puntos y un pomo en el paso activo. Igual que los
+// controles de aspecto/resolución/duración de la hoja de generación.
+function SegSlider({ label, value, options, onChange, formatValue }) {
+  const index = Math.max(
+    0,
+    options.findIndex((option) => String(option.value) === String(value)),
+  );
+  const active = options[index] || options[0];
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium">{label}</span>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {formatValue ? formatValue(active) : active?.label}
+        </span>
+      </div>
+      <div className="relative mt-2 flex items-center">
+        {options.map((option, i) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            aria-label={option.label}
+            className="group relative flex-1 py-2.5"
+          >
+            <span
+              className={cn(
+                "absolute top-1/2 h-1 -translate-y-1/2",
+                i === 0 ? "left-1/2" : "left-0",
+                i === options.length - 1 ? "right-1/2" : "right-0",
+                i <= index ? "bg-foreground/70" : "bg-muted",
+              )}
+            />
+            <span
+              className={cn(
+                "relative mx-auto block size-1.5 rounded-full",
+                i < index ? "bg-foreground/70" : "bg-muted-foreground/40",
+              )}
+            />
+            {i === index && (
+              <span className="absolute left-1/2 top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-foreground bg-background" />
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const SCENE_DURATION_STEPS = [2, 4, 6, 8, 10, 12, 15].map((seconds) => ({
+  value: seconds * 1000,
+  label: `${seconds}s`,
+}));
+
 function SceneInspector({
   projectId,
   scene,
@@ -724,57 +820,86 @@ function SceneInspector({
   const manifestWarnings = manifest?.validation?.warnings || [];
   return (
     <div className="space-y-4">
-      <Field label="Estado">
-        <Select
+      <div>
+        <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+          Título de la escena
+        </label>
+        <DraftInput
+          className="text-base font-semibold"
+          value={scene.title}
+          onCommit={(title) =>
+            run(() => db.updateScriptScene(scene.id, { title }))
+          }
+          placeholder="Nueva escena"
+        />
+      </div>
+
+      <div className="rounded-xl border bg-muted/10 px-3">
+        <MetaRow label="Localización">
+          <DraftInput
+            className="border-0 bg-transparent p-0 text-right text-xs shadow-none focus-visible:ring-0"
+            value={scene.setting}
+            onCommit={(setting) =>
+              run(() => db.updateScriptScene(scene.id, { setting }))
+            }
+            placeholder="Estudio"
+          />
+        </MetaRow>
+        <MetaRow label="Momento">
+          <DraftInput
+            className="border-0 bg-transparent p-0 text-right text-xs shadow-none focus-visible:ring-0"
+            value={scene.time_of_day}
+            onCommit={(time_of_day) =>
+              run(() => db.updateScriptScene(scene.id, { time_of_day }))
+            }
+            placeholder="Noche"
+          />
+        </MetaRow>
+        <MetaRow label="Inicio en el proyecto">
+          <DraftInput
+            number
+            min="0"
+            step="0.1"
+            className="border-0 bg-transparent p-0 text-right text-xs tabular-nums shadow-none focus-visible:ring-0"
+            value={(scene.timeline_start_ms || 0) / 1000}
+            onCommit={(seconds) =>
+              run(() =>
+                db.updateScriptScene(scene.id, {
+                  timeline_start_ms: Math.max(
+                    0,
+                    Math.round((seconds || 0) * 1000),
+                  ),
+                }),
+              )
+            }
+          />
+        </MetaRow>
+      </div>
+
+      <div className="space-y-2">
+        <span className="text-xs font-medium">Estado</span>
+        <SegPills
           value={scene.status || "draft"}
-          onValueChange={(status) =>
+          onChange={(status) =>
             run(() => db.updateScriptScene(scene.id, { status }))
           }
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="draft">Borrador</SelectItem>
-            <SelectItem value="approved">Aprobada</SelectItem>
-            <SelectItem value="locked">Bloqueada</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
-      <Field label="Duración objetivo" hint="segundos">
-        <DraftInput
-          number
-          nullable
-          min="0.1"
-          step="0.1"
-          value={
-            scene.target_duration_ms ? scene.target_duration_ms / 1000 : ""
-          }
-          onCommit={(seconds) =>
-            run(() =>
-              db.updateScriptScene(scene.id, {
-                target_duration_ms:
-                  seconds === null ? null : Math.round(seconds * 1000),
-              }),
-            )
-          }
+          options={[
+            { value: "draft", label: "Borrador" },
+            { value: "approved", label: "Aprobada" },
+            { value: "locked", label: "Bloqueada" },
+          ]}
         />
-      </Field>
-      <Field label="Inicio en el proyecto" hint="segundos">
-        <DraftInput
-          number
-          min="0"
-          step="0.1"
-          value={(scene.timeline_start_ms || 0) / 1000}
-          onCommit={(seconds) =>
-            run(() =>
-              db.updateScriptScene(scene.id, {
-                timeline_start_ms: Math.max(0, Math.round((seconds || 0) * 1000)),
-              }),
-            )
-          }
-        />
-      </Field>
+      </div>
+
+      <SegSlider
+        label="Duración objetivo"
+        value={scene.target_duration_ms}
+        options={SCENE_DURATION_STEPS}
+        onChange={(target_duration_ms) =>
+          run(() => db.updateScriptScene(scene.id, { target_duration_ms }))
+        }
+      />
+
       <Field label="Resumen narrativo">
         <DraftInput
           multiline
@@ -1503,8 +1628,10 @@ export function ScreenplayStudio({
   const [scenePanelVisible, setScenePanelVisible] = useStoredVisibility(
     "xframe.screenplay.scene-panel",
   );
+  // Solo los personajes hablan y llevan voz. Localizaciones y objetos son Elements pero
+  // no forman parte del reparto ni pueden ser el hablante de un diálogo.
   const characters = useMemo(
-    () => assets.filter((asset) => asset.role),
+    () => assets.filter((asset) => isPersonajeRole(asset.role)),
     [assets],
   );
   const linesByScene = useMemo(
@@ -1812,110 +1939,92 @@ export function ScreenplayStudio({
             ) : (
               scene && (
                 <div>
-                  <div className="sticky top-0 z-10 border-b bg-background/95 px-5 py-4 backdrop-blur">
-                    <div className="flex items-start gap-3">
-                      <div className="grid min-w-0 flex-1 grid-cols-[minmax(180px,1fr)_minmax(130px,.55fr)_130px] gap-3">
-                        <Field label="Título">
-                          <DraftInput
-                            value={scene.title}
-                            onCommit={(title) =>
-                              run(() =>
-                                db.updateScriptScene(scene.id, { title }),
-                              )
-                            }
-                          />
-                        </Field>
-                        <Field label="Localización">
-                          <DraftInput
-                            value={scene.setting}
-                            onCommit={(setting) =>
-                              run(() =>
-                                db.updateScriptScene(scene.id, { setting }),
-                              )
-                            }
-                            placeholder="Estudio"
-                          />
-                        </Field>
-                        <Field label="Momento">
-                          <DraftInput
-                            value={scene.time_of_day}
-                            onCommit={(time_of_day) =>
-                              run(() =>
-                                db.updateScriptScene(scene.id, { time_of_day }),
-                              )
-                            }
-                            placeholder="Noche"
-                          />
-                        </Field>
-                      </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreHorizontal className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() =>
-                              run(() =>
-                                db.moveScriptScene(projectId, scene.id, -1),
-                              )
-                            }
-                          >
-                            <ArrowUp className="mr-2 size-4" />
-                            Mover hacia arriba
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() =>
-                              run(() =>
-                                db.moveScriptScene(projectId, scene.id, 1),
-                              )
-                            }
-                          >
-                            <ArrowDown className="mr-2 size-4" />
-                            Mover hacia abajo
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => addLine("action")}>
-                            <CopyPlus className="mr-2 size-4" />
-                            Añadir acción
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={() =>
-                              run(() => db.deleteScriptScene(scene.id))
-                            }
-                          >
-                            <Trash2 className="mr-2 size-4" />
-                            Eliminar escena
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </div>
                   <div className="space-y-3 p-5">
                     <div className="space-y-1.5">
                       <div className="overflow-hidden rounded-xl border">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setOpenLineId(
-                              openLineId === "scene-details"
-                                ? ""
-                                : "scene-details",
-                            )
-                          }
-                          className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-accent/40"
-                        >
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                            Detalles de la escena
-                          </span>
-                          <ChevronRight
-                            className={cn(
-                              "ml-auto size-4 text-muted-foreground transition-transform",
-                              openLineId === "scene-details" && "rotate-90",
-                            )}
-                          />
-                        </button>
+                        <div className="flex items-center gap-1 px-3 py-2.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOpenLineId(
+                                openLineId === "scene-details"
+                                  ? ""
+                                  : "scene-details",
+                              )
+                            }
+                            className="flex min-w-0 flex-1 flex-col text-left"
+                          >
+                            <span className="truncate text-sm font-semibold">
+                              {scene.title || "Nueva escena"}
+                            </span>
+                            <span className="truncate text-[11px] text-muted-foreground">
+                              Escena · {linesByScene.length}{" "}
+                              {linesByScene.length === 1 ? "línea" : "líneas"}
+                              {scene.setting ? ` · ${scene.setting}` : ""}
+                            </span>
+                          </button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 shrink-0"
+                              >
+                                <MoreHorizontal className="size-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  run(() =>
+                                    db.moveScriptScene(projectId, scene.id, -1),
+                                  )
+                                }
+                              >
+                                <ArrowUp className="mr-2 size-4" />
+                                Mover escena arriba
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  run(() =>
+                                    db.moveScriptScene(projectId, scene.id, 1),
+                                  )
+                                }
+                              >
+                                <ArrowDown className="mr-2 size-4" />
+                                Mover escena abajo
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() =>
+                                  run(() => db.deleteScriptScene(scene.id))
+                                }
+                              >
+                                <Trash2 className="mr-2 size-4" />
+                                Eliminar escena
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <button
+                            type="button"
+                            aria-label="Desplegar detalles de la escena"
+                            onClick={() =>
+                              setOpenLineId(
+                                openLineId === "scene-details"
+                                  ? ""
+                                  : "scene-details",
+                              )
+                            }
+                            className="shrink-0 p-1"
+                          >
+                            <ChevronRight
+                              className={cn(
+                                "size-4 text-muted-foreground transition-transform",
+                                openLineId === "scene-details" && "rotate-90",
+                              )}
+                            />
+                          </button>
+                        </div>
                         {openLineId === "scene-details" && (
                           <div className="border-t bg-muted/10 px-4 pb-4 pt-4">
                             <SceneInspector
@@ -2051,9 +2160,63 @@ export function ScreenplayStudio({
                                   {line.text || "Línea vacía"}
                                 </p>
                               </div>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-7 shrink-0 text-muted-foreground"
+                                    onClick={(event) => event.stopPropagation()}
+                                  >
+                                    <MoreHorizontal className="size-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                  align="end"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      run(() =>
+                                        db.moveScriptLine(
+                                          line.scene_id,
+                                          line.id,
+                                          -1,
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    <ArrowUp className="mr-2 size-4" />
+                                    Mover arriba
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() =>
+                                      run(() =>
+                                        db.moveScriptLine(
+                                          line.scene_id,
+                                          line.id,
+                                          1,
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    <ArrowDown className="mr-2 size-4" />
+                                    Mover abajo
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="text-destructive"
+                                    onClick={() =>
+                                      run(() => db.deleteScriptLine(line.id))
+                                    }
+                                  >
+                                    <Trash2 className="mr-2 size-4" />
+                                    Eliminar línea
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                               <ChevronRight
                                 className={cn(
-                                  "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
+                                  "mt-1.5 size-4 shrink-0 text-muted-foreground transition-transform",
                                   open && "rotate-90",
                                 )}
                               />
@@ -2120,22 +2283,44 @@ export function ScreenplayStudio({
                         description="Añade diálogo, una acción, voz en off o un rótulo. Cada línea tendrá su propia dirección y timing."
                       />
                     )}
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      <Button variant="outline" onClick={() => addLine("dialogue")}>
-                        <Plus /> Diálogo
-                      </Button>
-                      <Button variant="outline" onClick={() => addLine("action")}>
-                        <Plus /> Acción
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => addLine("voiceover")}
-                      >
-                        <Plus /> Voz en off
-                      </Button>
-                      <Button variant="outline" onClick={() => addLine("caption")}>
-                        <Plus /> Rótulo
-                      </Button>
+                    <div className="pt-1">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm">
+                            <Plus className="size-3.5" /> Añadir línea
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                          <DropdownMenuItem onClick={() => addLine("dialogue")}>
+                            <span
+                              className="mr-2 size-2 rounded-full"
+                              style={{ backgroundColor: CHARACTER_PALETTE[0].hex }}
+                            />
+                            Diálogo
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => addLine("voiceover")}>
+                            <span
+                              className="mr-2 size-2 rounded-full"
+                              style={{ backgroundColor: CHARACTER_PALETTE[2].hex }}
+                            />
+                            Voz en off
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => addLine("action")}>
+                            <span
+                              className="mr-2 size-2 rounded-full"
+                              style={{ backgroundColor: NEUTRAL_ACCENT.hex }}
+                            />
+                            Acción
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => addLine("caption")}>
+                            <span
+                              className="mr-2 size-2 rounded-full"
+                              style={{ backgroundColor: CHARACTER_PALETTE[1].hex }}
+                            />
+                            Rótulo
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
                 </div>
