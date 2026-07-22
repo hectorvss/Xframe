@@ -2247,7 +2247,7 @@ export function ScreenplayStudio({
                 {loading ? (
                   <ProductionListSkeleton />
                 ) : (
-                  <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+                  <ScrollArea className="min-h-0 flex-1 px-3 pb-3 pt-2">
                     <div className="space-y-1.5">
                       {data.scenes.map((item, index) => {
                         const count = data.lines.filter(
@@ -2306,7 +2306,7 @@ export function ScreenplayStudio({
                     </div>
                   </ScrollArea>
                 )}
-                <div className="border-t p-2.5">
+                <div className="px-3 pb-3">
                   <button
                     type="button"
                     onClick={() =>
