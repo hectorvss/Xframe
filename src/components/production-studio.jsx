@@ -5056,6 +5056,12 @@ export function AudioStudio({
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
         <header className="flex h-12 shrink-0 items-center gap-3 px-4">
+          <SidebarToggle
+            side="left"
+            expanded={audioLibraryVisible}
+            onChange={setAudioLibraryVisible}
+            label="biblioteca de sonido"
+          />
           <div className="ml-auto flex items-center gap-3">
             {providerStatus && (
               <div className="hidden items-center gap-1.5 xl:flex">
@@ -5120,24 +5126,6 @@ export function AudioStudio({
                 : "overflow-visible",
             )}
           >
-            <div
-              className={cn(
-                "flex shrink-0 items-center",
-                audioLibraryVisible
-                  ? "h-14 justify-between border-b px-3"
-                  : "absolute left-2 top-5 z-20",
-              )}
-            >
-              {audioLibraryVisible && (
-                <span className="text-xs font-semibold">SONIDO</span>
-              )}
-              <SidebarToggle
-                side="left"
-                expanded={audioLibraryVisible}
-                onChange={setAudioLibraryVisible}
-                label="biblioteca de sonido"
-              />
-            </div>
             {audioLibraryVisible && (
               loading ? <ProductionListSkeleton rows={6} /> : <Tabs
                 value={libraryTab}
