@@ -1427,54 +1427,177 @@ function nearestStep(value, steps) {
 
 // Opciones avanzadas de una línea: solo deslizables de interpretación. Personaje, escena
 // y assets se manejan como etiquetas en la propia tarjeta.
+// Copiado tal cual del compositor de generación (SettingsSlider de main.jsx): el
+// deslizable con pomo que se arrastra, el mismo de Aspecto/Resolución/Duración.
+function SettingsSlider({ label, value, options, onChange }) {
+  const trackRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+  const i = Math.max(0, options.indexOf(value));
+  const last = options.length - 1;
+  const pct = last ? (i / last) * 100 : 0;
+
+  const pick = (clientX) => {
+    const r = trackRef.current.getBoundingClientRect();
+    const t = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    const next = options[Math.round(t * last)];
+    if (next !== value) onChange(next);
+  };
+  const start = (e) => {
+    e.preventDefault();
+    setDragging(true);
+    pick(e.clientX);
+    const move = (ev) => pick(ev.clientX);
+    const up = () => {
+      setDragging(false);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.removeProperty("user-select");
+    };
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const step = (d) => {
+    const n = Math.min(last, Math.max(0, i + d));
+    if (n !== i) onChange(options[n]);
+  };
+
+  return (
+    <div className="px-2 py-1.5">
+      <div className="flex items-baseline justify-between gap-3 text-xs">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="truncate font-medium">{value}</span>
+      </div>
+      <div
+        ref={trackRef}
+        role="slider"
+        tabIndex={0}
+        aria-label={label}
+        aria-valuetext={value}
+        aria-valuemin={0}
+        aria-valuemax={last}
+        aria-valuenow={i}
+        onPointerDown={start}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") (e.preventDefault(), step(-1));
+          if (e.key === "ArrowRight") (e.preventDefault(), step(1));
+        }}
+        className="relative mt-2 flex h-7 cursor-pointer touch-none items-center rounded-full bg-muted px-1 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        <div
+          className={cn(
+            "pointer-events-none absolute left-1 top-1 h-5 w-9 rounded-full bg-background shadow-sm",
+            !dragging && "transition-[left] duration-300 ease-out",
+          )}
+          style={{ left: `calc(0.25rem + ${pct}% - ${(pct / 100) * 2.25}rem)` }}
+        />
+        <div className="pointer-events-none relative flex w-full justify-between px-3">
+          {options.map((o, n) => (
+            <span
+              key={o}
+              title={o}
+              className={cn(
+                "size-1 rounded-full transition-colors",
+                n === i ? "bg-transparent" : "bg-muted-foreground/35",
+              )}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Opciones de los deslizables de una línea, como texto (igual que las de generación).
+const INTENSITY_OPTS = ["Muy baja", "Baja", "Media", "Alta", "Máxima"];
+const PACE_OPTS = ["0.5×", "0.75×", "1×", "1.25×", "1.5×", "2×"];
+const PACE_VALUES = [0.5, 0.75, 1, 1.25, 1.5, 2];
+const EMOTION_OPTS = ["Calmado", "Neutral", "Cálido", "Alegre", "Tenso", "Épico"];
+const VOLUME_OPTS = ["0%", "25%", "50%", "75%", "100%"];
+const VOLUME_VALUES = [0, 0.25, 0.5, 0.75, 1];
+
+function nearestIndex(value, values) {
+  const num = Number(value);
+  let best = 0;
+  let diff = Infinity;
+  for (let i = 0; i < values.length; i += 1) {
+    const d = Math.abs(values[i] - num);
+    if (d < diff) {
+      diff = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+// Opciones avanzadas de una línea: solo los deslizables de interpretación, con el mismo
+// componente exacto que la hoja de generación.
 function LineInspector({ line, run, onSeedChat, onSendAgent }) {
   if (!line) return null;
   const update = (patch) => run(() => db.updateScriptLine(line.id, patch));
   const volume = Number(line.metadata?.volume ?? 0.75);
+  const emotionValue =
+    EMOTION_OPTS.find(
+      (option) =>
+        option.toLowerCase() === String(line.emotion || "").toLowerCase(),
+    ) || "Neutral";
   const speaks = ["dialogue", "voiceover"].includes(line.line_type);
   return (
-    <div className="space-y-5">
-      <SegSlider
+    <div className="space-y-1">
+      <SettingsSlider
         label="Intensidad"
-        value={nearestStep(line.intensity ?? 0.5, INTENSITY_STEPS)}
-        options={INTENSITY_STEPS}
-        onChange={(intensity) => update({ intensity })}
+        value={
+          INTENSITY_OPTS[
+            Math.round(
+              Math.min(1, Math.max(0, Number(line.intensity ?? 0.5))) * 4,
+            )
+          ]
+        }
+        options={INTENSITY_OPTS}
+        onChange={(v) => update({ intensity: INTENSITY_OPTS.indexOf(v) / 4 })}
       />
-      <SegSlider
+      <SettingsSlider
         label="Velocidad"
-        value={nearestStep(line.pace ?? 1, PACE_STEPS)}
-        options={PACE_STEPS}
-        onChange={(pace) => update({ pace })}
+        value={PACE_OPTS[nearestIndex(line.pace ?? 1, PACE_VALUES)]}
+        options={PACE_OPTS}
+        onChange={(v) => update({ pace: PACE_VALUES[PACE_OPTS.indexOf(v)] })}
       />
-      <SegSlider
+      <SettingsSlider
         label="Sentimiento"
-        value={line.emotion || "neutral"}
-        options={EMOTION_STEPS}
-        onChange={(emotion) => update({ emotion })}
+        value={emotionValue}
+        options={EMOTION_OPTS}
+        onChange={(v) => update({ emotion: v })}
       />
-      <SegSlider
+      <SettingsSlider
         label="Volumen"
-        value={nearestStep(volume, VOLUME_STEPS)}
-        options={VOLUME_STEPS}
-        onChange={(value) =>
-          update({ metadata: { ...(line.metadata || {}), volume: value } })
+        value={VOLUME_OPTS[nearestIndex(volume, VOLUME_VALUES)]}
+        options={VOLUME_OPTS}
+        onChange={(v) =>
+          update({
+            metadata: {
+              ...(line.metadata || {}),
+              volume: VOLUME_VALUES[VOLUME_OPTS.indexOf(v)],
+            },
+          })
         }
       />
       {speaks && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full"
-          onClick={() =>
-            (onSendAgent || onSeedChat)?.(
-              `Genera y guarda como asset una toma de audio para la línea de guion ${line.id}. ` +
-                `Usa exactamente su texto, personaje, sentimiento, intensidad, velocidad y volumen, y sus etiquetas @ como referencias. ` +
-                `Vincúlala a la línea y colócala en el plan de audio respetando su timing. Estima créditos antes de generar.`,
-            )
-          }
-        >
-          <Mic2 /> Generar toma de voz
-        </Button>
+        <div className="px-2 pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() =>
+              (onSendAgent || onSeedChat)?.(
+                `Genera y guarda como asset una toma de audio para la línea de guion ${line.id}. ` +
+                  `Usa exactamente su texto, personaje, sentimiento, intensidad, velocidad y volumen, y sus etiquetas @ como referencias. ` +
+                  `Vincúlala a la línea y colócala en el plan de audio respetando su timing. Estima créditos antes de generar.`,
+              )
+            }
+          >
+            <Mic2 /> Generar toma de voz
+          </Button>
+        </div>
       )}
     </div>
   );
@@ -2119,110 +2242,6 @@ export function ScreenplayStudio({
                 <div>
                   <div className="space-y-3 p-5">
                     <div className="space-y-1.5">
-                      <div className="overflow-hidden rounded-xl border">
-                        <div className="flex items-center gap-1 px-3 py-2.5">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setOpenLineId(
-                                openLineId === "scene-details"
-                                  ? ""
-                                  : "scene-details",
-                              )
-                            }
-                            className="flex min-w-0 flex-1 flex-col text-left"
-                          >
-                            <span className="truncate text-sm font-semibold">
-                              {scene.title || "Nueva escena"}
-                            </span>
-                            <span className="truncate text-[11px] text-muted-foreground">
-                              Escena · {linesByScene.length}{" "}
-                              {linesByScene.length === 1 ? "línea" : "líneas"}
-                              {scene.setting ? ` · ${scene.setting}` : ""}
-                            </span>
-                          </button>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="size-7 shrink-0"
-                              >
-                                <MoreHorizontal className="size-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                onClick={() =>
-                                  run(() =>
-                                    db.moveScriptScene(projectId, scene.id, -1),
-                                  )
-                                }
-                              >
-                                <ArrowUp className="mr-2 size-4" />
-                                Mover escena arriba
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() =>
-                                  run(() =>
-                                    db.moveScriptScene(projectId, scene.id, 1),
-                                  )
-                                }
-                              >
-                                <ArrowDown className="mr-2 size-4" />
-                                Mover escena abajo
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={() =>
-                                  run(() => db.deleteScriptScene(scene.id))
-                                }
-                              >
-                                <Trash2 className="mr-2 size-4" />
-                                Eliminar escena
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                          <button
-                            type="button"
-                            aria-label="Desplegar detalles de la escena"
-                            onClick={() =>
-                              setOpenLineId(
-                                openLineId === "scene-details"
-                                  ? ""
-                                  : "scene-details",
-                              )
-                            }
-                            className="shrink-0 p-1"
-                          >
-                            <ChevronRight
-                              className={cn(
-                                "size-4 text-muted-foreground transition-transform",
-                                openLineId === "scene-details" && "rotate-90",
-                              )}
-                            />
-                          </button>
-                        </div>
-                        {openLineId === "scene-details" && (
-                          <div className="border-t bg-muted/10 px-4 pb-4 pt-4">
-                            <SceneInspector
-                              projectId={projectId}
-                              scene={scene}
-                              characters={characters}
-                              voices={data.voices}
-                              assignments={data.characterVoices}
-                              assets={assets}
-                              links={data.assetLinks}
-                              manifests={data.productionManifests}
-                              sceneShots={data.sceneShots}
-                              shots={data.shots}
-                              run={run}
-                              onSeedChat={onSeedChat}
-                              onSendAgent={onSendAgent}
-                            />
-                          </div>
-                        )}
-                      </div>
                       {linesByScene.map((line, index) => {
                         const [label] =
                           lineMeta[line.line_type] || lineMeta.dialogue;
