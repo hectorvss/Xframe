@@ -100,6 +100,160 @@ async def test_elevenlabs_speech_to_speech_uploads_reference_and_targets_voice()
     assert status.output_urls[0].startswith("data:audio/mpeg;base64,")
 
 
+async def test_speech_to_speech_end_to_end_from_tool_to_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: la tool generate_audio construye la petición desde una línea del
+    guion con voz asignada + un asset de audio de referencia, y esa MISMA petición pasa
+    por el adaptador real de ElevenLabs, que hace la conversión de voz (speech-to-speech).
+    Se comprueban los dos empalmes: lo que la tool mete en `extra` y lo que el proveedor
+    recibe en el multipart.
+    """
+    from tests.test_tools import FakeDB, make_ctx, make_model, make_snapshot
+
+    import app.jobs.queue as queue_mod
+    import app.jobs.resume as resume_mod
+    import app.providers.registry as registry_mod
+    import app.tools.generation as generation_mod
+    from app.tools.generation import GenerateAudioTool
+
+    scene_id = "55555555-5555-5555-5555-555555555555"
+    line_id = "66666666-6666-6666-6666-666666666666"
+    ref_asset_id = "77777777-7777-7777-7777-777777777777"
+    source = "data:audio/mpeg;base64," + base64.b64encode(b"original-take").decode()
+
+    fake_db = FakeDB(
+        {
+            "from public.script_lines": [
+                {
+                    "id": line_id,
+                    "scene_id": scene_id,
+                    "shot_id": None,
+                    "text": "Esta frase la dijo otra voz.",
+                    "target_duration_ms": 3000,
+                    "emotion": None,
+                    "direction": None,
+                    "voice_profile_id": "voice-profile-1",
+                    "provider_voice_id": "voice-target",
+                    "settings": {"stability": 0.4},
+                }
+            ],
+            "from public.assets": {
+                "id": ref_asset_id,
+                "name": "Take original",
+                "type": "audio",
+                "url": source,
+                "status": "ready",
+                "shot_id": None,
+                "params": {"duration_s": 3},
+            },
+            "from public.script_scenes": {"id": scene_id, "timeline_start_ms": 0},
+        }
+    )
+    monkeypatch.setattr(generation_mod, "db", fake_db, raising=False)
+
+    # El adaptador real de ElevenLabs, con transporte simulado, hace de cotizador Y de
+    # destino de la generación: la misma instancia recorre todo el camino.
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["content_type"] = request.headers.get("content-type", "")
+        captured["body"] = request.content
+        return httpx.Response(200, content=b"ID3revoiced", headers={"content-type": "audio/mpeg"})
+
+    get_settings.cache_clear()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = ElevenLabsAdapter(client)
+
+    spec = ModelSpec(
+        id="eleven-multilingual-v2",
+        family="ElevenLabs",
+        provider="elevenlabs",
+        modality="audio",
+        cost_per_second=Decimal("0.10"),
+    )
+
+    class _Registry:
+        async def resolve(self, model_id: str) -> tuple[Any, ModelSpec]:
+            return adapter, spec
+
+    monkeypatch.setattr(registry_mod, "get_registry", lambda: _Registry())
+
+    enqueued: dict = {}
+
+    async def fake_enqueue(request, *, project_id, shot_id=None, adapter, conversation_id=None):
+        enqueued["request"] = request
+        return EnqueueResult(
+            job_id="job-sts-1",
+            status="queued",
+            idempotency_key="key-sts-1",
+            credits_reserved=1,
+            reused=False,
+        )
+
+    async def fake_mark_awaiting(**_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(queue_mod, "enqueue", fake_enqueue)
+    monkeypatch.setattr(resume_mod, "mark_awaiting", fake_mark_awaiting)
+
+    snap = make_snapshot(models=[make_model("eleven-multilingual-v2", "audio")])
+    tool = await GenerateAudioTool.create(make_ctx("production"), snap)
+    assert tool is not None
+
+    content, payload = await tool._arun_impl(
+        kind="voice",
+        model_id="eleven-multilingual-v2",
+        script_line_ids=[line_id],
+        reference_asset_id=ref_asset_id,
+    )
+
+    # (A) La tool tradujo "usa este audio" a los campos de speech-to-speech.
+    request = enqueued["request"]
+    assert request.extra["speech_to_speech"] is True
+    assert request.extra["source_audio_url"] == source
+    assert request.extra["voice_id"] == "voice-target"
+    assert payload["job_id"] == "job-sts-1"
+
+    # (B) Esa misma petición, por el adaptador real, hace la conversión de voz.
+    ref = await adapter.submit(request)
+    status = await adapter.poll(ref)
+    await client.aclose()
+
+    assert captured["path"] == "/v1/speech-to-speech/voice-target"
+    assert captured["content_type"].startswith("multipart/form-data")
+    assert b"eleven_multilingual_sts_v2" in captured["body"]
+    assert b"original-take" in captured["body"]
+    assert status.state == "succeeded"
+    assert status.output_urls[0].startswith("data:audio/mpeg;base64,")
+
+
+async def test_generate_audio_rejects_reference_for_non_voice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un audio de referencia en música/SFX/ambiente se rechaza con un mensaje claro:
+    el proveedor solo hace texto->sonido ahí, no audio-a-audio."""
+    from tests.test_tools import FakeDB, make_ctx, make_model, make_snapshot
+
+    import app.tools.generation as generation_mod
+    from app.tools.errors import XframeToolRetryableError
+    from app.tools.generation import GenerateAudioTool
+
+    monkeypatch.setattr(generation_mod, "db", FakeDB({}), raising=False)
+    snap = make_snapshot(models=[make_model("eleven-sfx-v2", "audio")])
+    tool = await GenerateAudioTool.create(make_ctx("production"), snap)
+    assert tool is not None
+
+    with pytest.raises(XframeToolRetryableError, match="only applies to kind='voice'"):
+        await tool._arun_impl(
+            kind="sfx",
+            model_id="eleven-sfx-v2",
+            prompt="lluvia sobre metal",
+            reference_asset_id="77777777-7777-7777-7777-777777777777",
+        )
+
+
 async def test_sync_labs_sends_explicit_segment_face_mapping() -> None:
     captured: dict = {}
 
