@@ -141,6 +141,29 @@ that happens to have been generated last.
 """.strip()
 
 
+CANVAS_GRAPH_TEMPLATE = """
+<canvas_graph>
+The free-form layer of the canvas that is NOT the shot list: concept notes, reference
+material and the connections the user drew between them. This is the project's INTENT
+map — the thinking around the shots, not the shots themselves. Read it to understand
+what the user is trying to say before you touch anything.
+
+A <node> is an idea, a mood, a reference the user placed. A <link from=… to=…> is a
+directed arrow: `from` feeds or governs `to`. Arrows are the whole point — they turn a
+pile of notes into a structure. Follow them: a concept linked to several shots is a
+directive over all of them; a reference linked to a shot is the look that shot must
+match. When you design or extend the canvas, honour this graph and keep it coherent —
+place new nodes near what they relate to, and connect them so the intent stays legible.
+<nodes>
+{nodes}
+</nodes>
+<links>
+{links}
+</links>
+</canvas_graph>
+""".strip()
+
+
 ELEMENTS_TEMPLATE = """
 <elements>
 Characters, locations and props of this project. Reference them by their mention handle

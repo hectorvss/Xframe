@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app import db
 from app.taxonomy.builder import SnapshotTool
@@ -13,14 +13,27 @@ from app.tools.errors import XframeToolRetryableError
 
 ALL_MODES: tuple[str, ...] = ("preproduction", "production", "edit")
 
+# Convención de coordenadas del lienzo, para que el agente maquete con sentido en vez
+# de amontonar todo en (0,0). Coincide con el layout del frontend (src/main.jsx): un
+# nodo ocupa ~250×120 px, así que ~300 px separan columnas y ~200 px separan filas.
+# Guía sugerida: conceptos/referencias arriba-izquierda (x 40-320), y los planos
+# fluyendo en fila hacia la derecha (x 400, 620, 840… en y ~480).
+_XY_HINT = (
+    "Canvas coordinate in pixels. Lay the canvas out so it reads: a node is ~250x120 px, "
+    "so leave ~300px between columns and ~200px between rows. Put concepts and references "
+    "top-left (x 40-320, y 80-360) and let shots flow left-to-right (x 400, 620, 840…, "
+    "y ~480). Place a new node NEXT TO what it relates to and never stack two at the same "
+    "spot."
+)
+
 
 class CreateCanvasNodeArgs(BaseModel):
     node_type: Literal["concept", "reference"] = "concept"
     title: str
     text: str = ""
     asset_id: str | None = None
-    x: float = 0
-    y: float = 0
+    x: float = Field(0, description=_XY_HINT)
+    y: float = Field(0, description=_XY_HINT)
 
 
 class CreateCanvasNodeTool(SnapshotTool):

@@ -46,6 +46,8 @@ from app.context.types import (
     AssetContext,
     BriefBlock,
     CameraSpec,
+    CanvasLink,
+    CanvasNode,
     ElementContext,
     GenSettings,
     Guidance,
@@ -347,6 +349,47 @@ def _format_timeline(
             shots="\n".join(body),
         ),
         len(shown),
+    )
+
+
+def _format_canvas_graph(
+    nodes: Sequence[CanvasNode], links: Sequence[CanvasLink], detail: ContextDetail
+) -> str:
+    """
+    El lienzo como grafo: los nodos libres y las conexiones, en texto legible.
+
+    No es la timeline (esos son los planos, con su orden narrativo aparte). Esto es la
+    capa de INTENCIÓN que el usuario dibuja alrededor: conceptos, referencias y flechas
+    que dicen qué gobierna a qué. Se sirve aunque no haya planos todavía — a menudo el
+    lienzo es lo primero que existe, el mapa mental antes del rodaje.
+    """
+    if not nodes and not links:
+        return ""
+
+    node_limit = 24 if detail is ContextDetail.FULL else 10
+    body_len = 240 if detail is ContextDetail.FULL else 80
+
+    node_lines: list[str] = []
+    for n in nodes[:node_limit]:
+        asset = f' asset="{_attr(n.asset_name)}"' if n.asset_name else ""
+        text = n.text.strip()[:body_len]
+        title = _attr(n.title.strip() or n.kind)
+        inner = _body(text) if text else ""
+        node_lines.append(f'<node kind="{_attr(n.kind)}" title="{title}"{asset}>{inner}</node>')
+    if len(nodes) > node_limit:
+        node_lines.append(_truncation(len(nodes) - node_limit, "nodos del lienzo"))
+
+    link_lines = [
+        f'<link from="{_attr(l.from_label)}" to="{_attr(l.to_label)}" '
+        f'from_kind="{_attr(l.from_kind)}" to_kind="{_attr(l.to_kind)}"/>'
+        for l in links[:40]
+    ]
+    if len(links) > 40:
+        link_lines.append(_truncation(len(links) - 40, "conexiones"))
+
+    return P.CANVAS_GRAPH_TEMPLATE.format(
+        nodes="\n".join(node_lines) or "<node/>",
+        links="\n".join(link_lines) or "",
     )
 
 
@@ -861,6 +904,11 @@ def _render(
     if ctx.timeline:
         timeline_xml, shots_shown = _format_timeline(ctx.timeline, detail, shots_limit)
         sections.append(timeline_xml)
+
+    # El grafo del lienzo va JUNTO a la timeline: planos y la intención dibujada a su
+    # alrededor son la misma superficie, y separarlos rompería la lectura del canvas.
+    if canvas_xml := _format_canvas_graph(ctx.canvas_nodes, ctx.canvas_links, detail):
+        sections.append(canvas_xml)
 
     if elements_xml := _format_elements(ctx.elements, detail):
         sections.append(elements_xml)
