@@ -45,12 +45,6 @@ import {
   Zap,
 } from "lucide-react";
 
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1286,6 +1280,17 @@ const CHARACTER_PALETTE = [
 ];
 const NEUTRAL_ACCENT = { hex: "#a1a1aa", text: "text-muted-foreground", tint: "bg-muted" };
 
+// Estado de una línea como un punto de color discreto, en vez de la palabra suelta que
+// añadía ruido sin jerarquía.
+const STATUS_HEX = {
+  draft: "#a1a1aa",
+  ready: "#10b981",
+  approved: "#10b981",
+  generating: "#f59e0b",
+  review: "#0ea5e9",
+  failed: "#ef4444",
+};
+
 function characterColor(id) {
   const source = String(id ?? "");
   let hash = 0;
@@ -1516,6 +1521,8 @@ export function ScreenplayStudio({
   );
   const [leftTab, setLeftTab] = useState("scenes");
   const [openLineId, setOpenLineId] = useState("");
+  const [overLineId, setOverLineId] = useState(null);
+  const dragLineId = useRef(null);
   // Tomas de voz de la escena actual, en orden de línea: es lo que reproduce la barra de
   // play del guion (solo voces, sin música ni efectos).
   const speechTracks = useMemo(() => {
@@ -1574,6 +1581,25 @@ export function ScreenplayStudio({
       `Convierte este texto en el guion estructurado y editable del proyecto. Separa escenas, acciones, diálogo, voz en off y rótulos; conserva literalmente el copy aprobado y añade emoción, ritmo, pausas y duración objetivo. No generes audio todavía.\n\n${draft.trim()}`,
     );
     setDraft("");
+  };
+  // Soltar una línea sobre otra la mueve hasta esa posición desplazando el resto. El
+  // backend solo sabe intercambiar con el vecino, así que se encadenan pasos adyacentes
+  // dentro de un único run() (una sola recarga).
+  const dropLineOn = (targetIndex) => {
+    const draggedId = dragLineId.current;
+    dragLineId.current = null;
+    setOverLineId(null);
+    if (!draggedId || !scene) return;
+    const from = linesByScene.findIndex(
+      (line) => String(line.id) === draggedId,
+    );
+    if (from < 0 || from === targetIndex) return;
+    const step = targetIndex > from ? 1 : -1;
+    const steps = Math.abs(targetIndex - from);
+    run(async () => {
+      for (let i = 0; i < steps; i += 1)
+        await db.moveScriptLine(scene.id, draggedId, step);
+    });
   };
 
   return (
@@ -1867,39 +1893,50 @@ export function ScreenplayStudio({
                     </div>
                   </div>
                   <div className="space-y-3 p-5">
-                    <Accordion
-                      type="single"
-                      collapsible
-                      value={openLineId}
-                      onValueChange={setOpenLineId}
-                      className="space-y-2"
-                    >
-                      <AccordionItem
-                        value="scene-details"
-                        className="overflow-hidden rounded-xl border data-[state=open]:shadow-lg"
-                      >
-                        <AccordionTrigger className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:no-underline">
-                          Detalles de la escena
-                        </AccordionTrigger>
-                        <AccordionContent className="border-t bg-muted/10 px-4 pb-4 pt-4">
-                          <SceneInspector
-                            projectId={projectId}
-                            scene={scene}
-                            characters={characters}
-                            voices={data.voices}
-                            assignments={data.characterVoices}
-                            assets={assets}
-                            links={data.assetLinks}
-                            manifests={data.productionManifests}
-                            sceneShots={data.sceneShots}
-                            shots={data.shots}
-                            run={run}
-                            onSeedChat={onSeedChat}
-                            onSendAgent={onSendAgent}
+                    <div className="space-y-1.5">
+                      <div className="overflow-hidden rounded-xl border">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOpenLineId(
+                              openLineId === "scene-details"
+                                ? ""
+                                : "scene-details",
+                            )
+                          }
+                          className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-accent/40"
+                        >
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Detalles de la escena
+                          </span>
+                          <ChevronRight
+                            className={cn(
+                              "ml-auto size-4 text-muted-foreground transition-transform",
+                              openLineId === "scene-details" && "rotate-90",
+                            )}
                           />
-                        </AccordionContent>
-                      </AccordionItem>
-                      {linesByScene.map((line) => {
+                        </button>
+                        {openLineId === "scene-details" && (
+                          <div className="border-t bg-muted/10 px-4 pb-4 pt-4">
+                            <SceneInspector
+                              projectId={projectId}
+                              scene={scene}
+                              characters={characters}
+                              voices={data.voices}
+                              assignments={data.characterVoices}
+                              assets={assets}
+                              links={data.assetLinks}
+                              manifests={data.productionManifests}
+                              sceneShots={data.sceneShots}
+                              shots={data.shots}
+                              run={run}
+                              onSeedChat={onSeedChat}
+                              onSendAgent={onSendAgent}
+                            />
+                          </div>
+                        )}
+                      </div>
+                      {linesByScene.map((line, index) => {
                         const [label] =
                           lineMeta[line.line_type] || lineMeta.dialogue;
                         const speaker = characters.find(
@@ -1914,120 +1951,168 @@ export function ScreenplayStudio({
                         const speakerName =
                           speaker?.name ||
                           (line.line_type === "voiceover" ? "Narrador" : null);
+                        const open = openLineId === String(line.id);
+                        const isDropTarget =
+                          overLineId === String(line.id) &&
+                          dragLineId.current &&
+                          dragLineId.current !== String(line.id);
                         return (
-                          <AccordionItem
+                          <div
                             key={line.id}
-                            value={String(line.id)}
+                            onDragOver={(event) => {
+                              if (!dragLineId.current) return;
+                              event.preventDefault();
+                              if (overLineId !== String(line.id))
+                                setOverLineId(String(line.id));
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              dropLineOn(index);
+                            }}
                             className={cn(
-                              "overflow-hidden rounded-xl border transition-shadow data-[state=open]:bg-card data-[state=open]:shadow-lg",
-                              openLineId === String(line.id)
-                                ? ""
+                              "rounded-xl border transition-shadow",
+                              open
+                                ? "border-border bg-card shadow-lg"
                                 : "border-transparent hover:border-border hover:bg-accent/30",
+                              isDropTarget &&
+                                "border-primary/60 ring-2 ring-primary/40",
                             )}
                           >
-                            <AccordionTrigger className="gap-3 px-3 py-2.5 hover:no-underline">
+                            <div
+                              draggable
+                              onDragStart={(event) => {
+                                dragLineId.current = String(line.id);
+                                event.dataTransfer.effectAllowed = "move";
+                              }}
+                              onDragEnd={() => {
+                                dragLineId.current = null;
+                                setOverLineId(null);
+                              }}
+                              onClick={() =>
+                                setOpenLineId(open ? "" : String(line.id))
+                              }
+                              className="flex cursor-pointer items-start gap-2 px-2.5 py-2.5"
+                            >
+                              <GripVertical
+                                className="mt-0.5 size-4 shrink-0 cursor-grab text-muted-foreground/40 active:cursor-grabbing"
+                                onClick={(event) => event.stopPropagation()}
+                              />
                               <span
-                                className="w-1 shrink-0 self-stretch rounded-full"
+                                className="mt-1 w-1 shrink-0 self-stretch rounded-full"
                                 style={{ backgroundColor: accent.hex }}
                               />
-                              <span className="flex min-w-0 flex-1 flex-col gap-1 text-left">
-                                <span className="flex flex-wrap items-center gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
                                   {speakerName && (
                                     <span
-                                      className={cn(
-                                        "inline-flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-2 text-xs font-semibold",
-                                        accent.tint,
-                                        accent.text,
-                                      )}
+                                      className="text-[11px] font-semibold"
+                                      style={{ color: accent.hex }}
                                     >
-                                      <span
-                                        className="size-3.5 rounded"
-                                        style={{ backgroundColor: accent.hex }}
-                                      />
                                       {speakerName}
                                     </span>
                                   )}
-                                  <span className="rounded border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">
                                     {label}
                                   </span>
-                                </span>
-                                <span className="truncate text-sm text-foreground">
-                                  {line.text || (
-                                    <span className="italic text-muted-foreground">
-                                      Línea vacía
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                                  {referenceCount > 0 && (
-                                    <span className="inline-flex items-center gap-1">
-                                      <Bookmark className="size-3" />
-                                      {referenceCount}{" "}
-                                      {referenceCount === 1 ? "ref" : "refs"}
-                                    </span>
-                                  )}
-                                  <span>
-                                    {line.target_duration_ms
-                                      ? `${(line.target_duration_ms / 1000).toFixed(1)} s`
-                                      : "Auto"}
+                                  <span className="ml-auto flex items-center gap-2.5 text-[10px] text-muted-foreground/70">
+                                    {referenceCount > 0 && (
+                                      <span className="inline-flex items-center gap-1">
+                                        <Bookmark className="size-3" />
+                                        {referenceCount}
+                                      </span>
+                                    )}
+                                    {line.target_duration_ms ? (
+                                      <span className="tabular-nums">
+                                        {(line.target_duration_ms / 1000).toFixed(
+                                          1,
+                                        )}
+                                        s
+                                      </span>
+                                    ) : null}
+                                    <span
+                                      className="size-1.5 rounded-full"
+                                      style={{
+                                        backgroundColor:
+                                          STATUS_HEX[line.status] ||
+                                          STATUS_HEX.draft,
+                                      }}
+                                      title={line.status}
+                                    />
                                   </span>
-                                  <span>{line.status}</span>
-                                </span>
-                              </span>
-                            </AccordionTrigger>
-                            <AccordionContent className="border-t bg-muted/10 px-4 pb-4 pt-4">
-                              <div className="space-y-4">
-                                <Field label="Texto de la línea">
-                                  <DraftInput
-                                    multiline
-                                    className="min-h-16"
-                                    value={line.text}
-                                    onCommit={(text) =>
+                                </div>
+                                <p
+                                  className={cn(
+                                    "mt-1 truncate text-[15px] font-medium leading-snug",
+                                    line.text
+                                      ? "text-foreground"
+                                      : "italic text-muted-foreground/70",
+                                  )}
+                                >
+                                  {line.text || "Línea vacía"}
+                                </p>
+                              </div>
+                              <ChevronRight
+                                className={cn(
+                                  "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
+                                  open && "rotate-90",
+                                )}
+                              />
+                            </div>
+                            {open && (
+                              <div className="border-t bg-muted/10 px-4 pb-4 pt-4">
+                                <div className="space-y-4">
+                                  <Field label="Texto de la línea">
+                                    <DraftInput
+                                      multiline
+                                      className="min-h-16"
+                                      value={line.text}
+                                      onCommit={(text) =>
+                                        run(() =>
+                                          db.updateScriptLine(line.id, { text }),
+                                        )
+                                      }
+                                      placeholder="Escribe la línea…"
+                                    />
+                                  </Field>
+                                  <LineInspector
+                                    projectId={projectId}
+                                    line={line}
+                                    assets={assets}
+                                    links={data.assetLinks}
+                                    characters={characters}
+                                    voices={data.voices}
+                                    run={run}
+                                    onSeedChat={onSeedChat}
+                                    onSendAgent={onSendAgent}
+                                    onDelete={() =>
+                                      run(() => db.deleteScriptLine(line.id))
+                                    }
+                                    onMoveUp={() =>
                                       run(() =>
-                                        db.updateScriptLine(line.id, { text }),
+                                        db.moveScriptLine(
+                                          line.scene_id,
+                                          line.id,
+                                          -1,
+                                        ),
                                       )
                                     }
-                                    placeholder="Escribe la línea…"
+                                    onMoveDown={() =>
+                                      run(() =>
+                                        db.moveScriptLine(
+                                          line.scene_id,
+                                          line.id,
+                                          1,
+                                        ),
+                                      )
+                                    }
                                   />
-                                </Field>
-                                <LineInspector
-                                  projectId={projectId}
-                                  line={line}
-                                  assets={assets}
-                                  links={data.assetLinks}
-                                  characters={characters}
-                                  voices={data.voices}
-                                  run={run}
-                                  onSeedChat={onSeedChat}
-                                  onSendAgent={onSendAgent}
-                                  onDelete={() =>
-                                    run(() => db.deleteScriptLine(line.id))
-                                  }
-                                  onMoveUp={() =>
-                                    run(() =>
-                                      db.moveScriptLine(
-                                        line.scene_id,
-                                        line.id,
-                                        -1,
-                                      ),
-                                    )
-                                  }
-                                  onMoveDown={() =>
-                                    run(() =>
-                                      db.moveScriptLine(
-                                        line.scene_id,
-                                        line.id,
-                                        1,
-                                      ),
-                                    )
-                                  }
-                                />
+                                </div>
                               </div>
-                            </AccordionContent>
-                          </AccordionItem>
+                            )}
+                          </div>
                         );
                       })}
-                    </Accordion>
+                    </div>
                     {!linesByScene.length && (
                       <EmptyState
                         icon={MessageSquareText}
