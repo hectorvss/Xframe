@@ -5680,6 +5680,13 @@ const elementRoles = ["Personaje", "Localización", "Objeto"];
  * - Comentar: fija un punto y escribe; al enviar, el prompt va DIRECTO al agente.
  */
 function AssetStage({ asset, isVideo, isAudio, onReferenceInChat, onSendToChat }) {
+  // Un render es una imagen/vídeo plano: no hay CAPAS de componentes ni de texto que
+  // seleccionar por separado. Esas dos herramientas solo cobran sentido cuando el asset
+  // se compone de elementos añadidos (marketing/demos, aún por construir), así que hoy
+  // quedan deshabilitadas — nada de cajas fantasma sobre píxeles que no son un
+  // componente. Anotación y comentario sí operan siempre: marcan la imagen tal cual.
+  const hasComponents = false; // TODO: true cuando existan componentes renderizados
+  const hasTextLayers = false; // TODO: true cuando existan capas de texto editables
   const [tool, setTool] = useState(null); // null | select | text | annotate | comment
   const [box, setBox] = useState(null); // {x,y,w,h} normalizado
   const [point, setPoint] = useState(null); // {x,y} normalizado
@@ -5719,7 +5726,8 @@ function AssetStage({ asset, isVideo, isAudio, onReferenceInChat, onSendToChat }
   // -- interacción sobre el medio --------------------------------------- //
   const onDown = (e) => {
     if (tool === "select") {
-      if (isVideo) return; // sin selección de componentes en vídeo (todavía)
+      // Sin componentes renderizados no hay nada que seleccionar: no se dibuja caja.
+      if (!hasComponents) return;
       e.currentTarget.setPointerCapture?.(e.pointerId);
       boxStart.current = ptFrom(e);
       setBox({ ...boxStart.current, w: 0, h: 0 });
@@ -5728,7 +5736,10 @@ function AssetStage({ asset, isVideo, isAudio, onReferenceInChat, onSendToChat }
       drawing.current = [ptFrom(e)];
       setRedo([]);
       setStrokes((s) => [...s, drawing.current]);
-    } else if (tool === "text" || tool === "comment") {
+    } else if (tool === "comment") {
+      setPoint(ptFrom(e));
+    } else if (tool === "text") {
+      if (!hasTextLayers) return; // sin capas de texto no hay nada que marcar
       setPoint(ptFrom(e));
     }
   };
@@ -5959,17 +5970,20 @@ function AssetStage({ asset, isVideo, isAudio, onReferenceInChat, onSendToChat }
         <div className="group/tb absolute bottom-3 left-1/2 -translate-x-1/2">
           <div className="flex items-center gap-0.5 rounded-full border border-white/15 bg-white/10 p-1 text-white shadow-2xl backdrop-blur-2xl transition-all duration-300">
             {TOOLS.map(([t, Icon, title]) => {
-              const disabled = t === "select" && isVideo;
+              const disabled =
+                (t === "select" && !hasComponents) || (t === "text" && !hasTextLayers);
               return (
                 <button
                   key={t}
                   title={
-                    disabled
-                      ? "La selección de componentes aún no está disponible en vídeo"
-                      : title
+                    t === "select" && disabled
+                      ? "Selección de componentes: disponible cuando el asset tenga componentes añadidos"
+                      : t === "text" && disabled
+                        ? "Edición de texto: disponible cuando el asset tenga capas de texto"
+                        : title
                   }
                   disabled={disabled}
-                  onClick={() => reset(tool === t ? null : t)}
+                  onClick={() => !disabled && reset(tool === t ? null : t)}
                   className={cn(
                     "flex items-center gap-1.5 rounded-full px-2 py-1.5 text-xs font-medium transition-all",
                     tool === t ? "bg-blue-600 text-white" : "hover:bg-white/15",
