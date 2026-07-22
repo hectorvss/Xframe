@@ -93,6 +93,11 @@ import {
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/db";
 import { agentApi } from "@/lib/agent";
+import {
+  SFX_CATEGORIES,
+  SFX_LIBRARY,
+  VOICE_CATALOG,
+} from "@/lib/soundLibrary";
 
 const EMPTY = {
   scenes: [],
@@ -4358,6 +4363,348 @@ function CueInspector({ cue, assets, scenes, lines, shots, sceneShots, run }) {
   );
 }
 
+// Pestaña Biblioteca: catálogo de efectos por categoría (estilo librería de SFX) +
+// los sonidos ya guardados del proyecto. Explorar pide al agente que genere el efecto y
+// lo coloque; Guardados añade un asset existente a la pista elegida.
+function SoundBrowser({ audioAssets, trackMeta, onUseEffect, onAddAsset }) {
+  const [tab, setTab] = useState("explore");
+  const [category, setCategory] = useState(null);
+  const [query, setQuery] = useState("");
+  const effects = SFX_LIBRARY.filter(
+    (effect) =>
+      (!category || effect.category === category) &&
+      `${effect.title} ${effect.category} ${effect.sub}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
+  );
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex gap-2 border-b px-3 pt-2">
+        {[
+          ["explore", "Explorar"],
+          ["saved", "Guardados"],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setTab(value)}
+            className={cn(
+              "border-b-2 px-1.5 pb-2 text-xs font-semibold transition-colors",
+              tab === value
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "explore" ? (
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="space-y-3 p-3">
+            <div className="scrollbar-hidden -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+              {SFX_CATEGORIES.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() =>
+                    setCategory(category === cat.name ? null : cat.name)
+                  }
+                  className={cn(
+                    "relative flex h-16 w-24 shrink-0 flex-col justify-end overflow-hidden rounded-xl p-2 text-left text-white shadow-sm",
+                    category === cat.name &&
+                      "ring-2 ring-foreground ring-offset-1 ring-offset-background",
+                  )}
+                  style={{
+                    backgroundImage: `linear-gradient(135deg, ${cat.from}, ${cat.to})`,
+                  }}
+                >
+                  <span className="text-base leading-none">{cat.emoji}</span>
+                  <span className="mt-1 text-[10px] font-semibold leading-tight">
+                    {cat.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Buscar efectos de sonido…"
+                className="h-9 pl-8 text-xs"
+              />
+            </div>
+            {category && (
+              <button
+                type="button"
+                onClick={() => setCategory(null)}
+                className="text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                ← Todas las categorías · {category}
+              </button>
+            )}
+            <div className="space-y-1">
+              {effects.map((effect) => (
+                <div
+                  key={effect.id}
+                  className="flex items-center gap-2.5 rounded-lg border p-2"
+                >
+                  <button
+                    type="button"
+                    className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
+                    aria-label="Previsualizar"
+                  >
+                    <Play className="size-3.5" />
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 text-[11px] font-medium leading-snug">
+                      {effect.title}
+                    </p>
+                    <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                      {effect.category} › {effect.sub} · {effect.duration} ·{" "}
+                      {effect.downloads} ↓
+                    </p>
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-7 shrink-0"
+                    onClick={() => onUseEffect(effect)}
+                    title="Generar y añadir a la mezcla"
+                  >
+                    <Plus className="size-4" />
+                  </Button>
+                </div>
+              ))}
+              {!effects.length && (
+                <p className="px-1 py-4 text-center text-[11px] text-muted-foreground">
+                  Sin resultados para esa búsqueda.
+                </p>
+              )}
+            </div>
+          </div>
+        </ScrollArea>
+      ) : (
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="space-y-1 p-3">
+            {audioAssets.map((asset) => (
+              <div
+                key={asset.id}
+                className="flex items-center gap-2.5 rounded-lg border p-2"
+              >
+                <FileAudio className="size-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium">{asset.name}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Listo para usar
+                  </p>
+                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="size-7">
+                      <Plus className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {Object.entries(trackMeta).map(([kind, [, label]]) => (
+                      <DropdownMenuItem
+                        key={kind}
+                        onClick={() => onAddAsset(asset, kind)}
+                      >
+                        Añadir a {label.toLowerCase()}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            ))}
+            {!audioAssets.length && (
+              <EmptyState
+                icon={FileAudio}
+                title="Sin sonidos guardados"
+                description="Genera o sube audio desde Assets y aparecerá aquí."
+              />
+            )}
+          </div>
+        </ScrollArea>
+      )}
+    </div>
+  );
+}
+
+// Pestaña Voces: lista de voces del catálogo (Explorar) y las del proyecto (Mis Voces),
+// con búsqueda y filtros, al estilo de una librería de voces.
+function VoicesBrowser({ projectId, voices, run, onAskAgent }) {
+  const [tab, setTab] = useState("explore");
+  const [query, setQuery] = useState("");
+  const catalog = VOICE_CATALOG.filter((voice) =>
+    `${voice.name} ${voice.tagline} ${voice.description} ${voice.language} ${voice.gender} ${voice.category}`
+      .toLowerCase()
+      .includes(query.toLowerCase()),
+  );
+  const importVoice = (voice) =>
+    run(() =>
+      db.createVoiceProfile(projectId, {
+        name: voice.name,
+        description: voice.tagline,
+        language: voice.language === "Español" ? "es" : "en",
+        accent: voice.accent || "",
+        source: "library",
+        status: "draft",
+      }),
+    );
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex gap-2 border-b px-3 pt-2">
+        {[
+          ["explore", "Explorar"],
+          ["mine", "Mis Voces"],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setTab(value)}
+            className={cn(
+              "border-b-2 px-1.5 pb-2 text-xs font-semibold transition-colors",
+              tab === value
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="space-y-2 border-b p-3">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Empieza a escribir para buscar…"
+            className="h-9 pl-8 text-xs"
+          />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {["Idiomas", "Acento", "Categoría", "Género", "Edad"].map((filter) => (
+            <button
+              key={filter}
+              type="button"
+              className="rounded-full border border-dashed px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground"
+            >
+              + {filter}
+            </button>
+          ))}
+        </div>
+      </div>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-1 p-3">
+          {tab === "explore"
+            ? catalog.map((voice) => (
+                <div
+                  key={voice.id}
+                  className="flex items-center gap-2.5 rounded-lg p-2 transition-colors hover:bg-accent/40"
+                >
+                  <span
+                    className="size-8 shrink-0 rounded-full"
+                    style={{
+                      backgroundImage: `linear-gradient(135deg, ${voice.from}, ${voice.to})`,
+                    }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold">
+                      {voice.name}{" "}
+                      <span className="font-normal text-muted-foreground">
+                        — {voice.tagline}
+                      </span>
+                    </p>
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      {voice.description}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+                    aria-label="Previsualizar"
+                  >
+                    <Play className="size-3.5" />
+                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="size-7">
+                        <MoreVertical className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => importVoice(voice)}>
+                        <Plus className="mr-2 size-4" />
+                        Importar a Mis Voces
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              ))
+            : (
+                <>
+                  {voices.map((voice) => {
+                    const color = characterColor(voice.id);
+                    return (
+                      <div
+                        key={voice.id}
+                        className="flex items-center gap-2.5 rounded-lg border p-2"
+                      >
+                        <span
+                          className="size-8 shrink-0 rounded-full"
+                          style={{ backgroundColor: color.hex }}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-semibold">
+                            {voice.name}
+                          </p>
+                          <p className="truncate text-[10px] text-muted-foreground">
+                            {voice.provider_voice_id
+                              ? `Listo · ${voice.provider || "proveedor"}`
+                              : "Borrador · sin ID de voz"}
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 text-destructive"
+                          onClick={() =>
+                            run(() => db.deleteVoiceProfile(voice.id))
+                          }
+                          aria-label="Eliminar voz"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                  {!voices.length && (
+                    <EmptyState
+                      icon={UserRound}
+                      title="No hay voces configuradas"
+                      description="Importa una voz del catálogo o pídeselas al agente."
+                    />
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={onAskAgent}
+                  >
+                    <Sparkles /> Crear voces con el agente
+                  </Button>
+                </>
+              )}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
 export function AudioStudio({
   projectId,
   assets = [],
@@ -4797,94 +5144,23 @@ export function AudioStudio({
                 onValueChange={setLibraryTab}
                 className="flex min-h-0 flex-1 flex-col"
               >
-                <TabsList className="m-3 mb-0 grid h-auto grid-cols-2">
+                <TabsList className="m-3 mb-0 grid grid-cols-3">
                   <TabsTrigger value="library">Biblioteca</TabsTrigger>
                   <TabsTrigger value="create">Crear</TabsTrigger>
-                  <TabsTrigger value="templates">Plantillas</TabsTrigger>
                   <TabsTrigger value="voices">Voces</TabsTrigger>
                 </TabsList>
                 <TabsContent value="library" className="min-h-0 flex-1">
-                  <ScrollArea className="h-full">
-                    <div className="space-y-2 p-3">
-                      {audioAssets.map((asset) => (
-                        <Card key={asset.id} className="shadow-none">
-                          <CardContent className="p-3">
-                            <div className="flex items-center gap-2">
-                              <FileAudio className="size-4 text-muted-foreground" />
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-xs font-medium">
-                                  {asset.name}
-                                </p>
-                                <p className="text-[10px] text-muted-foreground">
-                                  Listo para usar
-                                </p>
-                              </div>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon">
-                                    <Plus className="size-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  {Object.entries(trackMeta).map(
-                                    ([kind, [, label]]) => (
-                                      <DropdownMenuItem
-                                        key={kind}
-                                        onClick={() => addCue(asset, kind)}
-                                      >
-                                        Añadir a {label.toLowerCase()}
-                                      </DropdownMenuItem>
-                                    ),
-                                  )}
-                                  <DropdownMenuItem
-                                    onClick={() => saveAsVoice(asset)}
-                                  >
-                                    <Mic2 className="mr-2 size-4" />
-                                    Guardar en Voces
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    disabled={templateAssetIds.has(
-                                      String(asset.id),
-                                    )}
-                                    onClick={() => saveAsTemplate(asset)}
-                                  >
-                                    <Bookmark className="mr-2 size-4" />
-                                    {templateAssetIds.has(String(asset.id))
-                                      ? "Ya está en Plantillas"
-                                      : "Guardar en Plantillas"}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() =>
-                                      onSeedChat?.(
-                                        `Edita o crea una variación del asset de audio ${mentionAsset(asset)} (id ${asset.id}). Conserva su función narrativa y pregúntame qué propiedad sonora quiero cambiar antes de generar. Guarda el resultado como un asset nuevo y mantén el linaje.`,
-                                      )
-                                    }
-                                  >
-                                    <WandSparkles className="mr-2 size-4" />
-                                    Editar o variar
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                            {asset.url && (
-                              <audio
-                                src={asset.url}
-                                controls
-                                className="mt-2 h-8 w-full"
-                              />
-                            )}
-                          </CardContent>
-                        </Card>
-                      ))}
-                      {!audioAssets.length && (
-                        <EmptyState
-                          icon={FileAudio}
-                          title="Biblioteca vacía"
-                          description="Genera o sube voces, música y efectos desde Assets. Cuando estén listos aparecerán aquí."
-                        />
-                      )}
-                    </div>
-                  </ScrollArea>
+                  <SoundBrowser
+                    audioAssets={audioAssets}
+                    trackMeta={trackMeta}
+                    onAddAsset={addCue}
+                    onUseEffect={(effect) =>
+                      (onSendAgent || onSeedChat)?.(
+                        `Genera un efecto de sonido con generate_audio y guárdalo en Assets: "${effect.title}". ` +
+                          `Duración aproximada ${effect.duration}. Colócalo en la pista de ${effect.track === "ambience" ? "ambiente" : effect.track === "music" ? "música" : "efectos"} de la mezcla. Estima créditos antes de generar.`,
+                      )
+                    }
+                  />
                 </TabsContent>
                 <TabsContent value="create" className="min-h-0 flex-1">
                   <ScrollArea className="h-full">
@@ -4907,33 +5183,13 @@ export function AudioStudio({
                     </div>
                   </ScrollArea>
                 </TabsContent>
-                <TabsContent value="templates" className="min-h-0 flex-1">
-                  <ScrollArea className="h-full">
-                    <div className="p-3">
-                      <SoundTemplates
-                        templates={[
-                          ...systemSoundTemplates,
-                          ...data.audioTemplates,
-                        ]}
-                        mediaAssets={savedTemplateAssets}
-                        onUse={useTemplate}
-                        onVariant={varyAsset}
-                        run={run}
-                      />
-                    </div>
-                  </ScrollArea>
-                </TabsContent>
                 <TabsContent value="voices" className="min-h-0 flex-1">
-                  <ScrollArea className="h-full">
-                    <div className="p-3">
-                      <VoiceLibrary
-                        projectId={projectId}
-                        voices={data.voices}
-                        run={run}
-                        onAskAgent={askForVoices}
-                      />
-                    </div>
-                  </ScrollArea>
+                  <VoicesBrowser
+                    projectId={projectId}
+                    voices={data.voices}
+                    run={run}
+                    onAskAgent={askForVoices}
+                  />
                 </TabsContent>
               </Tabs>
             )}
