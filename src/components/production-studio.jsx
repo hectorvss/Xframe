@@ -2566,7 +2566,7 @@ export function ScreenplayStudio({
                                     )
                                   }
                                   placeholder="Escribe la línea…"
-                                  className="mt-1.5 min-h-9 resize-none border-0 bg-transparent p-0 text-[15px] font-medium leading-snug shadow-none focus-visible:ring-0"
+                                  className="mt-1.5 min-h-9 w-full resize-none appearance-none rounded-none border-0 bg-transparent p-0 text-[15px] font-medium leading-snug text-foreground shadow-none outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
                                 />
                                 <div className="mt-2">
                                   <LineTags
