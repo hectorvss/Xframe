@@ -38,10 +38,12 @@ import {
   Sparkles,
   Settings2,
   Trash2,
+  Type,
   UserRound,
   Volume2,
   WandSparkles,
   Waves,
+  X,
   Zap,
 } from "lucide-react";
 
@@ -61,6 +63,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -1129,264 +1133,349 @@ function SceneInspector({
   );
 }
 
-function LineInspector({
+// Color de cada categoría de etiqueta, alineado con las @menciones del chat.
+const ASSET_PILL_HEX = {
+  video: "#7c3aed",
+  image: "#0284c7",
+  audio: "#c026d3",
+  character: "#d97706",
+  background: "#059669",
+  object: "#e11d48",
+  other: "#64748b",
+};
+const SCENE_TAG_HEX = "#6366f1";
+
+function assetTagCategory(asset) {
+  const type = String(asset?.type || "").toLowerCase();
+  const role = String(asset?.role || "").toLowerCase();
+  if (/personaje|character/.test(role)) return "character";
+  if (/localiz|fondo|background|location/.test(role)) return "background";
+  if (/objeto|producto|object|product/.test(role)) return "object";
+  if (/audio|sound|sonido|music|música|voz/.test(type)) return "audio";
+  if (/video|cut|clip|vídeo/.test(type)) return "video";
+  return "image";
+}
+
+// Etiqueta de una línea como pill de color, con el mismo lenguaje visual que las
+// @menciones del chat: punto de color + texto y una X opcional para quitarla.
+function TagPill({ hex, label, onRemove }) {
+  return (
+    <span
+      className="inline-flex max-w-full items-center gap-1.5 rounded-full py-0.5 pl-2 pr-1 text-[11px] font-medium"
+      style={{
+        color: hex,
+        backgroundColor: `color-mix(in srgb, ${hex} 13%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${hex} 26%, transparent)`,
+      }}
+    >
+      <span
+        className="size-2 shrink-0 rounded-full"
+        style={{ backgroundColor: hex }}
+      />
+      <span className="truncate">{label}</span>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="ml-0.5 shrink-0 rounded-full p-0.5 hover:bg-black/10"
+          aria-label={`Quitar ${label}`}
+        >
+          <X className="size-3" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+// Fila de etiquetas de una línea: escena, personaje que habla y assets/elements. Cada
+// una se añade con un clic y sustituye a toda la opcionalidad de campos anterior.
+function LineTags({
   projectId,
   line,
+  sceneTitle,
+  characters,
   assets,
   links,
-  characters,
-  voices,
   run,
-  onSeedChat,
-  onSendAgent,
-  onDelete,
-  onMoveUp,
-  onMoveDown,
 }) {
-  if (!line)
-    return (
-      <EmptyState
-        icon={MessageSquareText}
-        title="Selecciona una línea"
-        description="Aquí podrás ajustar quién habla, la interpretación, el timing y el estado de aprobación."
-      />
-    );
-  const update = (patch) => run(() => db.updateScriptLine(line.id, patch));
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const speaker = characters.find(
+    (item) => String(item.id) === String(line.speaker_element_id),
+  );
+  const scoped = (links || []).filter(
+    (link) => String(link.script_line_id) === String(line.id),
+  );
+  const isDialogue = line.line_type === "dialogue";
+  const linkable = assets.filter(
+    (asset) =>
+      asset.status === "ready" &&
+      `${asset.name} ${asset.type}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
+  );
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold">Dirección de la línea</p>
-          <p className="text-[11px] text-muted-foreground">
-            Control fino para voz y lipsync
-          </p>
-        </div>
-        <div className="flex items-center">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onMoveUp}
-            aria-label="Mover línea arriba"
+    <div className="flex flex-wrap items-center gap-1.5">
+      {sceneTitle && <TagPill hex={SCENE_TAG_HEX} label={sceneTitle} />}
+      {isDialogue && speaker && (
+        <TagPill
+          hex={characterColor(speaker.id).hex}
+          label={speaker.name}
+          onRemove={() =>
+            run(() =>
+              db.updateScriptLine(line.id, { speaker_element_id: null }),
+            )
+          }
+        />
+      )}
+      {scoped.map((link) => {
+        const asset = assets.find(
+          (item) => String(item.id) === String(link.asset_id),
+        );
+        return (
+          <TagPill
+            key={link.id}
+            hex={ASSET_PILL_HEX[assetTagCategory(asset)]}
+            label={asset?.name || "Asset"}
+            onRemove={() => run(() => db.unlinkScriptAsset(link.id))}
+          />
+        );
+      })}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground"
           >
-            <ArrowUp className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onMoveDown}
-            aria-label="Mover línea abajo"
-          >
-            <ArrowDown className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onDelete}
-            aria-label="Eliminar línea"
-          >
-            <Trash2 className="size-4" />
-          </Button>
-        </div>
-      </div>
-      <Field label="Tipo">
-        <Select
-          value={line.line_type}
-          onValueChange={(line_type) =>
-            update({
-              line_type,
-              speaker_element_id:
-                line_type === "dialogue" ? line.speaker_element_id : null,
-            })
+            <Plus className="size-3" /> Etiqueta
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-52">
+          {isDialogue && (
+            <>
+              <DropdownMenuLabel>Personaje que habla</DropdownMenuLabel>
+              {characters.length ? (
+                characters.map((character) => (
+                  <DropdownMenuItem
+                    key={character.id}
+                    onClick={() =>
+                      run(() =>
+                        db.updateScriptLine(line.id, {
+                          speaker_element_id: character.id,
+                        }),
+                      )
+                    }
+                  >
+                    <span
+                      className="mr-2 size-2 rounded-full"
+                      style={{
+                        backgroundColor: characterColor(character.id).hex,
+                      }}
+                    />
+                    {character.name}
+                    {String(line.speaker_element_id) ===
+                      String(character.id) && (
+                      <Check className="ml-auto size-3.5" />
+                    )}
+                  </DropdownMenuItem>
+                ))
+              ) : (
+                <DropdownMenuItem disabled>
+                  Crea personajes en la pestaña Personajes
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+            </>
+          )}
+          <DropdownMenuItem onSelect={() => setPickerOpen(true)}>
+            <Bookmark className="mr-2 size-3.5" />
+            Asset o element…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Etiquetar un asset o element</DialogTitle>
+            <DialogDescription>
+              Se enviará al agente como referencia @ de esta línea al generar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className="pl-9"
+              placeholder="Buscar en Assets…"
+            />
+          </div>
+          <ScrollArea className="h-[390px]">
+            <div className="grid grid-cols-3 gap-3 pr-3">
+              {linkable.map((asset) => {
+                const already = scoped.some(
+                  (link) => String(link.asset_id) === String(asset.id),
+                );
+                return (
+                  <Card key={asset.id} className="overflow-hidden shadow-none">
+                    <div className="aspect-video bg-muted">
+                      {asset.url ? (
+                        /video/i.test(String(asset.type)) ? (
+                          <video
+                            src={asset.url}
+                            className="size-full object-cover"
+                          />
+                        ) : (
+                          <img
+                            src={asset.url}
+                            alt=""
+                            className="size-full object-cover"
+                          />
+                        )
+                      ) : (
+                        <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
+                          Sin preview
+                        </div>
+                      )}
+                    </div>
+                    <CardContent className="flex items-center gap-2 p-2.5">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-medium">
+                          {asset.name}
+                        </p>
+                        <p className="truncate text-[10px] text-muted-foreground">
+                          {asset.type}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={already ? "secondary" : "outline"}
+                        disabled={already}
+                        onClick={() =>
+                          run(() =>
+                            db.linkScriptAsset(
+                              projectId,
+                              line.scene_id,
+                              line.id,
+                              asset.id,
+                            ),
+                          )
+                        }
+                      >
+                        {already ? "Añadido" : "Etiquetar"}
+                      </Button>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+              {!linkable.length && (
+                <div className="col-span-3">
+                  <EmptyState
+                    icon={Search}
+                    title="No hay coincidencias"
+                    description="Genera o sube el asset en Assets y después etiquétalo aquí."
+                  />
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+const EMOTION_STEPS = [
+  { value: "calmado", label: "Calmado" },
+  { value: "neutral", label: "Neutral" },
+  { value: "cálido", label: "Cálido" },
+  { value: "alegre", label: "Alegre" },
+  { value: "tenso", label: "Tenso" },
+  { value: "épico", label: "Épico" },
+];
+const INTENSITY_STEPS = [
+  { value: 0, label: "Muy baja" },
+  { value: 0.25, label: "Baja" },
+  { value: 0.5, label: "Media" },
+  { value: 0.75, label: "Alta" },
+  { value: 1, label: "Máxima" },
+];
+const PACE_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2].map((v) => ({
+  value: v,
+  label: `${v}×`,
+}));
+const VOLUME_STEPS = [0, 0.25, 0.5, 0.75, 1].map((v) => ({
+  value: v,
+  label: `${Math.round(v * 100)}%`,
+}));
+
+function nearestStep(value, steps) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return steps[0].value;
+  let best = steps[0].value;
+  let bestDiff = Infinity;
+  for (const step of steps) {
+    const diff = Math.abs(Number(step.value) - num);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = step.value;
+    }
+  }
+  return best;
+}
+
+// Opciones avanzadas de una línea: solo deslizables de interpretación. Personaje, escena
+// y assets se manejan como etiquetas en la propia tarjeta.
+function LineInspector({ line, run, onSeedChat, onSendAgent }) {
+  if (!line) return null;
+  const update = (patch) => run(() => db.updateScriptLine(line.id, patch));
+  const volume = Number(line.metadata?.volume ?? 0.75);
+  const speaks = ["dialogue", "voiceover"].includes(line.line_type);
+  return (
+    <div className="space-y-5">
+      <SegSlider
+        label="Intensidad"
+        value={nearestStep(line.intensity ?? 0.5, INTENSITY_STEPS)}
+        options={INTENSITY_STEPS}
+        onChange={(intensity) => update({ intensity })}
+      />
+      <SegSlider
+        label="Velocidad"
+        value={nearestStep(line.pace ?? 1, PACE_STEPS)}
+        options={PACE_STEPS}
+        onChange={(pace) => update({ pace })}
+      />
+      <SegSlider
+        label="Sentimiento"
+        value={line.emotion || "neutral"}
+        options={EMOTION_STEPS}
+        onChange={(emotion) => update({ emotion })}
+      />
+      <SegSlider
+        label="Volumen"
+        value={nearestStep(volume, VOLUME_STEPS)}
+        options={VOLUME_STEPS}
+        onChange={(value) =>
+          update({ metadata: { ...(line.metadata || {}), volume: value } })
+        }
+      />
+      {speaks && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full"
+          onClick={() =>
+            (onSendAgent || onSeedChat)?.(
+              `Genera y guarda como asset una toma de audio para la línea de guion ${line.id}. ` +
+                `Usa exactamente su texto, personaje, sentimiento, intensidad, velocidad y volumen, y sus etiquetas @ como referencias. ` +
+                `Vincúlala a la línea y colócala en el plan de audio respetando su timing. Estima créditos antes de generar.`,
+            )
           }
         >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(lineMeta).map(([value, [label]]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
-      {line.line_type === "dialogue" && (
-        <Field label="Personaje">
-          <Select
-            value={line.speaker_element_id || "__none__"}
-            onValueChange={(id) =>
-              update({ speaker_element_id: id === "__none__" ? null : id })
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">Sin asignar</SelectItem>
-              {characters.map((character) => (
-                <SelectItem key={character.id} value={String(character.id)}>
-                  {character.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
+          <Mic2 /> Generar toma de voz
+        </Button>
       )}
-      {["dialogue", "voiceover"].includes(line.line_type) && (
-        <Field label="Voz para esta toma">
-          <Select
-            value={line.voice_profile_id || "__default__"}
-            onValueChange={(id) =>
-              update({ voice_profile_id: id === "__default__" ? null : id })
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__default__">Voz predeterminada</SelectItem>
-              {voices.map((voice) => (
-                <SelectItem key={voice.id} value={String(voice.id)}>
-                  {voice.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-      )}
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Emoción">
-          <DraftInput
-            value={line.emotion}
-            onCommit={(emotion) => update({ emotion })}
-          />
-        </Field>
-        <Field label="Idioma">
-          <DraftInput
-            value={line.language}
-            onCommit={(language) => update({ language })}
-          />
-        </Field>
-      </div>
-      <Field label="Dirección interpretativa">
-        <DraftInput
-          multiline
-          className="min-h-20"
-          value={line.direction}
-          onCommit={(direction) => update({ direction })}
-          placeholder="Susurra, acelera al final…"
-        />
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Ritmo" hint="0.5–2">
-          <DraftInput
-            number
-            min="0.5"
-            max="2"
-            step="0.05"
-            value={line.pace}
-            onCommit={(pace) => update({ pace })}
-          />
-        </Field>
-        <Field label="Intensidad" hint="0–1">
-          <DraftInput
-            number
-            min="0"
-            max="1"
-            step="0.05"
-            value={line.intensity}
-            onCommit={(intensity) => update({ intensity })}
-          />
-        </Field>
-        <Field label="Pausa antes" hint="ms">
-          <DraftInput
-            number
-            min="0"
-            step="50"
-            value={line.pause_before_ms}
-            onCommit={(pause_before_ms) => update({ pause_before_ms })}
-          />
-        </Field>
-        <Field label="Pausa después" hint="ms">
-          <DraftInput
-            number
-            min="0"
-            step="50"
-            value={line.pause_after_ms}
-            onCommit={(pause_after_ms) => update({ pause_after_ms })}
-          />
-        </Field>
-        <Field label="Duración" hint="ms">
-          <DraftInput
-            number
-            nullable
-            min="1"
-            value={line.target_duration_ms ?? ""}
-            onCommit={(target_duration_ms) => update({ target_duration_ms })}
-          />
-        </Field>
-        <Field label="Estado">
-          <Select
-            value={line.status || "draft"}
-            onValueChange={(status) => update({ status })}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {[
-                "draft",
-                "ready",
-                "generating",
-                "review",
-                "approved",
-                "failed",
-              ].map((status) => (
-                <SelectItem key={status} value={status}>
-                  {status}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
-      <Separator />
-      {["dialogue", "voiceover"].includes(line.line_type) && (
-        <Card className="border-violet-200 bg-violet-50/50 shadow-none">
-          <CardContent className="p-3">
-            <p className="text-xs font-medium">Generar una toma de voz</p>
-            <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
-              El modelo interpretará la voz asignada usando literalmente esta
-              línea y sus parámetros de actuación.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-3 w-full bg-background"
-              onClick={() =>
-                (onSendAgent || onSeedChat)?.(
-                  `Genera y guarda como asset una toma de audio para la línea de guion ${line.id}. ` +
-                    `Usa exactamente su texto aprobado, personaje, emoción, dirección, ritmo, intensidad y pausas. ` +
-                    `No me pidas escoger una voz concreta del modelo: usa el perfil asignado como intención y deja que el modelo produzca la interpretación. ` +
-                    `Cuando esté lista, vincúlala a la línea y colócala en el plan de audio respetando su timing. Estima créditos antes de generar.`,
-                )
-              }
-            >
-              <Mic2 />
-              Generar desde esta línea
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-      <AssetReferences
-        projectId={projectId}
-        sceneId={line.scene_id}
-        lineId={line.id}
-        assets={assets}
-        links={links}
-        run={run}
-      />
     </div>
   );
 }
@@ -1778,7 +1867,7 @@ export function ScreenplayStudio({
               )}
             >
               {scenePanelVisible && (
-                <div className="flex rounded-lg border bg-muted/40 p-0.5">
+                <div className="flex rounded-xl border bg-muted/40 p-1">
                   {[
                     ["scenes", "Escenas"],
                     ["cast", "Personajes"],
@@ -1788,7 +1877,7 @@ export function ScreenplayStudio({
                       type="button"
                       onClick={() => setLeftTab(value)}
                       className={cn(
-                        "rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                        "rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors",
                         leftTab === value
                           ? "bg-background text-foreground shadow-sm"
                           : "text-muted-foreground hover:text-foreground",
@@ -2053,10 +2142,6 @@ export function ScreenplayStudio({
                             String(item.id) === String(line.speaker_element_id),
                         );
                         const accent = lineAccent(line, speaker);
-                        const referenceCount = data.assetLinks.filter(
-                          (link) =>
-                            String(link.script_line_id) === String(line.id),
-                        ).length;
                         const speakerName =
                           speaker?.name ||
                           (line.line_type === "voiceover" ? "Narrador" : null);
@@ -2079,7 +2164,7 @@ export function ScreenplayStudio({
                               dropLineOn(index);
                             }}
                             className={cn(
-                              "rounded-xl border transition-shadow",
+                              "flex overflow-hidden rounded-xl border transition-shadow",
                               open
                                 ? "border-border bg-card shadow-lg"
                                 : "border-transparent hover:border-border hover:bg-accent/30",
@@ -2087,31 +2172,28 @@ export function ScreenplayStudio({
                                 "border-primary/60 ring-2 ring-primary/40",
                             )}
                           >
-                            <div
-                              draggable
-                              onDragStart={(event) => {
-                                dragLineId.current = String(line.id);
-                                event.dataTransfer.effectAllowed = "move";
-                              }}
-                              onDragEnd={() => {
-                                dragLineId.current = null;
-                                setOverLineId(null);
-                              }}
-                              onClick={() =>
-                                setOpenLineId(open ? "" : String(line.id))
-                              }
-                              className="flex cursor-pointer items-start gap-2 px-2.5 py-2.5"
-                            >
-                              <GripVertical
-                                className="mt-0.5 size-4 shrink-0 cursor-grab text-muted-foreground/40 active:cursor-grabbing"
-                                onClick={(event) => event.stopPropagation()}
-                              />
-                              <span
-                                className="mt-1 w-1 shrink-0 self-stretch rounded-full"
-                                style={{ backgroundColor: accent.hex }}
-                              />
-                              <div className="min-w-0 flex-1">
+                            <span
+                              className="w-1 shrink-0"
+                              style={{ backgroundColor: accent.hex }}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="px-3 py-2.5">
                                 <div className="flex items-center gap-2">
+                                  <div
+                                    draggable
+                                    onDragStart={(event) => {
+                                      dragLineId.current = String(line.id);
+                                      event.dataTransfer.effectAllowed = "move";
+                                    }}
+                                    onDragEnd={() => {
+                                      dragLineId.current = null;
+                                      setOverLineId(null);
+                                    }}
+                                    className="cursor-grab text-muted-foreground/40 active:cursor-grabbing"
+                                    aria-label="Reordenar línea"
+                                  >
+                                    <GripVertical className="size-4" />
+                                  </div>
                                   {speakerName && (
                                     <span
                                       className="text-[11px] font-semibold"
@@ -2124,12 +2206,6 @@ export function ScreenplayStudio({
                                     {label}
                                   </span>
                                   <span className="ml-auto flex items-center gap-2.5 text-[10px] text-muted-foreground/70">
-                                    {referenceCount > 0 && (
-                                      <span className="inline-flex items-center gap-1">
-                                        <Bookmark className="size-3" />
-                                        {referenceCount}
-                                      </span>
-                                    )}
                                     {line.target_duration_ms ? (
                                       <span className="tabular-nums">
                                         {(line.target_duration_ms / 1000).toFixed(
@@ -2148,130 +2224,109 @@ export function ScreenplayStudio({
                                       title={line.status}
                                     />
                                   </span>
-                                </div>
-                                <p
-                                  className={cn(
-                                    "mt-1 truncate text-[15px] font-medium leading-snug",
-                                    line.text
-                                      ? "text-foreground"
-                                      : "italic text-muted-foreground/70",
-                                  )}
-                                >
-                                  {line.text || "Línea vacía"}
-                                </p>
-                              </div>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-7 shrink-0 text-muted-foreground"
-                                    onClick={(event) => event.stopPropagation()}
-                                  >
-                                    <MoreHorizontal className="size-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent
-                                  align="end"
-                                  onClick={(event) => event.stopPropagation()}
-                                >
-                                  <DropdownMenuItem
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-7 shrink-0 text-muted-foreground"
+                                      >
+                                        <MoreHorizontal className="size-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          run(() =>
+                                            db.moveScriptLine(
+                                              line.scene_id,
+                                              line.id,
+                                              -1,
+                                            ),
+                                          )
+                                        }
+                                      >
+                                        <ArrowUp className="mr-2 size-4" />
+                                        Mover arriba
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          run(() =>
+                                            db.moveScriptLine(
+                                              line.scene_id,
+                                              line.id,
+                                              1,
+                                            ),
+                                          )
+                                        }
+                                      >
+                                        <ArrowDown className="mr-2 size-4" />
+                                        Mover abajo
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        className="text-destructive"
+                                        onClick={() =>
+                                          run(() => db.deleteScriptLine(line.id))
+                                        }
+                                      >
+                                        <Trash2 className="mr-2 size-4" />
+                                        Eliminar línea
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                  <button
+                                    type="button"
+                                    aria-label="Opciones avanzadas"
                                     onClick={() =>
-                                      run(() =>
-                                        db.moveScriptLine(
-                                          line.scene_id,
-                                          line.id,
-                                          -1,
-                                        ),
-                                      )
+                                      setOpenLineId(open ? "" : String(line.id))
                                     }
+                                    className="shrink-0 p-0.5"
                                   >
-                                    <ArrowUp className="mr-2 size-4" />
-                                    Mover arriba
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() =>
-                                      run(() =>
-                                        db.moveScriptLine(
-                                          line.scene_id,
-                                          line.id,
-                                          1,
-                                        ),
-                                      )
-                                    }
-                                  >
-                                    <ArrowDown className="mr-2 size-4" />
-                                    Mover abajo
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className="text-destructive"
-                                    onClick={() =>
-                                      run(() => db.deleteScriptLine(line.id))
-                                    }
-                                  >
-                                    <Trash2 className="mr-2 size-4" />
-                                    Eliminar línea
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                              <ChevronRight
-                                className={cn(
-                                  "mt-1.5 size-4 shrink-0 text-muted-foreground transition-transform",
-                                  open && "rotate-90",
-                                )}
-                              />
-                            </div>
-                            {open && (
-                              <div className="border-t bg-muted/10 px-4 pb-4 pt-4">
-                                <div className="space-y-4">
-                                  <Field label="Texto de la línea">
-                                    <DraftInput
-                                      multiline
-                                      className="min-h-16"
-                                      value={line.text}
-                                      onCommit={(text) =>
-                                        run(() =>
-                                          db.updateScriptLine(line.id, { text }),
-                                        )
-                                      }
-                                      placeholder="Escribe la línea…"
+                                    <ChevronRight
+                                      className={cn(
+                                        "size-4 text-muted-foreground transition-transform",
+                                        open && "rotate-90",
+                                      )}
                                     />
-                                  </Field>
-                                  <LineInspector
+                                  </button>
+                                </div>
+                                <DraftInput
+                                  multiline
+                                  value={line.text}
+                                  onCommit={(text) =>
+                                    run(() =>
+                                      db.updateScriptLine(line.id, { text }),
+                                    )
+                                  }
+                                  placeholder="Escribe la línea…"
+                                  className="mt-1.5 min-h-9 resize-none border-0 bg-transparent p-0 text-[15px] font-medium leading-snug shadow-none focus-visible:ring-0"
+                                />
+                                <div className="mt-2">
+                                  <LineTags
                                     projectId={projectId}
                                     line={line}
+                                    sceneTitle={scene?.title || "Escena"}
+                                    characters={characters}
                                     assets={assets}
                                     links={data.assetLinks}
-                                    characters={characters}
-                                    voices={data.voices}
                                     run={run}
-                                    onSeedChat={onSeedChat}
-                                    onSendAgent={onSendAgent}
-                                    onDelete={() =>
-                                      run(() => db.deleteScriptLine(line.id))
-                                    }
-                                    onMoveUp={() =>
-                                      run(() =>
-                                        db.moveScriptLine(
-                                          line.scene_id,
-                                          line.id,
-                                          -1,
-                                        ),
-                                      )
-                                    }
-                                    onMoveDown={() =>
-                                      run(() =>
-                                        db.moveScriptLine(
-                                          line.scene_id,
-                                          line.id,
-                                          1,
-                                        ),
-                                      )
-                                    }
                                   />
                                 </div>
                               </div>
-                            )}
+                              {open && (
+                                <div className="border-t bg-muted/10 px-4 pb-4 pt-3">
+                                  <p className="mb-3 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Opciones avanzadas
+                                  </p>
+                                  <LineInspector
+                                    line={line}
+                                    run={run}
+                                    onSeedChat={onSeedChat}
+                                    onSendAgent={onSendAgent}
+                                  />
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -2292,30 +2347,30 @@ export function ScreenplayStudio({
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start">
                           <DropdownMenuItem onClick={() => addLine("dialogue")}>
-                            <span
-                              className="mr-2 size-2 rounded-full"
-                              style={{ backgroundColor: CHARACTER_PALETTE[0].hex }}
+                            <MessageSquareText
+                              className="mr-2 size-4"
+                              style={{ color: CHARACTER_PALETTE[0].hex }}
                             />
                             Diálogo
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => addLine("voiceover")}>
-                            <span
-                              className="mr-2 size-2 rounded-full"
-                              style={{ backgroundColor: CHARACTER_PALETTE[2].hex }}
+                            <Mic2
+                              className="mr-2 size-4"
+                              style={{ color: CHARACTER_PALETTE[2].hex }}
                             />
                             Voz en off
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => addLine("action")}>
-                            <span
-                              className="mr-2 size-2 rounded-full"
-                              style={{ backgroundColor: NEUTRAL_ACCENT.hex }}
+                            <Waves
+                              className="mr-2 size-4"
+                              style={{ color: NEUTRAL_ACCENT.hex }}
                             />
                             Acción
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => addLine("caption")}>
-                            <span
-                              className="mr-2 size-2 rounded-full"
-                              style={{ backgroundColor: CHARACTER_PALETTE[1].hex }}
+                            <Type
+                              className="mr-2 size-4"
+                              style={{ color: CHARACTER_PALETTE[1].hex }}
                             />
                             Rótulo
                           </DropdownMenuItem>
