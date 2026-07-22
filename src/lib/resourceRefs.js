@@ -73,6 +73,11 @@ export function buildResourceCatalog({ assets = [], brief = [], canvas, producti
         kind: asset.type || "asset",
         status: asset.status || "ready",
         url: asset.url || null,
+        // El rol (Personaje / Localización / Objeto) es lo que decide el color de
+        // categoría de la mención en el chat; sin él, un elemento no se distingue de
+        // otro. Va en el catálogo, no solo en el asset, porque el compositor solo ve
+        // esto.
+        role: asset.role || null,
       }),
     );
   }

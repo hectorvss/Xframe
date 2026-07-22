@@ -264,6 +264,96 @@ const PROJECT_TYPES = {
 
 const projectTypeMeta = (type) => PROJECT_TYPES[type] ?? PROJECT_TYPES.cinema;
 
+// Categorías de las menciones @ del compositor. Cada recurso mencionado se pinta con el
+// color de su categoría una vez está en el chat; mientras se escribe en el compositor,
+// todas laten con un gradiente de arcoíris (clase `.mention-rainbow`).
+// Las clases van literales a propósito: Tailwind purga las que construye dinámicamente.
+const MENTION_CATEGORIES = {
+  video: {
+    label: "Vídeo",
+    Icon: Video,
+    pill: "bg-violet-500/15 text-violet-600 ring-1 ring-inset ring-violet-500/25",
+    chip: "bg-violet-500/15 text-violet-600",
+    dot: "bg-violet-500",
+  },
+  image: {
+    label: "Imagen",
+    Icon: ImageIcon,
+    pill: "bg-sky-500/15 text-sky-600 ring-1 ring-inset ring-sky-500/25",
+    chip: "bg-sky-500/15 text-sky-600",
+    dot: "bg-sky-500",
+  },
+  character: {
+    label: "Personaje",
+    Icon: User,
+    pill: "bg-amber-500/15 text-amber-600 ring-1 ring-inset ring-amber-500/25",
+    chip: "bg-amber-500/15 text-amber-600",
+    dot: "bg-amber-500",
+  },
+  background: {
+    label: "Fondo",
+    Icon: Frame,
+    pill: "bg-emerald-500/15 text-emerald-600 ring-1 ring-inset ring-emerald-500/25",
+    chip: "bg-emerald-500/15 text-emerald-600",
+    dot: "bg-emerald-500",
+  },
+  audio: {
+    label: "Audio",
+    Icon: Volume2,
+    pill: "bg-fuchsia-500/15 text-fuchsia-600 ring-1 ring-inset ring-fuchsia-500/25",
+    chip: "bg-fuchsia-500/15 text-fuchsia-600",
+    dot: "bg-fuchsia-500",
+  },
+  object: {
+    label: "Objeto",
+    Icon: Square,
+    pill: "bg-rose-500/15 text-rose-600 ring-1 ring-inset ring-rose-500/25",
+    chip: "bg-rose-500/15 text-rose-600",
+    dot: "bg-rose-500",
+  },
+  other: {
+    label: "Recurso",
+    Icon: Layers,
+    pill: "bg-slate-500/15 text-slate-600 ring-1 ring-inset ring-slate-500/25",
+    chip: "bg-slate-400/15 text-slate-500",
+    dot: "bg-slate-400",
+  },
+};
+
+const MENTION_CATEGORY_ORDER = [
+  "video",
+  "image",
+  "character",
+  "background",
+  "audio",
+  "object",
+  "other",
+];
+
+// Traduce un recurso del catálogo @ a una de las categorías de color. Las tiras del
+// timeline («Clip-N») no están en el catálogo y siempre son vídeo.
+function mentionCategory(resource) {
+  if (!resource) return "other";
+  const kind = String(resource.kind || "").toLowerCase();
+  const type = String(resource.type || "").toLowerCase();
+  const role = String(resource.role || "").toLowerCase();
+  if (
+    ["voice", "cue", "sound_template"].includes(type) ||
+    /audio|voz|sound|música|music|efecto|sfx|ambient|foley/.test(kind)
+  )
+    return "audio";
+  if (/personaje|character|actor|avatar|talent/.test(role)) return "character";
+  if (/localiz|fondo|background|location|entorno|escenario|set/.test(role))
+    return "background";
+  if (/objeto|producto|object|product|prop/.test(role)) return "object";
+  if (type === "shot" || /video|vídeo|cut|clip|render|footage/.test(kind))
+    return "video";
+  if (/image|imagen|photo|foto|still|frame/.test(kind)) return "image";
+  if (type === "element") return "image"; // elemento visual sin rol reconocible
+  if (type === "asset") return /audio/.test(kind) ? "audio" : "image";
+  return "other";
+}
+
 function ProjectTypePill({ type = "cinema", onChange, className }) {
   const activeType = PROJECT_TYPES[type] ? type : "cinema";
   const { label, description, Icon, className: colorClass } =
@@ -4680,32 +4770,49 @@ function EditorChat({
     return new RegExp(`@(${alternatives.join("|")})`, "g");
   }, [resources]);
 
-  const draftWithPills = useMemo(() => {
-    if (!mentionRegex || !draft) return draft;
+  const mentionByName = useMemo(() => {
+    const map = new Map();
+    for (const resource of resources)
+      map.set(resource.mention.toLowerCase(), resource);
+    return map;
+  }, [resources]);
+
+  // Parte un texto en nodos de React envolviendo cada @mención en una pill. En el
+  // compositor (`animated`) las pills laten con el gradiente de arcoíris; en el chat ya
+  // enviado toman el color fijo de su categoría (vídeo, imagen, personaje, fondo, audio,
+  // objeto). Las tiras del timeline («Clip-N») no están en el catálogo y son vídeo.
+  const renderMentions = (text, { animated = false } = {}) => {
+    if (!mentionRegex || !text) return text;
     const out = [];
     let last = 0;
     let m;
+    let i = 0;
     mentionRegex.lastIndex = 0;
-    while ((m = mentionRegex.exec(draft))) {
-      if (m.index > last) out.push(draft.slice(last, m.index));
+    while ((m = mentionRegex.exec(text))) {
+      if (m.index > last) out.push(text.slice(last, m.index));
+      const name = m[1];
+      const isClip = /^Clip-\d+$/i.test(name);
+      const resource = isClip ? null : mentionByName.get(name.toLowerCase());
+      const category = isClip ? "video" : mentionCategory(resource);
       out.push(
         <span
-          key={`${m.index}-${m[0]}`}
+          key={`${i}-${m.index}`}
           className={cn(
-            "rounded-md font-medium",
-            /^@Clip-/.test(m[0])
-              ? "bg-violet-500/15 text-violet-600"
-              : "bg-primary/15 text-primary",
+            "rounded-md px-1 font-medium",
+            animated ? "mention-rainbow" : MENTION_CATEGORIES[category].pill,
           )}
         >
           {m[0]}
         </span>,
       );
       last = m.index + m[0].length;
+      i += 1;
     }
-    out.push(draft.slice(last));
+    if (last < text.length) out.push(text.slice(last));
     return out;
-  }, [draft, mentionRegex]);
+  };
+
+  const draftWithPills = draft ? renderMentions(draft, { animated: true }) : draft;
 
   // Menciones @: se abren al escribir "@" y filtran por lo que sigue.
   const mentionQuery =
@@ -4718,6 +4825,13 @@ function EditorChat({
             .toLowerCase()
             .includes(mentionQuery),
         );
+  // Agrupadas por categoría para el desplegable; el primer elemento en ese mismo orden
+  // es el que confirma Enter, para que coincida con lo que se ve arriba.
+  const orderedMatches = [...matches].sort(
+    (a, b) =>
+      MENTION_CATEGORY_ORDER.indexOf(mentionCategory(a)) -
+      MENTION_CATEGORY_ORDER.indexOf(mentionCategory(b)),
+  );
 
   const insertMention = (resource) => {
     const before = draft.slice(0, mentionAt);
@@ -4783,12 +4897,14 @@ function EditorChat({
 
         {log.map((m) =>
           m.role === "user" ? (
-            <div key={m.id} className="ml-8 rounded-2xl bg-muted p-3">
-              {m.text}
+            <div key={m.id} className="ml-8 whitespace-pre-wrap rounded-2xl bg-muted p-3">
+              {renderMentions(m.text)}
             </div>
           ) : (
             <div key={m.id} className="space-y-2">
-              <p className="leading-relaxed">{m.text}</p>
+              <p className="whitespace-pre-wrap leading-relaxed">
+                {renderMentions(m.text)}
+              </p>
               {m.actions && (
                 <div className="flex items-center gap-1 text-muted-foreground">
                   {[Undo2, ThumbsUp, ThumbsDown, Copy].map((I, i) => (
@@ -4807,7 +4923,11 @@ function EditorChat({
             terminar el Editor lo vuelca a `log` de una pieza. */}
         {stream && (
           <div className="space-y-2">
-            {stream.text && <p className="leading-relaxed">{stream.text}</p>}
+            {stream.text && (
+              <p className="whitespace-pre-wrap leading-relaxed">
+                {renderMentions(stream.text)}
+              </p>
+            )}
 
             {stream.assets?.length > 0 && (
               <div className="grid grid-cols-3 gap-1.5">
@@ -4868,35 +4988,77 @@ function EditorChat({
 
       <div className="relative p-3">
         {mentionAt !== null && matches.length > 0 && (
-          <div className="absolute bottom-full left-3 right-3 z-30 mb-1 max-h-56 overflow-y-auto rounded-xl border bg-background p-1 shadow-2xl">
-            <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Recursos del proyecto
-            </p>
-            {matches.map((resource) => (
-              <button
-                key={`${resource.type}-${resource.id}`}
-                onMouseDown={(e) => (
-                  e.preventDefault(),
-                  insertMention(resource)
-                )}
-                className="flex w-full items-center gap-2 rounded-md p-1 text-left transition-colors hover:bg-accent"
-              >
-                <div
-                  className="size-7 shrink-0 rounded bg-muted bg-cover bg-center"
-                  style={{
-                    backgroundImage: resource.url
-                      ? `url(${resource.url})`
-                      : undefined,
-                  }}
-                />
-                <div className="min-w-0">
-                  <p className="truncate text-sm">{resource.label}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    @{resource.mention} · {resource.type}
-                  </p>
+          <div className="scrollbar-hidden absolute bottom-full left-3 right-3 z-30 mb-2 max-h-72 overflow-y-auto rounded-2xl border bg-popover/95 p-1.5 shadow-2xl backdrop-blur">
+            <div className="flex items-center justify-between px-2 pb-1 pt-0.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Menciona un recurso
+              </span>
+              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {matches.length}
+              </span>
+            </div>
+            {MENTION_CATEGORY_ORDER.map((catKey) => {
+              const group = orderedMatches.filter(
+                (resource) => mentionCategory(resource) === catKey,
+              );
+              if (group.length === 0) return null;
+              const cat = MENTION_CATEGORIES[catKey];
+              const CatIcon = cat.Icon;
+              return (
+                <div key={catKey} className="mb-1 last:mb-0">
+                  <div className="flex items-center gap-1.5 px-2 py-1">
+                    <span className={cn("size-1.5 rounded-full", cat.dot)} />
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {cat.label}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground/70">
+                      {group.length}
+                    </span>
+                  </div>
+                  {group.map((resource) => (
+                    <button
+                      key={`${resource.type}-${resource.id}`}
+                      onMouseDown={(e) => (
+                        e.preventDefault(), insertMention(resource)
+                      )}
+                      className="flex w-full items-center gap-2.5 rounded-xl p-1.5 text-left transition-colors hover:bg-accent"
+                    >
+                      {resource.url ? (
+                        <span
+                          className="size-8 shrink-0 rounded-lg bg-muted bg-cover bg-center ring-1 ring-inset ring-border"
+                          style={{ backgroundImage: `url(${resource.url})` }}
+                        />
+                      ) : (
+                        <span
+                          className={cn(
+                            "flex size-8 shrink-0 items-center justify-center rounded-lg",
+                            cat.chip,
+                          )}
+                        >
+                          <CatIcon className="size-4" />
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
+                          {resource.label}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          @{resource.mention}
+                        </span>
+                      </span>
+                      <span
+                        className={cn(
+                          "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                          cat.chip,
+                        )}
+                      >
+                        {cat.label}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
         {mentionAt !== null &&
@@ -4977,7 +5139,7 @@ function EditorChat({
               onKeyDown={(e) => {
                 if (mentionAt !== null && matches.length && e.key === "Enter") {
                   e.preventDefault();
-                  return insertMention(matches[0]);
+                  return insertMention(orderedMatches[0]);
                 }
                 if (e.key === "Escape") return setMentionAt(null);
                 if (e.key === "Enter" && !e.shiftKey) {

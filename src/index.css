@@ -83,6 +83,44 @@
 }
 
 /*
+ * Pill de mención @ mientras se escribe en el compositor: gradiente de arcoíris que se
+ * desplaza. Al enviarse al chat, la pill deja de usar esta clase y adopta el color de su
+ * categoría (vídeo, imagen, personaje, fondo, audio…). La preferencia "reducir
+ * animaciones" ya congela el keyframe vía `.reduce-motion *`, y el gradiente estático
+ * sigue siendo legible.
+ */
+@keyframes mention-rainbow {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+.mention-rainbow {
+  background-image: linear-gradient(
+    90deg,
+    #f43f5e,
+    #f59e0b,
+    #22c55e,
+    #06b6d4,
+    #6366f1,
+    #a855f7,
+    #f43f5e
+  );
+  background-size: 200% 100%;
+  animation: mention-rainbow 2.4s linear infinite;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.28);
+  border-radius: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mention-rainbow {
+    animation: none;
+  }
+}
+
+/*
  * Escala editorial compartida por los paneles de Guion y Audio.
  * La jerarquía está pensada para un sidebar de ~310 px: títulos discretos,
  * ayudas legibles y controles compactos sin perder área táctil.
