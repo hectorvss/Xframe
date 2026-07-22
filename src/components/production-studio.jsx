@@ -2013,6 +2013,7 @@ function MixTimeline({
   selectedCueId,
   onSelectCue,
   onDropTemplate,
+  onMoveCue,
 }) {
   const [pxPerSec, setPxPerSec] = useState(70);
   const clampZoom = (v) => Math.min(220, Math.max(24, v));
@@ -2041,9 +2042,27 @@ function MixTimeline({
     return () => cancelAnimationFrame(rafRef.current);
   }, [playing, totalMs]);
 
-  const PAD = 10;
-  const NAME_W = 116;
-  const LANE_H = 56;
+  const PAD = 12;
+  const NAME_W = 140;
+  const LANE_H = 76;
+
+  // Mueve un cue a la posición y pista exactas donde se suelta (drag & drop nativo).
+  const dropCue = (event, kind) => {
+    const cueId = event.dataTransfer.getData("application/x-xframe-cue");
+    if (!cueId || !onMoveCue) return;
+    const source = tracks
+      .flatMap((track) => track.cues)
+      .find((cue) => String(cue.id) === String(cueId));
+    if (!source) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const startMs = Math.max(
+      0,
+      Math.round((((event.clientX - rect.left - PAD) / pxPerSec) * 1000) / 50) *
+        50,
+    );
+    const duration = Math.max(200, source.end_ms - source.start_ms);
+    onMoveCue(cueId, startMs, startMs + duration, kind);
+  };
   const contentSec = totalMs / 1000;
   const displaySec = Math.max(Math.ceil(contentSec) + 3, 10);
   const trackWidth = displaySec * pxPerSec + PAD * 2;
@@ -2081,21 +2100,21 @@ function MixTimeline({
   return (
     <div className="overflow-hidden rounded-xl border bg-background">
       {/* Transporte */}
-      <div className="flex items-center gap-2 border-b px-3 py-1.5">
+      <div className="flex items-center gap-2 border-b px-3 py-2.5">
         <div className="flex flex-1 items-center justify-center gap-3">
           <button
             type="button"
             onClick={onToggle}
             aria-label={playing ? "Detener" : "Reproducir mezcla"}
-            className="flex size-9 items-center justify-center rounded-full bg-foreground text-background transition-transform hover:scale-105"
+            className="flex size-11 items-center justify-center rounded-full bg-foreground text-background transition-transform hover:scale-105"
           >
             {playing ? (
-              <Pause className="size-4 fill-current" />
+              <Pause className="size-5 fill-current" />
             ) : (
-              <Play className="size-4 fill-current" />
+              <Play className="size-5 fill-current" />
             )}
           </button>
-          <span className="text-xs tabular-nums text-muted-foreground">
+          <span className="text-sm tabular-nums text-muted-foreground">
             {fmt(pos)} / {fmt(totalMs)}
           </span>
         </div>
@@ -2182,27 +2201,43 @@ function MixTimeline({
             {tracks.map((track) => (
               <div
                 key={track.kind}
-                className="relative border-b"
+                className="relative border-b transition-colors"
                 style={{ height: `${LANE_H}px` }}
                 onDragOver={(event) => {
+                  const types = event.dataTransfer.types;
                   if (
-                    event.dataTransfer.types.includes(
-                      "application/x-xframe-audio-template",
-                    )
+                    types.includes("application/x-xframe-audio-template") ||
+                    types.includes("application/x-xframe-cue")
                   )
                     event.preventDefault();
                 }}
-                onDrop={(event) => onDropTemplate(event, track.kind)}
+                onDrop={(event) => {
+                  if (
+                    event.dataTransfer.types.includes(
+                      "application/x-xframe-cue",
+                    )
+                  )
+                    dropCue(event, track.kind);
+                  else onDropTemplate(event, track.kind);
+                }}
               >
                 {track.cues.map((cue) => {
                   const selected = String(selectedCueId) === String(cue.id);
                   return (
                     <div
                       key={cue.id}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData(
+                          "application/x-xframe-cue",
+                          String(cue.id),
+                        );
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
                       onClick={() => onSelectCue(cue.id)}
                       title={cue.label}
                       className={cn(
-                        "absolute inset-y-2 flex cursor-pointer items-center overflow-hidden rounded-lg px-2 text-[10px] font-medium",
+                        "absolute inset-y-2 flex cursor-grab items-center overflow-hidden rounded-lg px-2 text-[11px] font-medium active:cursor-grabbing",
                         selected ? "border-2" : "border",
                       )}
                       style={{
@@ -4915,7 +4950,7 @@ export function AudioStudio({
               {loading ? (
                 <AudioWorkspaceSkeleton />
               ) : (
-                <div className="mx-auto max-w-5xl">
+                <div className="mx-auto max-w-none">
                   {previewError && (
                     <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
                       {previewError}
@@ -4953,6 +4988,11 @@ export function AudioStudio({
                     selectedCueId={cueId}
                     onSelectCue={setCueId}
                     onDropTemplate={dropTemplate}
+                    onMoveCue={(id, start_ms, end_ms, track_kind) =>
+                      run(() =>
+                        db.updateAudioCue(id, { start_ms, end_ms, track_kind }),
+                      )
+                    }
                   />
                   {!data.cues.length && (
                     <div className="mt-5">
