@@ -334,13 +334,27 @@ async def provider_status(
 ) -> dict[str, bool]:
     await assert_project_owner(project_id, user.id)
     settings = get_settings()
-    return {
+    statuses = {
         provider: settings.provider_is_configured(provider)
         for provider in (
             "openai", "openai_image", "google", "kling", "minimax", "bytedance",
             "wan", "higgsfield", "bfl", "elevenlabs", "sync"
         )
     }
+    # Flags de capacidad: el frontend consume la capacidad (audio, lipsync, vídeo,
+    # imagen), no el nombre del proveedor. Así añadir un nuevo proveedor de voz o música
+    # no toca la UI — solo hay que sumarlo a la lista correspondiente aquí.
+    audio_providers = ("elevenlabs",)
+    lipsync_providers = ("sync",)
+    video_providers = (
+        "openai", "google", "kling", "minimax", "bytedance", "wan", "higgsfield"
+    )
+    image_providers = ("openai_image", "bfl")
+    statuses["audio"] = any(statuses.get(p) for p in audio_providers)
+    statuses["lipsync"] = any(statuses.get(p) for p in lipsync_providers)
+    statuses["video"] = any(statuses.get(p) for p in video_providers)
+    statuses["image"] = any(statuses.get(p) for p in image_providers)
+    return statuses
 
 
 @app.get("/projects/{project_id}/voices")

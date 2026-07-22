@@ -212,6 +212,16 @@ const trackMeta = {
   ambience: [Volume2, "Ambiente", "bg-cyan-600"],
   native: [FileAudio, "Audio nativo", "bg-slate-600"],
 };
+// Color por pista para los bloques del reproductor de la mezcla (mismo lenguaje que el
+// del guion: cada tipo su color).
+const TRACK_HEX = {
+  dialogue: "#2563eb",
+  voiceover: "#7c3aed",
+  music: "#059669",
+  sfx: "#d97706",
+  ambience: "#0891b2",
+  native: "#475569",
+};
 
 function useProduction(projectId, onChange, externalData = null) {
   const [data, setData] = useState(EMPTY);
@@ -1525,6 +1535,11 @@ const PACE_VALUES = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const EMOTION_OPTS = ["Calmado", "Neutral", "Cálido", "Alegre", "Tenso", "Épico"];
 const VOLUME_OPTS = ["0%", "25%", "50%", "75%", "100%"];
 const VOLUME_VALUES = [0, 0.25, 0.5, 0.75, 1];
+// Opciones de los deslizables de generación de voz (misma UI segmentada).
+const SPEED_OPTS = ["Más lento", "Lento", "Normal", "Rápido", "Más rápido"];
+const SPEED_VALUES = [0.7, 0.85, 1.0, 1.05, 1.2];
+const LEVEL_OPTS = ["Muy baja", "Baja", "Media", "Alta", "Muy alta"];
+const LEVEL_VALUES = [0, 0.25, 0.5, 0.75, 1];
 
 function nearestIndex(value, values) {
   const num = Number(value);
@@ -1982,6 +1997,252 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
       ) : (
         <p className="px-4 py-3 text-[11px] text-muted-foreground">{emptyHint}</p>
       )}
+    </div>
+  );
+}
+
+// Reproductor multipista de la mezcla: mismo lenguaje que el del guion (transporte,
+// zoom y bloques con trama de color), pero con una pista por tipo de sonido. La
+// reproducción real la hace el motor Web Audio del estudio; aquí el cabezal se sincroniza
+// con él y cada bloque se puede seleccionar para editarlo debajo.
+function MixTimeline({
+  tracks,
+  totalMs,
+  playing,
+  onToggle,
+  selectedCueId,
+  onSelectCue,
+  onDropTemplate,
+}) {
+  const [pxPerSec, setPxPerSec] = useState(70);
+  const clampZoom = (v) => Math.min(220, Math.max(24, v));
+  const [pos, setPos] = useState(0);
+  const rafRef = useRef(0);
+  const startRef = useRef(0);
+
+  useEffect(() => {
+    if (!playing) {
+      cancelAnimationFrame(rafRef.current);
+      setPos(0);
+      return undefined;
+    }
+    startRef.current = performance.now();
+    setPos(0);
+    const tick = () => {
+      const p = performance.now() - startRef.current;
+      if (p >= totalMs) {
+        setPos(totalMs);
+        return;
+      }
+      setPos(p);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [playing, totalMs]);
+
+  const PAD = 10;
+  const NAME_W = 116;
+  const LANE_H = 56;
+  const contentSec = totalMs / 1000;
+  const displaySec = Math.max(Math.ceil(contentSec) + 3, 10);
+  const trackWidth = displaySec * pxPerSec + PAD * 2;
+  const px = (ms) => (ms / 1000) * pxPerSec;
+  const at = (ms) => PAD + px(ms);
+  const zoomPct = ((pxPerSec - 24) / (220 - 24)) * 100;
+  const fmt = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+  const ticks = Math.min(24, displaySec + 1);
+
+  const startZoom = (event) => {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const apply = (clientX) => {
+      const ratio = Math.min(
+        1,
+        Math.max(0, (clientX - rect.left) / rect.width),
+      );
+      setPxPerSec(clampZoom(24 + ratio * (220 - 24)));
+    };
+    apply(event.clientX);
+    const move = (moveEvent) => apply(moveEvent.clientX);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const iconBtn =
+    "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40";
+
+  return (
+    <div className="overflow-hidden rounded-xl border bg-background">
+      {/* Transporte */}
+      <div className="flex items-center gap-2 border-b px-3 py-1.5">
+        <div className="flex flex-1 items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label={playing ? "Detener" : "Reproducir mezcla"}
+            className="flex size-9 items-center justify-center rounded-full bg-foreground text-background transition-transform hover:scale-105"
+          >
+            {playing ? (
+              <Pause className="size-4 fill-current" />
+            ) : (
+              <Play className="size-4 fill-current" />
+            )}
+          </button>
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {fmt(pos)} / {fmt(totalMs)}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => setPxPerSec((v) => clampZoom(v * 0.8))}
+            aria-label="Alejar"
+          >
+            <Minus className="size-4" />
+          </button>
+          <div
+            className="relative h-4 w-16 cursor-pointer touch-none"
+            onPointerDown={startZoom}
+            title="Escala de segundos"
+          >
+            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted" />
+            <span
+              className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground"
+              style={{ left: `${zoomPct}%` }}
+            />
+          </div>
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => setPxPerSec((v) => clampZoom(v * 1.25))}
+            aria-label="Acercar"
+          >
+            <Plus className="size-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex">
+        {/* Columna fija de nombres de pista */}
+        <div className="shrink-0 border-r" style={{ width: `${NAME_W}px` }}>
+          <div className="h-5 border-b" />
+          {tracks.map((track) => {
+            const Icon = track.Icon;
+            return (
+              <div
+                key={track.kind}
+                className="flex items-center gap-2 border-b px-3"
+                style={{ height: `${LANE_H}px` }}
+              >
+                <span
+                  className="flex size-6 shrink-0 items-center justify-center rounded-md"
+                  style={{
+                    backgroundColor: `color-mix(in srgb, ${track.hex} 14%, transparent)`,
+                    color: track.hex,
+                  }}
+                >
+                  <Icon className="size-3.5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] font-medium">
+                    {track.label}
+                  </p>
+                  <p className="text-[9px] text-muted-foreground">
+                    {track.cues.length} clips
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Pistas con scroll horizontal compartido */}
+        <div className="scrollbar-hidden min-w-0 flex-1 overflow-x-auto">
+          <div className="relative" style={{ width: `${trackWidth}px` }}>
+            {/* Regla */}
+            <div className="relative h-5 border-b">
+              {Array.from({ length: ticks }).map((_, i) => (
+                <span
+                  key={i}
+                  className="absolute top-1 -translate-x-1/2 text-[9px] tabular-nums text-muted-foreground/60"
+                  style={{ left: `${PAD + i * pxPerSec}px` }}
+                >
+                  {fmt(i * 1000)}
+                </span>
+              ))}
+            </div>
+            {tracks.map((track) => (
+              <div
+                key={track.kind}
+                className="relative border-b"
+                style={{ height: `${LANE_H}px` }}
+                onDragOver={(event) => {
+                  if (
+                    event.dataTransfer.types.includes(
+                      "application/x-xframe-audio-template",
+                    )
+                  )
+                    event.preventDefault();
+                }}
+                onDrop={(event) => onDropTemplate(event, track.kind)}
+              >
+                {track.cues.map((cue) => {
+                  const selected = String(selectedCueId) === String(cue.id);
+                  return (
+                    <div
+                      key={cue.id}
+                      onClick={() => onSelectCue(cue.id)}
+                      title={cue.label}
+                      className={cn(
+                        "absolute inset-y-2 flex cursor-pointer items-center overflow-hidden rounded-lg px-2 text-[10px] font-medium",
+                        selected ? "border-2" : "border",
+                      )}
+                      style={{
+                        left: `${at(cue.start_ms)}px`,
+                        width: `${Math.max(28, px(cue.end_ms - cue.start_ms))}px`,
+                        backgroundColor: `color-mix(in srgb, ${track.hex} 10%, transparent)`,
+                        backgroundImage: `repeating-linear-gradient(45deg, color-mix(in srgb, ${track.hex} 24%, transparent) 0, color-mix(in srgb, ${track.hex} 24%, transparent) 1px, transparent 1px, transparent 7px)`,
+                        borderColor: `color-mix(in srgb, ${track.hex} ${selected ? 95 : 42}%, transparent)`,
+                        color: `color-mix(in srgb, ${track.hex} 70%, #111)`,
+                      }}
+                    >
+                      {selected && (
+                        <>
+                          <span
+                            className="absolute inset-y-1 left-0.5 w-1.5 rounded-full"
+                            style={{ backgroundColor: track.hex }}
+                          />
+                          <span
+                            className="absolute inset-y-1 right-0.5 w-1.5 rounded-full"
+                            style={{ backgroundColor: track.hex }}
+                          />
+                        </>
+                      )}
+                      <span className="relative truncate">
+                        {cue.label}
+                        {cue.locked ? " · 🔒" : ""}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            {/* Cabezal sobre todas las pistas */}
+            <div
+              className="pointer-events-none absolute z-10 w-0.5 bg-foreground"
+              style={{ left: `${at(pos)}px`, top: "20px", bottom: 0 }}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2688,7 +2949,7 @@ function VoiceLibrary({ projectId, voices, run, onAskAgent }) {
         if (alive) {
           setProviderVoices([]);
           setProviderError(
-            "Conecta ElevenLabs para explorar y previsualizar su catálogo real.",
+            "Conecta un proveedor de voz para explorar y previsualizar su catálogo real.",
           );
         }
       } finally {
@@ -2739,7 +3000,7 @@ function VoiceLibrary({ projectId, voices, run, onAskAgent }) {
       <div className="rounded-xl border p-3">
         <div className="flex items-center gap-2">
           <AudioLines className="size-4" />
-          <p className="text-xs font-semibold">EXPLORAR ELEVENLABS</p>
+          <p className="text-xs font-semibold">EXPLORAR VOCES</p>
           {providerLoading && <LoaderCircle className="ml-auto size-3.5 animate-spin" />}
         </div>
         <div className="relative mt-3">
@@ -3383,44 +3644,35 @@ function SoundComposer({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="eleven-multilingual-v2">
-                    Eleven Multilingual v2
+                    Multilingüe v2
                   </SelectItem>
-                  <SelectItem value="eleven-v3-voice">
-                    Eleven v3 Voice
-                  </SelectItem>
+                  <SelectItem value="eleven-v3-voice">Voz v3</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
-            <RangeSetting
+            <SettingsSlider
               label="Velocidad"
-              low="Más lento"
-              high="Más rápido"
-              min={0.7}
-              max={1.2}
-              step={0.01}
-              value={speed}
-              onChange={setSpeed}
+              value={SPEED_OPTS[nearestIndex(speed, SPEED_VALUES)]}
+              options={SPEED_OPTS}
+              onChange={(v) => setSpeed(SPEED_VALUES[SPEED_OPTS.indexOf(v)])}
             />
-            <RangeSetting
+            <SettingsSlider
               label="Estabilidad"
-              low="Más variable"
-              high="Más estable"
-              value={stability}
-              onChange={setStability}
+              value={LEVEL_OPTS[nearestIndex(stability, LEVEL_VALUES)]}
+              options={LEVEL_OPTS}
+              onChange={(v) => setStability(LEVEL_VALUES[LEVEL_OPTS.indexOf(v)])}
             />
-            <RangeSetting
+            <SettingsSlider
               label="Similitud"
-              low="Baja"
-              high="Alta"
-              value={similarity}
-              onChange={setSimilarity}
+              value={LEVEL_OPTS[nearestIndex(similarity, LEVEL_VALUES)]}
+              options={LEVEL_OPTS}
+              onChange={(v) => setSimilarity(LEVEL_VALUES[LEVEL_OPTS.indexOf(v)])}
             />
-            <RangeSetting
-              label="Exageración de estilo"
-              low="Ninguno"
-              high="Exagerado"
-              value={style}
-              onChange={setStyle}
+            <SettingsSlider
+              label="Estilo"
+              value={LEVEL_OPTS[nearestIndex(style, LEVEL_VALUES)]}
+              options={LEVEL_OPTS}
+              onChange={(v) => setStyle(LEVEL_VALUES[LEVEL_OPTS.indexOf(v)])}
             />
             <div className="flex items-center justify-between">
               <p className="text-xs font-medium underline decoration-dotted underline-offset-4">
@@ -3464,12 +3716,10 @@ function SoundComposer({
                 </SelectTrigger>
                 <SelectContent>
                   {kind === "music" ? (
-                    <SelectItem value="eleven-music-v2">
-                      Eleven Music
-                    </SelectItem>
+                    <SelectItem value="eleven-music-v2">Música</SelectItem>
                   ) : (
                     <SelectItem value="eleven-sfx-v2">
-                      Eleven Sound Effects
+                      Efectos de sonido
                     </SelectItem>
                   )}
                 </SelectContent>
@@ -3602,8 +3852,9 @@ function SoundComposer({
           )}
         {!providerReady && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-            Conecta ElevenLabs para habilitar la generación real de voz, música,
-            efectos y ambientes. La edición de perfiles, plantillas y timeline sigue disponible.
+            Conecta un proveedor de voz y sonido para habilitar la generación
+            real de voz, música, efectos y ambientes. La edición de perfiles,
+            plantillas y timeline sigue disponible.
           </p>
         )}
         <div className="flex gap-2">
@@ -4423,23 +4674,17 @@ export function AudioStudio({
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
-        <header className="flex h-16 shrink-0 items-center gap-4 border-b px-4">
-          <div>
-            <h2 className="text-sm font-semibold">Diseño de audio</h2>
-            <p className="text-xs text-muted-foreground">
-              Biblioteca, voces y mezcla multipista determinista.
-            </p>
-          </div>
+        <header className="flex h-12 shrink-0 items-center gap-3 px-4">
           <div className="ml-auto flex items-center gap-3">
             {providerStatus && (
               <div className="hidden items-center gap-1.5 xl:flex">
                 <Badge variant="outline" className="gap-1 text-[10px]">
-                  <span className={cn("size-1.5 rounded-full", providerStatus.elevenlabs ? "bg-emerald-500" : "bg-amber-500")} />
-                  Voz y sonido {providerStatus.elevenlabs ? "listos" : "sin proveedor"}
+                  <span className={cn("size-1.5 rounded-full", providerStatus.audio ? "bg-emerald-500" : "bg-amber-500")} />
+                  Voz y sonido {providerStatus.audio ? "listos" : "sin proveedor"}
                 </Badge>
                 <Badge variant="outline" className="gap-1 text-[10px]">
-                  <span className={cn("size-1.5 rounded-full", providerStatus.sync ? "bg-emerald-500" : "bg-amber-500")} />
-                  Lipsync {providerStatus.sync ? "listo" : "sin proveedor"}
+                  <span className={cn("size-1.5 rounded-full", providerStatus.lipsync ? "bg-emerald-500" : "bg-amber-500")} />
+                  Lipsync {providerStatus.lipsync ? "listo" : "sin proveedor"}
                 </Badge>
               </div>
             )}
@@ -4483,7 +4728,7 @@ export function AudioStudio({
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns: `${audioLibraryVisible ? "320px" : "0px"} minmax(500px, 1fr) ${audioInspectorVisible ? "310px" : "0px"}`,
+            gridTemplateColumns: `${audioLibraryVisible ? "320px" : "0px"} minmax(500px, 1fr)`,
           }}
         >
           <aside
@@ -4618,7 +4863,7 @@ export function AudioStudio({
                         shots={data.shots}
                         voices={data.voices}
                         audioAssets={audioAssets}
-                        providerReady={Boolean(providerStatus?.elevenlabs)}
+                        providerReady={Boolean(providerStatus?.audio)}
                         seed={composerSeed}
                         onGenerate={generateSound}
                         onVariant={varyAsset}
@@ -4660,209 +4905,105 @@ export function AudioStudio({
             )}
           </aside>
 
-          <main
-            className={cn(
-              "min-h-0 overflow-auto p-5",
-              !audioLibraryVisible && "pl-14",
-              !audioInspectorVisible && "pr-14",
-            )}
-          >
-            {loading ? <AudioWorkspaceSkeleton /> : <div className="min-w-[660px]">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold">Timeline de mezcla</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Selecciona un clip para ajustar sus parámetros exactos.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    disabled={!data.cues.length || previewing}
-                    onClick={playPreview}
-                    title="Previsualizar mezcla"
-                  >
-                    <Play className="size-4" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    disabled={!previewing}
-                    onClick={() => void stopPreview()}
-                    title="Detener previsualización"
-                  >
-                    <Pause className="size-4" />
-                  </Button>
-                </div>
-              </div>
-              {previewError && (
-                <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
-                  {previewError}
-                </p>
-              )}
-              <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
-                <div />
-                <div className="grid grid-cols-5 px-2 text-[10px] text-muted-foreground">
-                  {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
-                    <span
-                      key={ratio}
-                      className={cn(ratio === 1 && "text-right")}
-                    >
-                      {((totalMs * ratio) / 1000).toFixed(1)}s
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className="mt-1 space-y-2">
-                {Object.entries(trackMeta).map(
-                  ([kind, [Icon, label, color]]) => {
-                    const cues = data.cues.filter(
-                      (item) => item.track_kind === kind,
-                    );
-                    return (
-                      <div
-                        key={kind}
-                        className="grid grid-cols-[112px_minmax(0,1fr)] gap-2"
-                      >
-                        <div className="flex h-16 items-center gap-2 rounded-lg border bg-background px-3">
-                          <Icon className="size-4 text-muted-foreground" />
-                          <div>
-                            <p className="text-xs font-medium">{label}</p>
-                            <p className="text-[10px] text-muted-foreground">
-                              {cues.length} clips
-                            </p>
-                          </div>
-                        </div>
-                        <div
-                          className="relative h-16 overflow-hidden rounded-lg border bg-muted/15 transition-colors hover:bg-accent/30"
-                          onDragOver={(event) => {
-                            if (
-                              event.dataTransfer.types.includes(
-                                "application/x-xframe-audio-template",
-                              )
-                            )
-                              event.preventDefault();
-                          }}
-                          onDrop={(event) => dropTemplate(event, kind)}
-                        >
-                          <div className="absolute inset-0 grid grid-cols-4 divide-x divide-dashed">
-                            {[0, 1, 2, 3].map((i) => (
-                              <span key={i} />
-                            ))}
-                          </div>
-                          {cues.map((item) => {
-                            const source = assets.find(
-                              (asset) =>
-                                String(asset.id) === String(item.asset_id),
-                            );
-                            return (
-                              <Button
-                                key={item.id}
-                                variant="default"
-                                className={cn(
-                                  "absolute top-2 h-11 min-w-12 justify-start overflow-hidden rounded-md px-2 text-left shadow-sm",
-                                  color,
-                                  String(cueId) === String(item.id) &&
-                                    "ring-2 ring-foreground ring-offset-2",
-                                )}
-                                style={{
-                                  left: `${Math.min(97, (item.start_ms / totalMs) * 100)}%`,
-                                  width: `${Math.max(4, Math.min(100 - (item.start_ms / totalMs) * 100, ((item.end_ms - item.start_ms) / totalMs) * 100))}%`,
-                                }}
-                                onClick={() => setCueId(item.id)}
-                              >
-                                <span className="min-w-0">
-                                  <span className="block truncate text-[10px] font-medium">
-                                    {source?.name || label}
-                                  </span>
-                                  <span className="block truncate text-[9px] opacity-75">
-                                    {item.gain_db ?? 0} dB
-                                    {item.locked ? " · locked" : ""}
-                                  </span>
-                                </span>
-                              </Button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  },
-                )}
-              </div>
-              {!data.cues.length && (
-                <div className="mt-5">
-                  <EmptyState
-                    icon={Music2}
-                    title="La mezcla aún está vacía"
-                    description="Añade audio desde la biblioteca o pide al agente que proponga un plan contextual a partir del guion."
-                    action={
-                      <Button onClick={() => setBriefOpen(true)}>
-                        <Sparkles />
-                        Diseñar plan
-                      </Button>
-                    }
-                  />
-                </div>
-              )}
-              <Card className="mt-5 shadow-none">
-                <CardContent className="flex items-center gap-3 p-4">
-                  <span className="flex size-9 items-center justify-center rounded-lg bg-muted">
-                    <Lock className="size-4" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium">Mezcla reproducible</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Los tiempos, fades, ganancias, paneo y ducking se guardan
-                      como parámetros exactos para FFmpeg.
-                    </p>
-                  </div>
-                  <Badge variant="outline">−14 LUFS</Badge>
-                </CardContent>
-              </Card>
-            </div>}
-          </main>
-
-          <aside
-            className={cn(
-              "production-sidebar relative flex min-h-0 flex-col",
-              audioInspectorVisible
-                ? "overflow-hidden border-l bg-muted/10"
-                : "overflow-visible",
-            )}
-          >
+          <main className="flex min-h-0 flex-col overflow-hidden">
             <div
               className={cn(
-                "flex shrink-0 items-center",
-                audioInspectorVisible
-                  ? "h-14 justify-between border-b px-3"
-                  : "absolute right-2 top-5 z-20",
+                "min-h-0 flex-1 overflow-auto p-5",
+                !audioLibraryVisible && "pl-14",
               )}
             >
-              {audioInspectorVisible && (
-                <span className="text-xs font-semibold">INSPECTOR</span>
-              )}
-              <SidebarToggle
-                side="right"
-                expanded={audioInspectorVisible}
-                onChange={setAudioInspectorVisible}
-                label="inspector de mezcla"
-              />
-            </div>
-            {audioInspectorVisible && (loading ? <ProductionListSkeleton rows={5} /> : <ScrollArea className="min-h-0 flex-1">
-                <div className="p-4">
-                  <CueInspector
-                    cue={cue}
-                    assets={assets}
-                    scenes={data.scenes}
-                    lines={data.lines}
-                    shots={data.shots}
-                    sceneShots={data.sceneShots}
-                    run={run}
+              {loading ? (
+                <AudioWorkspaceSkeleton />
+              ) : (
+                <div className="mx-auto max-w-5xl">
+                  {previewError && (
+                    <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+                      {previewError}
+                    </p>
+                  )}
+                  <MixTimeline
+                    tracks={Object.entries(trackMeta).map(
+                      ([kind, [Icon, label]]) => ({
+                        kind,
+                        Icon,
+                        label,
+                        hex: TRACK_HEX[kind] || "#64748b",
+                        cues: data.cues
+                          .filter((item) => item.track_kind === kind)
+                          .map((item) => ({
+                            id: item.id,
+                            start_ms: item.start_ms,
+                            end_ms: item.end_ms,
+                            gain_db: item.gain_db,
+                            locked: item.locked,
+                            label:
+                              assets.find(
+                                (asset) =>
+                                  String(asset.id) === String(item.asset_id),
+                              )?.name || label,
+                          })),
+                      }),
+                    )}
+                    totalMs={totalMs}
+                    playing={previewing}
+                    onToggle={() => {
+                      if (previewing) void stopPreview();
+                      else void playPreview();
+                    }}
+                    selectedCueId={cueId}
+                    onSelectCue={setCueId}
+                    onDropTemplate={dropTemplate}
                   />
+                  {!data.cues.length && (
+                    <div className="mt-5">
+                      <EmptyState
+                        icon={Music2}
+                        title="La mezcla aún está vacía"
+                        description="Añade audio desde la biblioteca o pide al agente que proponga un plan contextual a partir del guion."
+                        action={
+                          <Button onClick={() => setBriefOpen(true)}>
+                            <Sparkles />
+                            Diseñar plan
+                          </Button>
+                        }
+                      />
+                    </div>
+                  )}
+                  {cue && (
+                    <div className="mt-4 rounded-xl border bg-muted/10 p-4">
+                      <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Editar clip
+                      </p>
+                      <CueInspector
+                        cue={cue}
+                        assets={assets}
+                        scenes={data.scenes}
+                        lines={data.lines}
+                        shots={data.shots}
+                        sceneShots={data.sceneShots}
+                        run={run}
+                      />
+                    </div>
+                  )}
+                  <Card className="mt-4 shadow-none">
+                    <CardContent className="flex items-center gap-3 p-4">
+                      <span className="flex size-9 items-center justify-center rounded-lg bg-muted">
+                        <Lock className="size-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium">Mezcla reproducible</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Los tiempos, fades, ganancias, paneo y ducking se
+                          guardan como parámetros exactos para FFmpeg.
+                        </p>
+                      </div>
+                      <Badge variant="outline">−14 LUFS</Badge>
+                    </CardContent>
+                  </Card>
                 </div>
-              </ScrollArea>)}
-          </aside>
+              )}
+            </div>
+          </main>
         </div>
       </div>
     </TooltipProvider>
