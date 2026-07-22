@@ -6166,14 +6166,39 @@ function AssetLightbox({
 }) {
   const isVideo = /video|cut/i.test(String(asset.type));
   const isAudio = /audio/i.test(String(asset.type));
+  const { setGenSettings } = useStudio();
 
-  const derived = [
-    ["edit", Wand2, "Editar componente"],
-    ["extend", MoveHorizontal, "Extender clip"],
-    ["remix", RefreshCw, "Remix"],
-    ["variations", Grid2X2, "Variaciones"],
-    ["character", AtSign, "Reutilizar personaje"],
-  ];
+  // Acciones CONTEXTUALES por tipo, cada una ligada a un flujo real del sistema —
+  // nada de prompts genéricos que el chat ya cubre mejor. La auditoría se llevó por
+  // delante: "Editar componente" (lo hace la barra de anotación/comentario), "Remix"
+  // (un botón que producía una pregunta) y "Reutilizar personaje" (redundante con la
+  // fila @Character/@Location/@Objeto, que escribe en Elements de verdad).
+  const derived = isVideo
+    ? [
+        ["extend", MoveHorizontal, "Extender clip", "Continúa el vídeo desde su último frame, con continuidad exacta"],
+        ["timeline", Play, "Añadir al timeline", "Mete este clip en la tira de montaje de la vista previa"],
+      ]
+    : isAudio
+      ? []
+      : [
+          ["start_frame", ImageIcon, "Frame inicial", "El próximo vídeo ARRANCARÁ exactamente en esta imagen"],
+          ["end_frame", ImageIcon, "Frame final", "El próximo vídeo ATERRIZARÁ exactamente en esta imagen"],
+          ["variations", Grid2X2, "Variaciones", "Genera varias tomas controladas de esta imagen"],
+        ];
+
+  const runDerived = (action) => {
+    if (action === "start_frame" || action === "end_frame") {
+      // Directo a los slots del Director Panel; el compositor salta a modo vídeo para
+      // que el panel aparezca con el frame ya colocado.
+      setGenSettings({
+        [action]: { id: String(asset.id), url: asset.url, name: asset.name },
+        mode: "video",
+      });
+      onClose();
+      return;
+    }
+    onAction?.(asset, action);
+  };
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-4xl">
@@ -6213,13 +6238,21 @@ function AssetLightbox({
           }}
         />
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-          {derived.map(([action, Icon, label]) => (
-            <button key={action} onClick={() => onAction?.(asset, action)} className="flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg border bg-background px-2 text-center text-[11px] font-medium transition-colors hover:bg-accent">
-              <Icon className="size-4 text-muted-foreground" />{label}
-            </button>
-          ))}
-        </div>
+        {derived.length > 0 && (
+          <div className="flex gap-2">
+            {derived.map(([action, Icon, label, hint]) => (
+              <button
+                key={action}
+                title={hint}
+                onClick={() => runDerived(action)}
+                className="flex min-h-16 flex-1 flex-col items-center justify-center gap-1 rounded-lg border bg-background px-2 text-center text-[11px] font-medium transition-colors hover:bg-accent"
+              >
+                <Icon className="size-4 text-muted-foreground" />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <UIButton
@@ -8823,15 +8856,39 @@ function Editor({ projectId }) {
               onRegenerate={regenerateAsset}
               onUpload={uploadFiles}
               onAction={(asset, action) => {
+                // "Añadir al timeline" no es un prompt: escribe en la tira de montaje
+                // de verdad. Si aún no hay timeline explícito, se siembra con el orden
+                // por defecto (los vídeos por creación) para no perder los demás clips.
+                if (action === "timeline") {
+                  const isVid = (a) =>
+                    /video/i.test(String(a.type)) && !/cut/i.test(String(a.type));
+                  const current =
+                    Array.isArray(project.settings?.timeline) &&
+                    project.settings.timeline.length
+                      ? project.settings.timeline
+                      : assets
+                          .filter((a) => a.url && a.status === "ready" && isVid(a))
+                          .sort(
+                            (x, y) =>
+                              new Date(x.created_at ?? 0) - new Date(y.created_at ?? 0),
+                          )
+                          .map((a) => String(a.id));
+                  const next = current.includes(String(asset.id))
+                    ? current
+                    : [...current, String(asset.id)];
+                  updateProject(projectId, {
+                    settings: { ...(project.settings ?? {}), timeline: next },
+                  });
+                  setTab("preview");
+                  return;
+                }
                 const mention = mentionForAsset(asset);
                 const instructions = {
-                  edit: `Edita únicamente el componente que señalaré de ${mention} (id ${asset.id}), conservando composición, identidad y el resto de píxeles. Pregúntame por la máscara o usa sus anotaciones existentes.`,
                   extend: `Extiende el clip ${mention} (id ${asset.id}) con continuidad exacta desde su último frame. Conserva personaje, cámara, iluminación y sonido; estima coste antes de generar.`,
-                  remix: `Crea un remix derivado de ${mention} (id ${asset.id}). Conserva su linaje y pregúntame qué dimensión quiero cambiar antes de generar.`,
                   variations: `Propón variaciones controladas de ${mention} (id ${asset.id}), cambiando una sola variable cada vez y preservando semilla, personajes y composición cuando el modelo lo permita. Estima el lote antes de generarlo.`,
-                  character: `Convierte o reutiliza el personaje visible en ${mention} (id ${asset.id}) como Element persistente, con ficha de continuidad y referencias aprobadas.`,
                   delivery: `Apruebo la entrega del corte ${mention} (id ${asset.id}). Verifica antes que proceda de un manifiesto completo y que sus controles técnico, de corte final y de audio tengan revisiones aprobadas con evidencia. Si falta alguno, no apruebes la entrega: dime exactamente cuál y cómo revisarlo.`,
                 };
+                if (!instructions[action]) return;
                 setChatHidden(false);
                 setChatInsert({ text: instructions[action], at: Date.now() });
               }}
