@@ -62,6 +62,7 @@ for _var in (
 ):
     os.environ.setdefault(_var, f"test-{_var.lower()}")
 
+from app.providers import _http  # noqa: E402
 from app.providers._http import RetryPolicy  # noqa: E402
 from app.providers.base import (  # noqa: E402
     ElementRef,
@@ -796,22 +797,83 @@ def test_retry_delay_has_jitter_and_respects_retry_after() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_poll_gate_enforces_min_interval() -> None:
+class _GateClock:
+    """Reloj monótono y `sleep` controlados para probar el gate sin tiempo de pared.
+
+    Los dos tests del gate medían segundos reales (`elapsed >= 0.25`). Esa medición es
+    no determinista en cuanto la máquina va cargada —CI, o esta misma suite mientras
+    corría el servidor de dev y dos agentes en paralelo—, y por eso el test parpadeaba
+    en el orden completo aun pasando aislado. Aquí movemos el reloj nosotros: cuando el
+    gate pide dormir X, lo anotamos y avanzamos el reloj X **sin esperar de verdad**. Se
+    comprueba la lógica exacta del gate (cuánto decide esperar y que serializa a los
+    pollers concurrentes), no una constante de reloj sujeta a la carga del CI.
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        if seconds > 0:
+            self.now += seconds
+        # Ceder el turno como haría el sleep real: así los pollers concurrentes se
+        # ordenan por el cerrojo del gate en vez de avanzar todos en bloque.
+        await asyncio.sleep(0)
+
+
+class _AsyncioProxy:
+    """`asyncio` real salvo `sleep`. Rebindea solo el nombre dentro de `_http`, sin
+    tocar el módulo global (que el event loop necesita intacto)."""
+
+    def __init__(self, real: Any, sleep: Any) -> None:
+        self._real = real
+        self.sleep = sleep
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+
+class _TimeProxy:
+    """`time` real salvo `monotonic`. Igual que `_AsyncioProxy`: nombre local, módulo
+    global intacto."""
+
+    def __init__(self, real: Any, monotonic: Any) -> None:
+        self._real = real
+        self.monotonic = monotonic
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+
+def _install_gate_clock(monkeypatch: pytest.MonkeyPatch) -> _GateClock:
+    clock = _GateClock()
+    monkeypatch.setattr(_http, "time", _TimeProxy(time, clock.monotonic))
+    monkeypatch.setattr(_http, "asyncio", _AsyncioProxy(asyncio, clock.sleep))
+    return clock
+
+
+def test_poll_gate_enforces_min_interval(monkeypatch: pytest.MonkeyPatch) -> None:
     """Runway documenta 1 req/5 s y el resto agradece el respiro. Se comprueba que el
-    gate espera de verdad, con un intervalo reducido para no alargar la suite."""
+    gate espera un intervalo completo entre dos polls seguidos, con un reloj controlado
+    en vez de medir tiempo real (que hacía el test no determinista bajo carga)."""
+    clock = _install_gate_clock(monkeypatch)
     recorder = Recorder(lambda r: json_response({"name": "op", "done": False}))
     adapter = make_adapter(VeoAdapter, recorder)
     adapter.min_poll_interval_s = 0.25
     ref = ProviderJobRef("google", "op", "/v1beta/op")
 
-    async def poll_twice() -> float:
-        start = time.monotonic()
+    async def poll_twice() -> None:
         await adapter.poll(ref)
         await adapter.poll(ref)
-        return time.monotonic() - start
 
-    elapsed = run(poll_twice())
-    assert elapsed >= 0.25
+    run(poll_twice())
+    # El primer poll no espera (no hay marca previa); el segundo espera el intervalo.
+    assert clock.sleeps == [0.25]
+    assert clock.now >= 0.25
     assert len(recorder.requests) == 2
 
 
@@ -1542,30 +1604,34 @@ def test_openai_image_poll_without_the_result_fails_instead_of_hanging() -> None
     assert "relanzar" in status.error
 
 
-def test_poll_gate_is_per_provider_not_per_job() -> None:
+def test_poll_gate_is_per_provider_not_per_job(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     El gate contaba por `external_id`, así que doce planos concurrentes poleteaban doce
     veces el ritmo permitido — justo el escenario que dispara el 429 que el gate existe
-    para evitar. El límite es del proveedor, no del job.
+    para evitar. El límite es del proveedor, no del job. Con reloj controlado se
+    comprueba que tres jobs concurrentes se serializan a un intervalo cada uno, sin
+    depender del tiempo de pared.
     """
+    clock = _install_gate_clock(monkeypatch)
     recorder = Recorder(lambda r: json_response({"name": "op", "done": False}))
     adapter = make_adapter(VeoAdapter, recorder)
     adapter.min_poll_interval_s = 0.1
 
-    async def poll_three_different_jobs() -> float:
-        start = time.monotonic()
+    async def poll_three_different_jobs() -> None:
         await asyncio.gather(
             *(
                 adapter.poll(ProviderJobRef("google", f"op-{i}", f"/v1beta/op-{i}"))
                 for i in range(3)
             )
         )
-        return time.monotonic() - start
 
-    elapsed = run(poll_three_different_jobs())
+    run(poll_three_different_jobs())
 
     assert len(recorder.requests) == 3
-    assert elapsed >= 0.2, "tres jobs distintos siguen compartiendo el ritmo del proveedor"
+    # El primero no espera; los otros dos, un intervalo cada uno. Comparten el ritmo del
+    # proveedor aunque sean jobs distintos.
+    assert clock.sleeps == [0.1, 0.1]
+    assert clock.now >= 0.2
 
 
 def test_poll_gate_does_not_grow_with_the_number_of_jobs() -> None:

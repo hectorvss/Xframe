@@ -4612,6 +4612,8 @@ function EditorChat({
   insert = null,
   onInsertDone,
   onMentionOpen,
+  attachment = null,
+  onAttachmentClear,
 }) {
   const [draft, setDraft] = useState("");
   const [mentionAt, setMentionAt] = useState(null);
@@ -4651,6 +4653,12 @@ function EditorChat({
     areaRef.current?.focus();
     onInsertDone?.();
   }, [insert]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Al adjuntar una referencia (zona/anotación/comentario), el foco salta al compositor
+  // para escribir la instrucción de inmediato.
+  useEffect(() => {
+    if (attachment) areaRef.current?.focus();
+  }, [attachment]);
 
   const mentionRegex = useMemo(() => {
     const names = [...resources]
@@ -4735,11 +4743,16 @@ function EditorChat({
   }, [log.length, busy, stream?.text, stream?.assets?.length]);
 
   const send = (text) => {
-    const value = (text ?? draft).trim();
-    if (!value || busy) return;
-    onSend(value, resolveResourceMentions(value, resources));
+    const typed = (text ?? draft).trim();
+    if (!typed || busy) return;
+    // Si hay una referencia adjunta (zona/anotación/comentario marcada sobre un asset),
+    // su contexto se antepone al mensaje que ve el agente y la pill se limpia: el
+    // compositor vuelve a su forma normal.
+    const value = attachment?.context ? `${attachment.context}${typed}` : typed;
+    onSend(value, resolveResourceMentions(typed, resources));
     setDraft("");
     setMentionAt(null);
+    onAttachmentClear?.();
   };
 
   return (
@@ -4902,6 +4915,29 @@ function EditorChat({
               e.target.value = "";
             }}
           />
+          {/* Pill de referencia adjunta: el compositor adopta la forma de la acción
+              (una zona/anotación/comentario marcada sobre un asset). Al enviar se limpia
+              y el compositor vuelve a la normalidad. */}
+          {attachment && (
+            <div className="mb-1.5 flex items-center gap-1.5 px-1">
+              <span className="flex min-w-0 items-center gap-1.5 rounded-md bg-blue-500/12 px-2 py-1 text-xs font-medium text-blue-600">
+                {attachment.asset?.url && (
+                  <span
+                    className="size-4 shrink-0 rounded-sm bg-cover bg-center"
+                    style={{ backgroundImage: `url(${attachment.asset.url})` }}
+                  />
+                )}
+                <span className="truncate">{attachment.label}</span>
+                <button
+                  onClick={() => onAttachmentClear?.()}
+                  title="Quitar referencia"
+                  className="shrink-0 rounded-full p-0.5 hover:bg-blue-500/20"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            </div>
+          )}
           <div className="relative">
             {/* Espejo de pills: mismas métricas de texto que el Textarea de debajo. */}
             <div
@@ -4939,7 +4975,11 @@ function EditorChat({
                   send();
                 }
               }}
-              placeholder={placeholder}
+              placeholder={
+                attachment
+                  ? "Describe el cambio sobre lo marcado y envíalo al agente…"
+                  : placeholder
+              }
               className="relative z-10 min-h-[52px] max-h-[200px] resize-none appearance-none overflow-y-auto rounded-none border-0 bg-transparent text-sm text-transparent caret-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             />
           </div>
@@ -5679,7 +5719,7 @@ const elementRoles = ["Personaje", "Localización", "Objeto"];
  * - Anotación: dibujo libre con deshacer/rehacer/borrar; al enviar, marca la zona.
  * - Comentar: fija un punto y escribe; al enviar, el prompt va DIRECTO al agente.
  */
-function AssetStage({ asset, isVideo, isAudio, onReferenceInChat, onSendToChat }) {
+function AssetStage({ asset, isVideo, isAudio, onAttach }) {
   // Un render es una imagen/vídeo plano: no hay CAPAS de componentes ni de texto que
   // seleccionar por separado. Esas dos herramientas solo cobran sentido cuando el asset
   // se compone de elementos añadidos (marketing/demos, aún por construir), así que hoy
@@ -5737,7 +5777,16 @@ function AssetStage({ asset, isVideo, isAudio, onReferenceInChat, onSendToChat }
       setRedo([]);
       setStrokes((s) => [...s, drawing.current]);
     } else if (tool === "comment") {
-      setPoint(ptFrom(e));
+      // Colocar el punto ADJUNTA la referencia al compositor principal: es ahí donde
+      // el usuario escribe la instrucción, no en una segunda caja de texto.
+      const p = ptFrom(e);
+      setPoint(p);
+      onAttach({
+        label: `Comentario · ${zoneWords({ x: p.x, y: p.y, w: 0, h: 0 })}`,
+        context:
+          `Sobre ${label} (asset ${asset.id}), en el punto (x ${pct(p.x)}, y ${pct(p.y)}). ` +
+          `Aplica el cambio solo en esa zona y mantén el resto del render igual: `,
+      });
     } else if (tool === "text") {
       if (!hasTextLayers) return; // sin capas de texto no hay nada que marcar
       setPoint(ptFrom(e));
@@ -5780,35 +5829,44 @@ function AssetStage({ asset, isVideo, isAudio, onReferenceInChat, onSendToChat }
     };
   };
 
-  // -- confirmaciones --------------------------------------------------- //
+  // -- confirmaciones: cada herramienta adjunta una PILL al compositor principal --- //
   const sendSelect = () => {
     if (!box) return;
-    onReferenceInChat(
-      `Sobre ${label} (asset ${asset.id}), en la zona ${zoneWords(box)} ` +
+    onAttach({
+      label: `Selección · ${zoneWords(box)}`,
+      context:
+        `Sobre ${label} (asset ${asset.id}), en la zona ${zoneWords(box)} ` +
         `(x ${pct(box.x)}, y ${pct(box.y)}, ancho ${pct(box.w)}, alto ${pct(box.h)}): `,
-    );
+    });
   };
   const sendText = () => {
     if (!point) return;
-    onReferenceInChat(
-      `Sobre ${label} (asset ${asset.id}), referido al elemento en el punto ` +
+    onAttach({
+      label: "Texto",
+      context:
+        `Sobre ${label} (asset ${asset.id}), referido al elemento de texto en el punto ` +
         `(x ${pct(point.x)}, y ${pct(point.y)}): `,
-    );
+    });
   };
   const sendAnnotation = () => {
     const bb = strokesBBox();
     if (!bb) return;
-    onReferenceInChat(
-      `Sobre ${label} (asset ${asset.id}), he marcado con una anotación la zona ` +
-        `${zoneWords(bb)} (x ${pct(bb.x)}, y ${pct(bb.y)}, ancho ${pct(bb.w)}, alto ${pct(bb.h)}): `,
-    );
+    onAttach({
+      label: `Anotación · ${zoneWords(bb)}`,
+      context:
+        `Sobre ${label} (asset ${asset.id}), he marcado con una anotación la zona ` +
+        `${zoneWords(bb)} (x ${pct(bb.x)}, y ${pct(bb.y)}, ancho ${pct(bb.w)}, alto ${pct(bb.h)}). ` +
+        `Aplica el cambio SOLO en esa zona marcada y mantén el resto del render igual: `,
+    });
   };
   const sendComment = () => {
-    if (!point || !comment.trim()) return;
-    onSendToChat(
-      `Sobre ${label} (asset ${asset.id}), en el punto (x ${pct(point.x)}, y ${pct(point.y)}): ` +
-        `${comment.trim()}. Aplica el cambio solo en esa zona y mantén el resto del render igual.`,
-    );
+    if (!point) return;
+    onAttach({
+      label: `Comentario · ${zoneWords({ x: point.x, y: point.y, w: 0, h: 0 })}`,
+      context:
+        `Sobre ${label} (asset ${asset.id}), en el punto (x ${pct(point.x)}, y ${pct(point.y)}). ` +
+        `Aplica el cambio solo en esa zona y mantén el resto del render igual: `,
+    });
   };
 
   const TOOLS = [
@@ -6020,58 +6078,17 @@ function AssetStage({ asset, isVideo, isAudio, onReferenceInChat, onSendToChat }
         </div>
       </div>
 
-      {/* Panel del modo texto: hoy no hay texto editable, pero funcional y referenciable */}
-      {tool === "text" && (
-        <div className="rounded-xl border bg-muted/40 p-3 text-sm">
-          {point ? (
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-muted-foreground">
-                Elemento de texto marcado. Aún no hay capas de texto editables en un
-                render — pero puedes referirlo al agente para cuando existan.
-              </p>
-              <UIButton size="sm" onClick={sendText}>
-                <ArrowUp /> Al chat
-              </UIButton>
-            </div>
-          ) : (
-            <p className="text-muted-foreground">
-              Toca sobre el asset para marcar dónde va un elemento de texto. En
-              marketing y demos podrás editar y referenciar textos aquí.
-            </p>
-          )}
-        </div>
+      {/* Pista contextual del modo activo: qué hacer, sin abrir una segunda superficie. */}
+      {tool === "comment" && (
+        <p className="px-1 text-center text-[11px] text-muted-foreground">
+          Toca el punto exacto del cambio — la referencia se adjuntará al chat para que
+          escribas la instrucción.
+        </p>
       )}
-
-      {/* Tarjeta de comentario: fija un punto y el prompt va DIRECTO al agente */}
-      {tool === "comment" && point && (
-        <div className="rounded-xl border bg-background p-3 shadow-sm">
-          <Textarea
-            autoFocus
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendComment();
-              }
-            }}
-            placeholder="Describe el cambio exacto en este punto y se lo mando al agente…"
-            className="min-h-20 resize-none border-0 p-0 shadow-none focus-visible:ring-0"
-          />
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-[11px] text-muted-foreground">
-              Enter envía · el agente aplicará el cambio solo en esa zona
-            </span>
-            <div className="flex gap-2">
-              <UIButton variant="ghost" size="sm" onClick={() => setPoint(null)}>
-                Cancelar
-              </UIButton>
-              <UIButton size="sm" disabled={!comment.trim()} onClick={sendComment}>
-                <ArrowUp /> Enviar
-              </UIButton>
-            </div>
-          </div>
-        </div>
+      {tool === "annotate" && (
+        <p className="px-1 text-center text-[11px] text-muted-foreground">
+          Dibuja sobre la zona que quieres cambiar y pulsa «Al chat».
+        </p>
       )}
     </div>
   );
@@ -6086,8 +6103,7 @@ function AssetLightbox({
   onRegenerate,
   onDuplicate,
   onAction,
-  onReferenceInChat,
-  onSendToChat,
+  onAttach,
 }) {
   const isVideo = /video|cut/i.test(String(asset.type));
   const isAudio = /audio/i.test(String(asset.type));
@@ -6125,13 +6141,11 @@ function AssetLightbox({
           asset={asset}
           isVideo={isVideo}
           isAudio={isAudio}
-          onReferenceInChat={(text) => {
+          onAttach={(ref) => {
+            // Cerrar el lightbox y adjuntar la referencia al compositor principal:
+            // una sola superficie, la del chat, adopta lo necesario para la acción.
             onClose();
-            onReferenceInChat?.(text);
-          }}
-          onSendToChat={(text) => {
-            onClose();
-            onSendToChat?.(text);
+            onAttach?.({ ...ref, asset });
           }}
         />
 
@@ -6452,8 +6466,7 @@ function EditorAssets({
   onRegenerate,
   onUpload,
   onAction,
-  onReferenceInChat,
-  onSendToChat,
+  onAttach,
   selectedIds = [],
   onSelectionChange,
 }) {
@@ -6673,8 +6686,7 @@ function EditorAssets({
           onRegenerate={onRegenerate}
           onDuplicate={onDuplicate}
           onAction={onAction}
-          onReferenceInChat={onReferenceInChat}
-          onSendToChat={onSendToChat}
+          onAttach={onAttach}
         />
       )}
       {customAsset && (
@@ -8237,6 +8249,10 @@ function Editor({ projectId }) {
   // mención se traduce en un pie de contexto con el asset id, para que el agente sepa
   // EXACTAMENTE sobre qué fragmento aplicar el cambio.
   const [chatInsert, setChatInsert] = useState(null);
+  // Referencia adjunta al compositor: la zona/anotación/comentario marcada sobre un
+  // asset. Se muestra como pill sobre el input; su `context` se antepone al mensaje al
+  // enviar y luego se limpia (el compositor vuelve a la normalidad).
+  const [chatAttach, setChatAttach] = useState(null);
   const clipMap = useRef({});
   const mentionClip = (asset, i) => {
     clipMap.current[`Clip-${i + 1}`] = String(asset.id);
@@ -8698,6 +8714,8 @@ function Editor({ projectId }) {
               insert={chatInsert}
               onInsertDone={() => setChatInsert(null)}
               onMentionOpen={refreshMentionProduction}
+              attachment={chatAttach}
+              onAttachmentClear={() => setChatAttach(null)}
             />
           </div>
         )}
@@ -8751,15 +8769,12 @@ function Editor({ projectId }) {
                 setChatHidden(false);
                 setChatInsert({ text: instructions[action], at: Date.now() });
               }}
-              onReferenceInChat={(text) => {
-                // Marca una zona/anotación: siembra el chat y deja al usuario redactar.
+              onAttach={(ref) => {
+                // Una herramienta del asset terminó: el compositor principal adopta la
+                // pill de referencia. El usuario escribe la instrucción ahí y, al
+                // enviar, el compositor vuelve a la normalidad.
                 setChatHidden(false);
-                setChatInsert({ text, at: Date.now() });
-              }}
-              onSendToChat={(text) => {
-                // Comentario fijado: el prompt va directo al agente.
-                setChatHidden(false);
-                handleSend(text);
+                setChatAttach(ref);
               }}
               selectedIds={selectedAssetIds}
               onSelectionChange={setSelectedAssetIds}

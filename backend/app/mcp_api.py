@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
@@ -59,7 +60,7 @@ async def protected_resource_metadata() -> dict[str, object]:
     }
 
 
-async def _oauth_server_enabled() -> bool:
+async def _probe_oauth_server() -> bool:
     try:
         async with httpx.AsyncClient(timeout=3) as client:
             response = await client.get(
@@ -70,17 +71,45 @@ async def _oauth_server_enabled() -> bool:
         return False
 
 
+# Caché del sondeo al Authorization Server. Preguntar a Supabase en cada 401 del MCP o
+# en cada carga de Ajustes metería 3 s de latencia y una dependencia de red en el camino
+# de auth. El estado sólo cambia al reconfigurar el proyecto, así que unos minutos de TTL
+# sobran. Es el mismo criterio que el gate de proveedores: un instante, no un sondeo por
+# petición.
+_oauth_probe_cache: tuple[float, bool] | None = None
+_OAUTH_PROBE_TTL_S = 300.0
+
+
+async def oauth_server_enabled() -> bool:
+    """¿Hay de verdad un Authorization Server emitiendo tokens para este recurso?
+
+    De esto depende que anunciemos OAuth o no. Anunciarlo sin AS manda a Claude/Cursor a
+    un descubrimiento que no pueden completar; no anunciarlo cuando sí lo hay les niega el
+    flujo automático. La respuesta tiene que salir de sondear el AS, no de una constante.
+    """
+    global _oauth_probe_cache
+    now = time.monotonic()
+    if _oauth_probe_cache is not None and now - _oauth_probe_cache[0] < _OAUTH_PROBE_TTL_S:
+        return _oauth_probe_cache[1]
+    enabled = await _probe_oauth_server()
+    _oauth_probe_cache = (now, enabled)
+    return enabled
+
+
 @router.get("/status")
 async def status(user: AuthUser = Depends(current_user)) -> dict[str, object]:
     """Configuración pública y capacidades que consume Ajustes."""
     del user
+    oauth_enabled = await oauth_server_enabled()
     return {
         "status": "ready",
         "server_url": _mcp_url(),
         "transport": "streamable-http",
-        "authentication": "oauth-2.1",
+        # La verdad, no la aspiración: el token personal xfr_ funciona siempre; OAuth 2.1
+        # sólo cuando hay un Authorization Server detrás que lo respalde.
+        "authentication": "oauth-2.1" if oauth_enabled else "bearer-token",
         "oauth": {
-            "enabled": await _oauth_server_enabled(),
+            "enabled": oauth_enabled,
             "issuer": oauth_issuer_url(),
             "protected_resource_metadata": protected_resource_metadata_url(),
             "authorization_path": "/oauth/consent",
