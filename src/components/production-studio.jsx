@@ -21,10 +21,13 @@ import {
   ListFilter,
   MessageSquareText,
   Mic2,
+  Minus,
   MoreHorizontal,
   MoreVertical,
   Music2,
   Pause,
+  SkipBack,
+  SkipForward,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -1734,15 +1737,13 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
     rafRef.current = requestAnimationFrame(frame);
   };
 
-  const seek = (event) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const ratio = Math.min(
-      1,
-      Math.max(0, (event.clientX - rect.left) / rect.width),
-    );
-    const ms = ratio * total;
-    setPos(ms);
-    clockRef.current = { t0: performance.now(), base: ms };
+  const [pxPerSec, setPxPerSec] = useState(90);
+  const clampZoom = (v) => Math.min(280, Math.max(28, v));
+
+  const seekTo = (ms) => {
+    const clamped = Math.min(total, Math.max(0, ms));
+    setPos(clamped);
+    clockRef.current = { t0: performance.now(), base: clamped };
     stopAudio();
   };
 
@@ -1750,69 +1751,160 @@ function DialogueTimeline({ clips, emptyHint, caption }) {
     const s = Math.max(0, Math.floor(ms / 1000));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   };
-  const ticks = Math.min(20, Math.floor(total / 1000) + 1);
+
+  const contentSec = total / 1000;
+  const displaySec = Math.max(Math.ceil(contentSec) + 3, 10);
+  const displayMs = displaySec * 1000;
+  const trackWidth = displaySec * pxPerSec;
+  const px = (ms) => (ms / 1000) * pxPerSec;
+  const zoomPct = ((pxPerSec - 28) / (280 - 28)) * 100;
+
+  const seek = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, event.clientX - rect.left);
+    seekTo((x / trackWidth) * displayMs);
+  };
+
+  const iconBtn =
+    "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40";
 
   return (
-    <div className="shrink-0 border-t bg-muted/10">
-      <div className="flex items-center gap-3 px-4 py-2">
-        <Button
-          size="icon"
-          variant={clips.length ? "default" : "outline"}
-          className="size-9 shrink-0 rounded-full"
-          disabled={!clips.length}
-          onClick={toggle}
-          aria-label={playing ? "Pausar" : "Reproducir"}
-        >
-          {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
-        </Button>
-        <span className="text-xs tabular-nums text-muted-foreground">
-          {fmt(pos)} / {fmt(total)}
-        </span>
-        <span className="ml-auto flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
-          <Volume2 className="size-3.5" /> {caption || "Diálogo"}
-        </span>
-      </div>
-      {clips.length ? (
-        <div className="px-4 pb-3">
-          <div className="relative mb-1 h-3">
-            {Array.from({ length: ticks }).map((_, i) => (
-              <span
-                key={i}
-                className="absolute top-0 -translate-x-1/2 text-[9px] tabular-nums text-muted-foreground/60"
-                style={{ left: `${((i * 1000) / total) * 100}%` }}
-              >
-                {fmt(i * 1000)}
-              </span>
-            ))}
-          </div>
-          <div
-            className="relative h-11 cursor-pointer rounded-lg border bg-muted/40"
-            onClick={seek}
+    <div className="shrink-0 border-t bg-background">
+      {/* Transporte, idéntico al reproductor de referencia. */}
+      <div className="flex items-center gap-2 border-b px-3 py-1.5">
+        <button type="button" className={iconBtn} aria-label="Colapsar">
+          <PanelLeftClose className="size-4" />
+        </button>
+        <div className="flex flex-1 items-center justify-center gap-2">
+          <button type="button" className={iconBtn} aria-label="Pistas">
+            <ListFilter className="size-4" />
+          </button>
+          <span className="px-1 text-xs font-medium tabular-nums text-muted-foreground">
+            1.0x
+          </span>
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => seekTo(0)}
+            aria-label="Al inicio"
           >
-            {clips.map((clip, i) => (
-              <div
-                key={clip.id}
-                className="absolute inset-y-1 flex items-center overflow-hidden rounded-md px-2 text-[11px] font-medium text-white shadow-sm"
-                style={{
-                  left: `${(offsets[i] / total) * 100}%`,
-                  width: `${(durations[i] / total) * 100}%`,
-                  backgroundColor: clip.hex,
-                }}
-                title={clip.label}
-              >
-                <span className="truncate">{clip.label}</span>
+            <SkipBack className="size-4" />
+          </button>
+          <button
+            type="button"
+            onClick={toggle}
+            disabled={!clips.length}
+            aria-label={playing ? "Pausar" : "Reproducir"}
+            className="flex size-9 items-center justify-center rounded-full bg-foreground text-background transition-transform hover:scale-105 disabled:opacity-40"
+          >
+            {playing ? (
+              <Pause className="size-4 fill-current" />
+            ) : (
+              <Play className="size-4 fill-current" />
+            )}
+          </button>
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => seekTo(total)}
+            aria-label="Al final"
+          >
+            <SkipForward className="size-4" />
+          </button>
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {fmt(pos)} / {fmt(total)}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => setPxPerSec((v) => clampZoom(v * 0.8))}
+            aria-label="Alejar"
+          >
+            <Minus className="size-4" />
+          </button>
+          <div className="relative h-1 w-14 rounded-full bg-muted">
+            <span
+              className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground"
+              style={{ left: `${zoomPct}%` }}
+            />
+          </div>
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => setPxPerSec((v) => clampZoom(v * 1.25))}
+            aria-label="Acercar"
+          >
+            <Plus className="size-4" />
+          </button>
+          <button type="button" className={iconBtn} aria-label="Vista">
+            <PanelRightClose className="size-4" />
+          </button>
+        </div>
+      </div>
+
+      {clips.length ? (
+        <div className="flex items-stretch">
+          <div className="flex w-8 shrink-0 items-center justify-center border-r text-muted-foreground">
+            <Volume2 className="size-4" />
+          </div>
+          <div className="scrollbar-hidden min-w-0 flex-1 overflow-x-auto">
+            <div style={{ width: `${trackWidth}px` }}>
+              {/* Regla de tiempo con el badge de posición actual. */}
+              <div className="relative h-5 border-b">
+                {Array.from({ length: displaySec + 1 }).map((_, i) => (
+                  <span
+                    key={i}
+                    className="absolute top-1 flex flex-col items-center text-[9px] tabular-nums text-muted-foreground/60"
+                    style={{ left: `${i * pxPerSec}px` }}
+                  >
+                    {fmt(i * 1000)}
+                  </span>
+                ))}
+                <span
+                  className="absolute top-0 -translate-x-1/2 rounded bg-foreground px-1 text-[9px] font-medium tabular-nums text-background"
+                  style={{ left: `${px(pos)}px` }}
+                >
+                  {fmt(pos)}
+                </span>
               </div>
-            ))}
-            <div
-              className="pointer-events-none absolute inset-y-0 w-0.5 bg-foreground"
-              style={{ left: `${(pos / total) * 100}%` }}
-            >
-              <span className="absolute -top-1 left-1/2 size-2 -translate-x-1/2 rounded-full bg-foreground" />
+              {/* Pista con un bloque por línea, tintado con el color del personaje. */}
+              <div className="relative h-12 cursor-pointer py-1.5" onClick={seek}>
+                {clips.map((clip, i) => {
+                  const activeClip =
+                    pos >= offsets[i] && pos < offsets[i] + durations[i];
+                  return (
+                    <div
+                      key={clip.id}
+                      className={cn(
+                        "absolute inset-y-1.5 flex items-center overflow-hidden rounded-lg border px-2 text-[11px] font-medium shadow-sm",
+                        activeClip && "ring-2 ring-offset-1 ring-offset-background",
+                      )}
+                      style={{
+                        left: `${px(offsets[i])}px`,
+                        width: `${Math.max(24, px(durations[i]))}px`,
+                        backgroundColor: `color-mix(in srgb, ${clip.hex} 16%, transparent)`,
+                        borderColor: `color-mix(in srgb, ${clip.hex} 42%, transparent)`,
+                        color: `color-mix(in srgb, ${clip.hex} 72%, #111)`,
+                        ...(activeClip ? { "--tw-ring-color": clip.hex } : {}),
+                      }}
+                      title={clip.label}
+                    >
+                      <span className="truncate">{clip.label}</span>
+                    </div>
+                  );
+                })}
+                <div
+                  className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-foreground"
+                  style={{ left: `${px(pos)}px` }}
+                />
+              </div>
             </div>
           </div>
         </div>
       ) : (
-        <p className="px-4 pb-3 text-[11px] text-muted-foreground">{emptyHint}</p>
+        <p className="px-4 py-3 text-[11px] text-muted-foreground">{emptyHint}</p>
       )}
     </div>
   );
@@ -2101,16 +2193,6 @@ export function ScreenplayStudio({
                 </div>
               )}
               <div className="flex items-center gap-1">
-                {scenePanelVisible && leftTab === "scenes" && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="outline" size="icon" onClick={addScene}>
-                        <Plus className="size-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Nueva escena</TooltipContent>
-                  </Tooltip>
-                )}
                 <SidebarToggle
                   side="left"
                   expanded={scenePanelVisible}
@@ -2134,83 +2216,89 @@ export function ScreenplayStudio({
             )}
             {scenePanelVisible && leftTab === "scenes" && (
               <>
-                {loading ? <ProductionListSkeleton /> : <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
-                  <div className="space-y-1">
-                    {data.scenes.map((item, index) => {
-                      const count = data.lines.filter(
-                        (line) => String(line.scene_id) === String(item.id),
-                      ).length;
-                      const referenceCount = data.assetLinks.filter(
-                        (link) =>
-                          String(link.scene_id) === String(item.id) &&
-                          !link.script_line_id,
-                      ).length;
-                      return (
-                        <Button
-                          key={item.id}
-                          variant="ghost"
-                          className={cn(
-                            "h-auto w-full justify-start gap-2.5 px-2.5 py-2.5 text-left",
-                            String(scene?.id) === String(item.id) &&
-                              "bg-accent",
-                          )}
-                          onClick={() => setSceneId(item.id)}
-                        >
-                          <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-semibold">
-                            {index + 1}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-xs font-medium">
-                              {item.title || `Escena ${index + 1}`}
+                {loading ? (
+                  <ProductionListSkeleton />
+                ) : (
+                  <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+                    <div className="space-y-1">
+                      {data.scenes.map((item, index) => {
+                        const count = data.lines.filter(
+                          (line) => String(line.scene_id) === String(item.id),
+                        ).length;
+                        const referenceCount = data.assetLinks.filter(
+                          (link) =>
+                            String(link.scene_id) === String(item.id) &&
+                            !link.script_line_id,
+                        ).length;
+                        const active = String(scene?.id) === String(item.id);
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => setSceneId(item.id)}
+                            className={cn(
+                              "flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-accent/60",
+                              active && "bg-accent",
+                            )}
+                          >
+                            <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-semibold">
+                              {index + 1}
                             </span>
-                            <span className="mt-0.5 block truncate text-[10px] font-normal text-muted-foreground">
-                              {count} líneas ·{" "}
-                              {item.target_duration_ms
-                                ? `${item.target_duration_ms / 1000}s`
-                                : "sin duración"}
-                              {referenceCount
-                                ? ` · ${referenceCount} refs`
-                                : ""}
+                            <span className="min-w-0 flex-1">
+                              <DraftInput
+                                value={item.title}
+                                onCommit={(title) =>
+                                  run(() =>
+                                    db.updateScriptScene(item.id, { title }),
+                                  )
+                                }
+                                placeholder={`Escena ${index + 1}`}
+                                className="h-auto truncate border-0 bg-transparent p-0 text-xs font-medium shadow-none focus-visible:ring-0"
+                              />
+                              <span className="mt-0.5 block truncate text-[10px] font-normal text-muted-foreground">
+                                {count} {count === 1 ? "línea" : "líneas"}
+                                {" · "}
+                                {item.target_duration_ms
+                                  ? `${item.target_duration_ms / 1000}s`
+                                  : "sin duración"}
+                                {referenceCount ? ` · ${referenceCount} refs` : ""}
+                              </span>
                             </span>
-                          </span>
-                          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>}
-                <div className="border-t p-3">
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button variant="outline" className="w-full">
-                        <Sparkles />
-                        Importar con el agente
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Estructurar un guion</DialogTitle>
-                        <DialogDescription>
-                          Pega el texto aprobado. El agente propondrá escenas y
-                          dirección sin generar audio.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <Textarea
-                        value={draft}
-                        onChange={(event) => setDraft(event.target.value)}
-                        className="min-h-52"
-                        placeholder={
-                          "ESCENA 1 — Estudio, noche\nMARTA: “La campaña está lista.”\nVOZ EN OFF: “Del concepto al lanzamiento.”"
-                        }
-                      />
-                      <DialogFooter>
-                        <Button disabled={!draft.trim()} onClick={sendBrief}>
-                          <WandSparkles />
-                          Llevar al chat
-                        </Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
+                            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                )}
+                <div className="space-y-2.5 border-t p-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={addScene}
+                  >
+                    Añadir escena
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      (onSendAgent || onSeedChat)?.(
+                        "Crea una escena nueva y completa para este proyecto usando el contexto que ya tienes (brief, personajes, tono y escenas existentes). Estructúrala con sus líneas de diálogo, voz en off y acción, con el personaje que habla y su dirección. Si te falta algo clave para que quede perfecta, pregúntame antes de crearla.",
+                      )
+                    }
+                    className="group flex aspect-square w-full flex-col items-center justify-center gap-2.5 rounded-2xl border border-dashed p-4 text-center transition-colors hover:border-primary/50 hover:bg-accent/40"
+                  >
+                    <span className="flex size-11 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-transform group-hover:scale-105">
+                      <Sparkles className="size-5" />
+                    </span>
+                    <span className="text-sm font-semibold">
+                      Generar escena con IA
+                    </span>
+                    <span className="text-[11px] leading-snug text-muted-foreground">
+                      El agente crea una escena con el contexto del proyecto — o
+                      te pregunta lo que falte para que quede perfecta.
+                    </span>
+                  </button>
                 </div>
               </>
             )}
