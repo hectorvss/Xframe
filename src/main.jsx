@@ -170,6 +170,7 @@ import {
 } from "@/lib/agent";
 import { I18nProvider, useI18n } from "@/lib/i18n";
 import { buildUIContext } from "@/lib/uiContext";
+import { gradientUrl } from "@/lib/soundLibrary";
 import {
   WHATS_NEW,
   useNotifications,
@@ -3250,19 +3251,6 @@ const notifTimeAgo = (iso) => {
   });
 };
 
-const NOTIF_AVATAR = [
-  "from-violet-500 to-fuchsia-600",
-  "from-sky-500 to-indigo-600",
-  "from-emerald-500 to-teal-600",
-  "from-amber-500 to-orange-600",
-  "from-rose-500 to-pink-600",
-];
-const avatarGradient = (seed) => {
-  let h = 0;
-  for (const c of String(seed || "?")) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return NOTIF_AVATAR[h % NOTIF_AVATAR.length];
-};
-
 // Una fila del Inbox. Las de tipo "invite" llevan acciones (Rechazar/Aceptar); el resto
 // se pueden descartar con la X que aparece al pasar el ratón.
 function InboxRow({ n }) {
@@ -3279,12 +3267,14 @@ function InboxRow({ n }) {
   return (
     <div className="group relative flex gap-3 px-4 py-3.5 transition-colors hover:bg-accent/40">
       <span
-        className={cn(
-          "flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-sm font-semibold text-white",
-          avatarGradient(title),
-        )}
+        className="flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white ring-1 ring-black/10 [text-shadow:0_1px_2px_rgb(0_0_0/45%)]"
+        style={{
+          backgroundImage: `url(${gradientUrl(n.id || title)})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        }}
       >
-        {n.type === "invite" ? initial : <Bell className="size-4" />}
+        {n.type === "invite" ? initial : <Bell className="size-4 drop-shadow" />}
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
