@@ -59,6 +59,7 @@ export const defaultPreferences = {
   profileVisibility: "public",
   chatSuggestions: true,
   autoAcceptInvites: true,
+  notificationsEnabled: true,
   generationSound: "first",
   emailProduct: true,
   emailTips: false,

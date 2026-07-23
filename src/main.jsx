@@ -180,6 +180,8 @@ import {
   whatsNewUnseenCount,
   isWhatsNewSeen,
   markWhatsNewSeen,
+  setNotificationAccount,
+  setNotificationsEnabled,
 } from "@/lib/notifications";
 import {
   buildResourceCatalog,
@@ -3279,7 +3281,14 @@ function InboxRow({ n }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
           <p className="text-sm font-semibold leading-tight">{title}</p>
-          <span className="shrink-0 text-[11px] text-muted-foreground">
+          {/* La hora se desvanece al pasar el ratón para dejar sitio a la X y que no se
+              solapen (la X se ancla en este mismo rincón). */}
+          <span
+            className={cn(
+              "shrink-0 text-[11px] text-muted-foreground transition-opacity",
+              n.type !== "invite" && "group-hover:opacity-0",
+            )}
+          >
             {notifTimeAgo(n.created_at)}
           </span>
         </div>
@@ -9387,6 +9396,17 @@ function Editor({ projectId }) {
         // Audio/Guion se queden una generación por detrás hasta pulsar Actualizar.
         refreshMentionProduction();
 
+        // Aviso al Inbox: una generación ha aterrizado. Idempotente por asset, así que
+        // un evento reenviado no duplica la notificación.
+        pushNotification({
+          id: `gen:${assetId}`,
+          type: "system",
+          title: "Generación lista",
+          body: stored.name
+            ? `“${stored.name}” ya está disponible en ${project?.title || "tu proyecto"}.`
+            : `Un nuevo recurso está listo en ${project?.title || "tu proyecto"}.`,
+        });
+
         setStream((s) =>
           s
             ? {
@@ -10474,6 +10494,23 @@ function AccountSettings() {
             checked={preferences.autoAcceptInvites}
             onCheckedChange={(autoAcceptInvites) =>
               setPreferences({ autoAcceptInvites })
+            }
+          />
+        </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Notificaciones"
+        desc="Avisos dentro de la aplicación."
+      >
+        <SettingsRow
+          title="Permitir notificaciones"
+          desc="Recibe invitaciones, avisos de generación y novedades en el Inbox."
+        >
+          <Switch
+            checked={preferences.notificationsEnabled !== false}
+            onCheckedChange={(notificationsEnabled) =>
+              setPreferences({ notificationsEnabled })
             }
           />
         </SettingsRow>
@@ -14285,12 +14322,20 @@ function SettingsPage({ page }) {
 
 function App() {
   const [, rerender] = useState(0);
-  const { ready, profile, isRemote } = useStudio();
+  const { ready, profile, isRemote, preferences } = useStudio();
   React.useEffect(() => {
     const f = () => rerender((x) => x + 1);
     addEventListener("popstate", f);
     return () => removeEventListener("popstate", f);
   }, []);
+  // El centro de notificaciones se ata a la cuenta activa (cada perfil ve solo lo suyo)
+  // y se sincroniza con el ajuste "Permitir notificaciones".
+  React.useEffect(() => {
+    setNotificationAccount(profile?.id || null);
+  }, [profile?.id]);
+  React.useEffect(() => {
+    setNotificationsEnabled(preferences?.notificationsEnabled !== false);
+  }, [preferences?.notificationsEnabled]);
   const p = location.pathname;
   const params = new URLSearchParams(location.search);
   const showConnectors = params.has("connectors");

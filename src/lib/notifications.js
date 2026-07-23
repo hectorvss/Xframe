@@ -63,9 +63,17 @@ function seed() {
   ];
 }
 
+// El libro de notificaciones es POR CUENTA: cada perfil tiene su propia clave, y al
+// cambiar de cuenta (login, cambio de espacio) se recarga la suya. `enabled` refleja el
+// ajuste "Permitir notificaciones"; con él desactivado no entran nuevos avisos.
+let accountId = null;
+let enabled = true;
+
+const keyFor = (id) => (id ? `${KEY}:${id}` : KEY);
+
 function load() {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(keyFor(accountId));
     if (!raw) return seed();
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : seed();
@@ -79,10 +87,31 @@ const listeners = new Set();
 
 function persist() {
   try {
-    localStorage.setItem(KEY, JSON.stringify(notifications));
+    localStorage.setItem(keyFor(accountId), JSON.stringify(notifications));
   } catch {
     // Sin persistencia (modo privado/cuota): las notificaciones duran la sesión.
   }
+}
+
+/**
+ * Fija la cuenta activa. El centro de notificaciones recarga el libro de ESE perfil, de
+ * modo que dos cuentas en el mismo navegador nunca comparten avisos. Idempotente.
+ */
+export function setNotificationAccount(id) {
+  const next = id || null;
+  if (next === accountId) return;
+  accountId = next;
+  notifications = load();
+  for (const fn of listeners) fn();
+}
+
+/** Sincroniza con el ajuste "Permitir notificaciones". */
+export function setNotificationsEnabled(value) {
+  enabled = value !== false;
+}
+
+export function notificationsEnabled() {
+  return enabled;
 }
 
 function set(next) {
@@ -107,6 +136,8 @@ const newId = () =>
  * la resuelve con el handler que se le pase.
  */
 export function pushNotification(input) {
+  // Respeta el ajuste del usuario: con las notificaciones desactivadas no entran nuevas.
+  if (!enabled) return null;
   const item = {
     id: input.id || newId(),
     type: input.type || "system",
