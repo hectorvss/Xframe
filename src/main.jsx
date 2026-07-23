@@ -3308,7 +3308,7 @@ function InboxRow({ n }) {
             <button
               type="button"
               onClick={accept}
-              className="flex-1 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+              className="flex-1 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
             >
               Aceptar
             </button>
@@ -3356,20 +3356,22 @@ function NotificationCenter({ open, onClose, offsetLeft }) {
     <>
       {/* Capa para cerrar al pulsar fuera. */}
       <div className="fixed inset-0 z-[90]" onClick={onClose} />
+      {/* Tarjeta de TAMAÑO FIJO: su forma no cambia haya o no haya mensajes; el contenido
+          desborda por dentro con scroll. Anclada abajo, junto al borde del sidebar. */}
       <div
-        className="fixed bottom-4 z-[100] flex max-h-[72vh] w-[380px] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl"
+        className="fixed bottom-4 z-[100] flex h-[600px] max-h-[calc(100vh-1.5rem)] w-[384px] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-[20px] border bg-background shadow-2xl"
         style={{ left: Math.max(8, offsetLeft) }}
         role="dialog"
         aria-label="Notificaciones"
       >
-        {/* Conmutador Inbox / Novedades */}
-        <div className="flex justify-center p-3 pb-2">
-          <div className="inline-flex rounded-full border bg-muted/40 p-1">
+        {/* Conmutador Inbox / What's new, a dos mitades. */}
+        <div className="shrink-0 p-3">
+          <div className="grid grid-cols-2 gap-1 rounded-full border bg-muted/50 p-1">
             <button
               type="button"
               onClick={() => setTab("inbox")}
               className={cn(
-                "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+                "rounded-full py-1.5 text-sm font-medium transition-colors",
                 tab === "inbox"
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
@@ -3381,15 +3383,15 @@ function NotificationCenter({ open, onClose, offsetLeft }) {
               type="button"
               onClick={() => setTab("whatsnew")}
               className={cn(
-                "relative rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+                "relative rounded-full py-1.5 text-sm font-medium transition-colors",
                 tab === "whatsnew"
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              Novedades
+              What&rsquo;s new
               {whatsNewUnseenCount() > 0 && tab !== "whatsnew" && (
-                <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-red-500" />
+                <span className="absolute right-2 top-1.5 size-1.5 rounded-full bg-red-500" />
               )}
             </button>
           </div>
@@ -3404,7 +3406,7 @@ function NotificationCenter({ open, onClose, offsetLeft }) {
                 ))}
               </div>
             ) : (
-              <div className="flex flex-col items-center px-6 py-14 text-center">
+              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
                 <Bell className="size-8 text-muted-foreground" />
                 <p className="mt-3 text-sm font-medium">Sin notificaciones</p>
                 <p className="mt-1 text-xs text-muted-foreground">
