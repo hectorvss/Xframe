@@ -3359,8 +3359,8 @@ function NotificationCenter({ open, onClose, offsetLeft }) {
       {/* Tarjeta de TAMAÑO FIJO: su forma no cambia haya o no haya mensajes; el contenido
           desborda por dentro con scroll. Anclada abajo, junto al borde del sidebar. */}
       <div
-        className="fixed bottom-4 z-[100] flex h-[600px] max-h-[calc(100vh-1.5rem)] w-[384px] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-[20px] border bg-background shadow-2xl"
-        style={{ left: Math.max(8, offsetLeft) }}
+        className="fixed bottom-2 z-[100] flex h-[600px] max-h-[calc(100vh-1rem)] w-[384px] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-[20px] border bg-background shadow-2xl"
+        style={{ left: Math.max(8, offsetLeft) + 8 }}
         role="dialog"
         aria-label="Notificaciones"
       >
@@ -3397,7 +3397,7 @@ function NotificationCenter({ open, onClose, offsetLeft }) {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto">
           {tab === "inbox" ? (
             notifications.length ? (
               <div className="divide-y">
@@ -3416,30 +3416,59 @@ function NotificationCenter({ open, onClose, offsetLeft }) {
             )
           ) : (
             <div className="divide-y">
-              {WHATS_NEW.map((item) => (
-                <article key={item.id} className="px-4 py-4">
-                  <div className="flex items-center gap-2">
-                    {!isWhatsNewSeen(item.id) && (
-                      <span className="size-2 shrink-0 rounded-full bg-red-500" />
+              {WHATS_NEW.map((item, index) =>
+                // La primera va destacada (imagen grande); el resto, compactas con una
+                // miniatura al lado — como en la referencia.
+                index === 0 ? (
+                  <article key={item.id} className="px-4 py-4">
+                    <div className="flex items-center gap-2">
+                      {!isWhatsNewSeen(item.id) && (
+                        <span className="size-2 shrink-0 rounded-full bg-red-500" />
+                      )}
+                      <h3 className="text-sm font-semibold leading-tight">
+                        {item.title}
+                      </h3>
+                    </div>
+                    <p className="mt-1 text-sm leading-snug text-muted-foreground">
+                      {item.body}
+                    </p>
+                    {item.image && (
+                      <div
+                        className="mt-3 aspect-[16/9] w-full overflow-hidden rounded-xl border bg-muted bg-cover bg-center"
+                        style={{ backgroundImage: `url(${item.image})` }}
+                      />
                     )}
-                    <h3 className="text-sm font-semibold leading-tight">
-                      {item.title}
-                    </h3>
-                  </div>
-                  <p className="mt-1 text-sm leading-snug text-muted-foreground">
-                    {item.body}
-                  </p>
-                  {item.image && (
-                    <div
-                      className="mt-3 aspect-[16/9] w-full overflow-hidden rounded-xl border bg-muted bg-cover bg-center"
-                      style={{ backgroundImage: `url(${item.image})` }}
-                    />
-                  )}
-                  <p className="mt-2 text-[11px] text-muted-foreground">
-                    {notifTimeAgo(item.date)}
-                  </p>
-                </article>
-              ))}
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      {notifTimeAgo(item.date)}
+                    </p>
+                  </article>
+                ) : (
+                  <article key={item.id} className="flex gap-3 px-4 py-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        {!isWhatsNewSeen(item.id) && (
+                          <span className="size-2 shrink-0 rounded-full bg-red-500" />
+                        )}
+                        <h3 className="truncate text-sm font-semibold leading-tight">
+                          {item.title}
+                        </h3>
+                      </div>
+                      <p className="mt-1 line-clamp-3 text-sm leading-snug text-muted-foreground">
+                        {item.body}
+                      </p>
+                      <p className="mt-2 text-[11px] text-muted-foreground">
+                        {notifTimeAgo(item.date)}
+                      </p>
+                    </div>
+                    {item.image && (
+                      <div
+                        className="mt-0.5 h-16 w-24 shrink-0 overflow-hidden rounded-lg border bg-muted bg-cover bg-center"
+                        style={{ backgroundImage: `url(${item.image})` }}
+                      />
+                    )}
+                  </article>
+                ),
+              )}
             </div>
           )}
         </div>
