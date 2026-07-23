@@ -7,6 +7,7 @@ import React, {
   useCallback,
 } from "react";
 import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
 import { Area, AreaChart } from "recharts";
 import {
   ArrowLeft,
@@ -169,6 +170,16 @@ import {
 } from "@/lib/agent";
 import { I18nProvider, useI18n } from "@/lib/i18n";
 import { buildUIContext } from "@/lib/uiContext";
+import {
+  WHATS_NEW,
+  useNotifications,
+  markAllRead,
+  dismissNotification,
+  pushNotification,
+  whatsNewUnseenCount,
+  isWhatsNewSeen,
+  markWhatsNewSeen,
+} from "@/lib/notifications";
 import {
   buildResourceCatalog,
   resolveResourceMentions,
@@ -2006,6 +2017,12 @@ function PromptBox() {
       settings: genSettings,
       projectType,
     });
+    // Toda acción que genere un aviso pasa por el centro de notificaciones.
+    pushNotification({
+      type: "system",
+      title: "Proyecto creado",
+      body: `“${project.title}” está listo. El agente ya está trabajando en tu idea.`,
+    });
     go(`/projects/${project.id}?run=1`);
   };
 
@@ -3216,9 +3233,226 @@ function WorkspaceSwitcher({ collapsed }) {
   );
 }
 
+// Tiempo relativo corto para las notificaciones ("ahora", "hace 3 h", fecha si es viejo).
+const notifTimeAgo = (iso) => {
+  const ms = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "ahora";
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `hace ${d} ${d === 1 ? "día" : "días"}`;
+  return new Date(iso).toLocaleDateString("es-ES", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+};
+
+const NOTIF_AVATAR = [
+  "from-violet-500 to-fuchsia-600",
+  "from-sky-500 to-indigo-600",
+  "from-emerald-500 to-teal-600",
+  "from-amber-500 to-orange-600",
+  "from-rose-500 to-pink-600",
+];
+const avatarGradient = (seed) => {
+  let h = 0;
+  for (const c of String(seed || "?")) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return NOTIF_AVATAR[h % NOTIF_AVATAR.length];
+};
+
+// Una fila del Inbox. Las de tipo "invite" llevan acciones (Rechazar/Aceptar); el resto
+// se pueden descartar con la X que aparece al pasar el ratón.
+function InboxRow({ n }) {
+  const title = n.actor || n.title || "Notificación";
+  const initial = title.trim().charAt(0).toUpperCase() || "?";
+  const accept = () => {
+    dismissNotification(n.id);
+    pushNotification({
+      type: "system",
+      title: "Invitación aceptada",
+      body: n.project ? `Te has unido a “${n.project}”.` : "Te has unido al proyecto.",
+    });
+  };
+  return (
+    <div className="group relative flex gap-3 px-4 py-3.5 transition-colors hover:bg-accent/40">
+      <span
+        className={cn(
+          "flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-sm font-semibold text-white",
+          avatarGradient(title),
+        )}
+      >
+        {n.type === "invite" ? initial : <Bell className="size-4" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-sm font-semibold leading-tight">{title}</p>
+          <span className="shrink-0 text-[11px] text-muted-foreground">
+            {notifTimeAgo(n.created_at)}
+          </span>
+        </div>
+        <p className="mt-0.5 text-sm leading-snug text-muted-foreground">
+          {n.body}
+        </p>
+        {n.type === "invite" && (
+          <div className="mt-2.5 flex gap-2">
+            <button
+              type="button"
+              onClick={() => dismissNotification(n.id)}
+              className="flex-1 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent"
+            >
+              Rechazar
+            </button>
+            <button
+              type="button"
+              onClick={accept}
+              className="flex-1 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Aceptar
+            </button>
+          </div>
+        )}
+      </div>
+      {n.type !== "invite" && (
+        <button
+          type="button"
+          aria-label="Descartar"
+          onClick={() => dismissNotification(n.id)}
+          className="absolute right-2 top-2 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+        >
+          <X className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Panel flotante Inbox / Novedades, anclado a la derecha del sidebar y abajo, como la
+// referencia. `offsetLeft` = ancho del sidebar, para que su borde izquierdo lo toque.
+function NotificationCenter({ open, onClose, offsetLeft }) {
+  const notifications = useNotifications();
+  const [tab, setTab] = useState("inbox");
+
+  useEffect(() => {
+    if (!open) return;
+    markAllRead();
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (open && tab === "whatsnew") markWhatsNewSeen();
+  }, [open, tab]);
+
+  if (!open) return null;
+
+  // Portal a body: el <main> del dashboard usa `isolate` y el <aside> es un contexto de
+  // apilamiento propio, así que dentro del árbol el panel quedaba por debajo. En body se
+  // apila por encima de todo.
+  return createPortal(
+    <>
+      {/* Capa para cerrar al pulsar fuera. */}
+      <div className="fixed inset-0 z-[90]" onClick={onClose} />
+      <div
+        className="fixed bottom-4 z-[100] flex max-h-[72vh] w-[380px] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl"
+        style={{ left: Math.max(8, offsetLeft) }}
+        role="dialog"
+        aria-label="Notificaciones"
+      >
+        {/* Conmutador Inbox / Novedades */}
+        <div className="flex justify-center p-3 pb-2">
+          <div className="inline-flex rounded-full border bg-muted/40 p-1">
+            <button
+              type="button"
+              onClick={() => setTab("inbox")}
+              className={cn(
+                "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+                tab === "inbox"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Inbox{notifications.length ? ` (${notifications.length})` : ""}
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("whatsnew")}
+              className={cn(
+                "relative rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+                tab === "whatsnew"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Novedades
+              {whatsNewUnseenCount() > 0 && tab !== "whatsnew" && (
+                <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-red-500" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {tab === "inbox" ? (
+            notifications.length ? (
+              <div className="divide-y">
+                {notifications.map((n) => (
+                  <InboxRow key={n.id} n={n} />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center px-6 py-14 text-center">
+                <Bell className="size-8 text-muted-foreground" />
+                <p className="mt-3 text-sm font-medium">Sin notificaciones</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Tus invitaciones y avisos aparecerán aquí.
+                </p>
+              </div>
+            )
+          ) : (
+            <div className="divide-y">
+              {WHATS_NEW.map((item) => (
+                <article key={item.id} className="px-4 py-4">
+                  <div className="flex items-center gap-2">
+                    {!isWhatsNewSeen(item.id) && (
+                      <span className="size-2 shrink-0 rounded-full bg-red-500" />
+                    )}
+                    <h3 className="text-sm font-semibold leading-tight">
+                      {item.title}
+                    </h3>
+                  </div>
+                  <p className="mt-1 text-sm leading-snug text-muted-foreground">
+                    {item.body}
+                  </p>
+                  {item.image && (
+                    <div
+                      className="mt-3 aspect-[16/9] w-full overflow-hidden rounded-xl border bg-muted bg-cover bg-center"
+                      style={{ backgroundImage: `url(${item.image})` }}
+                    />
+                  )}
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    {notifTimeAgo(item.date)}
+                  </p>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
 function DashboardSide({ width, onResize }) {
   const { projects, profile, workspace } = useStudio();
   const recentProjects = projects.slice(0, 5);
+  const notifications = useNotifications();
+  const unread = notifications.reduce((n, item) => n + (item.read ? 0 : 1), 0);
+  const [notifOpen, setNotifOpen] = useState(false);
   const openOverlay = (name) => go(`${location.pathname}?${name}=1`);
   const collapsed = width < 160;
   const navCls = (active) =>
@@ -3396,15 +3630,26 @@ function DashboardSide({ width, onResize }) {
           <UserMenu />
           <button
             title="Notificaciones"
-            className="relative rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            onClick={() => setNotifOpen((v) => !v)}
+            className={cn(
+              "relative rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+              notifOpen && "bg-accent text-foreground",
+            )}
           >
             <Bell className="size-5" />
-            <span className="absolute right-0.5 top-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-semibold text-white">
-              1
-            </span>
+            {unread > 0 && (
+              <span className="absolute right-0.5 top-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-semibold text-white">
+                {unread > 9 ? "9+" : unread}
+              </span>
+            )}
           </button>
         </div>
       </div>
+      <NotificationCenter
+        open={notifOpen}
+        onClose={() => setNotifOpen(false)}
+        offsetLeft={width}
+      />
     </aside>
   );
 }
