@@ -3296,18 +3296,18 @@ function InboxRow({ n }) {
           {n.body}
         </p>
         {n.type === "invite" && (
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2.5 flex gap-2">
             <button
               type="button"
               onClick={() => dismissNotification(n.id)}
-              className="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent"
+              className="flex-1 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent"
             >
               Rechazar
             </button>
             <button
               type="button"
               onClick={accept}
-              className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-blue-700"
+              className="flex-1 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
             >
               Aceptar
             </button>
